@@ -1,10 +1,6 @@
-# session-bar Specification
+# Spec Delta
 
-## Purpose
-
-The session bar is the band above the prompt that shows where the session is, which model it runs, how full the context is and how much of the account's usage windows are spent, using color only when something needs attention.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Calm segments are plain text, attention becomes a pill
 The bar SHALL draw each calm segment (directory, model, context, each usage window) as plain text in the terminal's own colors, with labels dimmed. A segment that needs attention SHALL become a pill with rounded caps, filled orange or vermillion, with dark text, so it reads on light and dark terminals alike.
@@ -39,25 +35,6 @@ A usage window with a known reset time SHALL show the time left until it resets,
 - **WHEN** the 7d window resets in 1 day 7 hours 20 minutes and the full bar fits
 - **THEN** the 7d segment shows `1d7h`
 
-### Requirement: Pace-based attention for usage windows
-A usage window with a known reset time SHALL turn orange when its used percentage exceeds the elapsed percentage by more than 15 points, and red when it exceeds it by more than 30 points or reaches 90% used. A window without a reset time SHALL fall back to orange from 50% and red from 80%.
-
-#### Scenario: High usage late in the week
-- **WHEN** the 7d window is 61% used with 80% of the week elapsed
-- **THEN** the 7d segment stays plain
-
-#### Scenario: Burning ahead of pace
-- **WHEN** the 5h window is 71% used with 30% of its time elapsed
-- **THEN** the 5h segment is a vermillion pill
-
-#### Scenario: Near the cap
-- **WHEN** a window is 92% used with 95% of its time elapsed
-- **THEN** its segment is a vermillion pill
-
-#### Scenario: No reset time
-- **WHEN** a window without a reset time reads 55%
-- **THEN** its segment is an orange pill
-
 ### Requirement: Context size
 The context segment SHALL show the context's input tokens (e.g. `187K`), labelled `ctx`. It SHALL turn orange from 150K tokens, and vermillion from the lower of 250K tokens and 80% of the window. It SHALL be hidden until the session has a reading.
 
@@ -76,6 +53,31 @@ The context segment SHALL show the context's input tokens (e.g. `187K`), labelle
 #### Scenario: Fresh session
 - **WHEN** no response has landed yet
 - **THEN** no context segment is drawn
+
+### Requirement: Width adaptation
+The bar SHALL fit on one row of the band's width when it can. When the full bar does not fit, it SHALL drop the 7d and per-model weekly countdowns first, then shorten the bars to 5 cells (one per 20%), then drop the bars, then drop the 5h countdown.
+
+#### Scenario: Wide terminal
+- **WHEN** the full bar fits the band's width
+- **THEN** 10-cell bars and every countdown show
+
+#### Scenario: Medium terminal
+- **WHEN** the full bar is too wide but fits without the weekly countdowns
+- **THEN** 10-cell bars and the 5h countdown show, and the 7d and per-model weekly countdowns do not
+
+#### Scenario: Narrower terminal
+- **WHEN** only the form with 5-cell bars fits
+- **THEN** 5-cell bars and the 5h countdown show, and the weekly countdowns do not
+
+#### Scenario: Narrow terminal
+- **WHEN** nothing with bars fits, but the form without bars does
+- **THEN** the bar shows `dir · model   ctx 120K   5h 23% 2h40m   7d 61%` with attention pills where needed
+
+#### Scenario: Narrowest terminal
+- **WHEN** even the form without bars is too wide
+- **THEN** the bar shows `dir · model   ctx 120K   5h 23%   7d 61%`
+
+## ADDED Requirements
 
 ### Requirement: Context bar
 The context segment SHALL show a bar before its token count that runs from 0 to its vermillion threshold, so a full bar means vermillion. It SHALL use the usage bars' glyphs, cell counts and half-cell steps, clamped at full. The cell holding the orange threshold SHALL be a `┿` tick, drawn like the used part once the fill reaches that cell and dimmed like the rest before that.
@@ -115,43 +117,8 @@ The model segment SHALL show the model's name and version (e.g. `Opus 5.5`) foll
 - **WHEN** no response has landed and the model ID is `claude-opus-5-5[1m]`
 - **THEN** the model segment shows `Opus 5.5 1M`
 
-### Requirement: Width adaptation
-The bar SHALL fit on one row of the band's width when it can. When the full bar does not fit, it SHALL drop the 7d and per-model weekly countdowns first, then shorten the bars to 5 cells (one per 20%), then drop the bars, then drop the 5h countdown.
+## REMOVED Requirements
 
-#### Scenario: Wide terminal
-- **WHEN** the full bar fits the band's width
-- **THEN** 10-cell bars and every countdown show
-
-#### Scenario: Medium terminal
-- **WHEN** the full bar is too wide but fits without the weekly countdowns
-- **THEN** 10-cell bars and the 5h countdown show, and the 7d and per-model weekly countdowns do not
-
-#### Scenario: Narrower terminal
-- **WHEN** only the form with 5-cell bars fits
-- **THEN** 5-cell bars and the 5h countdown show, and the weekly countdowns do not
-
-#### Scenario: Narrow terminal
-- **WHEN** nothing with bars fits, but the form without bars does
-- **THEN** the bar shows `dir · model   ctx 120K   5h 23% 2h40m   7d 61%` with attention pills where needed
-
-#### Scenario: Narrowest terminal
-- **WHEN** even the form without bars is too wide
-- **THEN** the bar shows `dir · model   ctx 120K   5h 23%   7d 61%`
-
-### Requirement: Live countdowns between turns
-The bar SHALL redraw at least once a minute so countdowns and pace colors stay current while no turn runs.
-
-#### Scenario: Idle session
-- **WHEN** no turn runs for 3 minutes
-- **THEN** the 5h countdown has dropped by 3 minutes
-
-### Requirement: Values survive gaps
-The bar SHALL draw the last known usage readings, from this session or an earlier one, until a fresh reading arrives. It SHALL drop a reading whose window has already reset.
-
-#### Scenario: Launch before any response
-- **WHEN** a session starts and an earlier session stored 5h and 7d readings whose windows have not reset
-- **THEN** the bar shows those readings before the first response
-
-#### Scenario: Stale window
-- **WHEN** a stored 5h reading's reset time has passed
-- **THEN** the 5h segment is not drawn from it
+### Requirement: Cache hit-ratio pill
+**Reason**: A low cache ratio comes from events that are expected (fresh start, compaction) or already past (a long idle, a model or tool switch) by the time it shows, so the segment gives nothing to act on and takes up room.
+**Migration**: None. The segment and its reading are dropped. Prompt-cache behaviour is unchanged.

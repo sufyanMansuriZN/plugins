@@ -1,7 +1,7 @@
 import { test, expect, mock } from 'claude-code/testing'
 import {
   band, paceBand, ctxBand, tokensText, shortDir, limitText, parseUsage, fresh, modelLabel,
-  elapsed, countdown, bar, cacheRatio, cacheBand, segments, layout, width, WINDOW_MS, WEEK,
+  elapsed, countdown, bar, segments, layout, width, WINDOW_MS, WEEK,
 } from './register'
 import type { BarInput, Run } from './register'
 
@@ -14,6 +14,9 @@ test('bands, dir, labels, weekly parse', async () => {
   expect(modelLabel('claude-haiku-4-5-20251001')).toBe('Haiku 4.5')
   expect(modelLabel('claude-fable-5-1')).toBe('Fable 5.1')
   expect(modelLabel('gpt-x')).toBe('gpt-x')
+  expect(modelLabel('claude-opus-5-5', 1_000_000)).toBe('Opus 5.5 1M') // the window from the reading
+  expect(modelLabel('claude-haiku-4-5-20251001', 200_000)).toBe('Haiku 4.5 200K')
+  expect(modelLabel('claude-opus-5-5[1m]', 1_000_000)).toBe('Opus 5.5 1M') // not 1M twice
   expect(limitText({ kind: 'five_hour', percentUsed: 1 })).toBe('5h')
   expect(limitText({ kind: 'mystery', percentUsed: 1 })).toBe('mystery')
   expect(parseUsage(JSON.stringify({ limits: [
@@ -44,10 +47,6 @@ test('row is always visible and fills in after a turn', async ($, on) => {
   on('http.fetch', async () => ({ value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ limits: [
     { kind: 'weekly_scoped', percent: 85, scope: { model: { display_name: 'Fable' } } },
   ] }) } }))
-  on('session.usage', async () => ({
-    value: { startedAt: 0, context: { tokens: 187_400, window: 1_000_000, percent: 19 } as never,
-      rateLimits: [{ kind: 'five_hour', percentUsed: 23.4 }, { kind: 'seven_day', percentUsed: 61 }] },
-  }))
   on('ui.render', async () => h('Box', {}) as never) // stands for the engine's own band
   on('clock.now', async () => ({ value: 1e12 }))
   on('session.start', async (_$, e) => e as never)
@@ -74,7 +73,8 @@ test('row is always visible and fills in after a turn', async ($, on) => {
     props: { hasSurvey: false, isWorking: false, maxRows: 3 } as never,
   })
   expect(await ui.find({ type: 'Text', text: 'ctx ' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: '187K/1M' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: '187K' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: ' · Opus 5.5 1M' })).toBeDefined() // window moved from ctx to the model
   expect(await ui.find({ type: 'Text', text: '23%' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: '61%' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: '85%' })).toBeDefined()
@@ -109,7 +109,7 @@ test('fresh session draws stored limits before any turn; ctx fills from measure'
   await $.session.measure({ context: { tokens: 187_400, window: 1_000_000 }, rateLimits: [], changed: ['context'] } as never)
   ui = await mount()
   expect(await ui.find({ type: 'Text', text: 'ctx ' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: '187K/1M' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: '187K' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: '23%' })).toBeDefined() // empty reading keeps the last one
   await ui.unmount()
 })
@@ -188,33 +188,58 @@ test('context: tokens of the window, colored by tokens sent', async () => {
     .toEqual([undefined, 'warn', 'warn', 'hot']) // a 200K window caps only hot, at 80%
   expect([187_400, 1_000_000, 200_000, 1_500_000].map(tokensText)).toEqual(['187K', '1M', '200K', '1.5M'])
 
-  expect(pill(segments(input({ ctx: { tokens: 187_400, window: M } }), 0), '187K/1M')).toBe('#E69F00') // past 150K
-  expect(pill(segments(input({ ctx: { tokens: 120_000, window: M } }), 0), '120K/1M')).toBeUndefined()
-  expect(pill(segments(input({ ctx: { tokens: 180_000, window: M } }), 0), '180K/1M')).toBe('#E69F00')
-  expect(pill(segments(input({ ctx: { tokens: 170_000, window: K200 } }), 0), '170K/200K')).toBe('#D55E00')
+  expect(pill(segments(input({ ctx: { tokens: 187_400, window: M } }), 0), '187K')).toBe('#E69F00') // past 150K
+  expect(pill(segments(input({ ctx: { tokens: 120_000, window: M } }), 0), '120K')).toBeUndefined()
+  expect(pill(segments(input({ ctx: { tokens: 180_000, window: M } }), 0), '180K')).toBe('#E69F00')
+  expect(pill(segments(input({ ctx: { tokens: 170_000, window: K200 } }), 0), '170K')).toBe('#D55E00')
   expect(texts(segments(input({ ctx: undefined }), 0))).not.toContain('ctx ')
+})
+
+test('context bar runs to the hot threshold, ┿ at warn', async () => {
+  const M = 1_000_000
+  // the ctx bar is the first run after the label, then its dimmed rest
+  const ctxBar = (tokens: number, window = M, tier: 0 | 2 = 0) => {
+    const runs = segments(input({ ctx: { tokens, window } }), tier)
+    const i = runs.findIndex(r => r.text === 'ctx ')
+    return [runs[i + 1]!, runs[i + 2]!]
+  }
+  const line = (...a: Parameters<typeof ctxBar>) => ctxBar(...a).map(r => r.text).join('')
+  expect(line(120_000)).toBe('━━━━━─┿───') // below warn
+  expect(line(187_400)).toBe('━━━━━━┿╾──') // past warn
+  expect(line(260_000)).toBe('━━━━━━┿━━━') // past hot: clamped full
+  expect(line(80_000, 200_000)).toBe('━━━━━────┿') // a 200K window runs to 160K
+  expect(line(120_000, M, 2)).toBe('━━╾┿─') // short bars
+
+  const [usedRun, restRun] = ctxBar(120_000)
+  expect(restRun).toEqual({ text: '─┿───', dimColor: true }) // tick not reached: dimmed with the rest
+  expect(usedRun!.dimColor).toBeUndefined()
+  const [reached] = ctxBar(149_000, 200_000) // still calm, but the fill has reached the tick's cell
+  expect(reached).toEqual({ text: '━━━━━━━━━┿' }) // drawn like the used part
 })
 
 test('tiers and layout', async () => {
   const b = input()
-  const [full, noCount, short, none] = ([0, 1, 2, 3] as const).map(t => segments(b, t))
-  expect(texts(full!)).toContain('2h40m'.padStart(6))
+  const [full, noWeekly, short, noBars, bare] = ([0, 1, 2, 3, 4] as const).map(t => segments(b, t))
+  expect(texts(full!)).toContain(' 2h40m')
   expect(texts(full!)).toContain(' 1d7h')
-  expect(texts(noCount!).join('')).not.toContain('2h40m')
-  expect(texts(noCount!)).toContain('━━╾') // 5h at 23%
+  expect(texts(noWeekly!)).toContain(' 2h40m') // the 5h reset stays
+  expect(texts(noWeekly!)).not.toContain(' 1d7h')
+  expect(texts(noWeekly!)).toContain('━━╾') // 5h at 23%
   expect(texts(short!)).toContain('━')
-  expect(texts(none!).join('')).toBe('skills · Opus 5.5   ctx 120K/1M   5h 23%   7d 61%')
+  expect(texts(noBars!).join('')).toBe('skills · Opus 5.5   ctx 120K   5h 23% 2h40m   7d 61%')
+  expect(texts(bare!).join('')).toBe('skills · Opus 5.5   ctx 120K   5h 23%   7d 61%')
 
   expect(layout(b)).toEqual(full)
   expect(layout(b, width(full!))).toEqual(full)
-  expect(layout(b, width(full!) - 1)).toEqual(noCount)
+  expect(layout(b, width(full!) - 1)).toEqual(noWeekly)
   expect(layout(b, width(short!))).toEqual(short)
-  expect(layout(b, width(none!))).toEqual(none)
-  expect(layout(b, 10)).toEqual(none)
+  expect(layout(b, width(noBars!))).toEqual(noBars)
+  expect(layout(b, width(noBars!) - 1)).toEqual(bare)
+  expect(layout(b, 10)).toEqual(bare)
 })
 
 test('calm segments are bare text; only attention gets a pill, all on its fill', async () => {
-  const calm = segments(input({ cache: [98] }), 0)
+  const calm = segments(input(), 0)
   expect(calm.some(r => r.backgroundColor || r.color)).toBe(false) // terminal colors: any theme reads
 
   const hot = segments(input({ windows: [
@@ -225,19 +250,6 @@ test('calm segments are bare text; only attention gets a pill, all on its fill',
   expect(pill(hot, '61%')).toBeUndefined()
   const start = hot.findIndex(r => r.text === ''), end = hot.findIndex(r => r.text === '')
   expect(hot.slice(start + 1, end).every(r => r.backgroundColor === '#D55E00' && r.color === '#191919')).toBe(true)
-})
-
-test('cache pill: one miss stays plain, two in a row turn orange', async () => {
-  expect(cacheRatio({ input_tokens: 2, cache_read_input_tokens: 98, cache_creation_input_tokens: 0 })).toBe(98)
-  expect(cacheRatio({ input_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 })).toBeUndefined()
-
-  const at = (cache: number[]) => pill(segments(input({ cache }), 0), `${cache.at(-1)}%`)
-  expect(at([98])).toBeUndefined() // warm cache
-  expect(at([97, 4])).toBeUndefined() // single miss after a break
-  expect(at([0])).toBeUndefined() // first response
-  expect(at([12, 9])).toBe('#E69F00') // repeated misses
-  expect(cacheBand([12, 9])).toBe('warn')
-  expect(texts(segments(input(), 0))).not.toContain('cache ') // no reading yet
 })
 
 test('countdown moves while idle', async ($, on) => {
@@ -261,28 +273,5 @@ test('countdown moves while idle', async ($, on) => {
   await clock.advance(3 * 60_000)
   ui = await mount()
   expect(await ui.find({ type: 'Text', text: ' 2h37m' })).toBeDefined()
-  await ui.unmount()
-})
-
-test('cache pill fills from measure', async ($, on) => {
-  on('session.root', async () => ({ value: '/home/me/skills' }))
-  on('env.get', async () => ({ value: '/home/me' }))
-  on('session.model', async () => ({ value: 'claude-opus-5-5' }))
-  on('clock.now', async () => ({ value: NOW }))
-  on('session.measure', async (_$, e) => ({ changed: e.changed }))
-  on('session.usage', async () => ({
-    value: { startedAt: 0, rateLimits: [], context: { tokens: 1000, window: 1_000_000, breakdown: {
-      apiUsage: { input_tokens: 2, output_tokens: 10, cache_read_input_tokens: 98, cache_creation_input_tokens: 0 },
-    } } } as never,
-  }))
-  on('ui.render', async () => h('Box', {}) as never)
-
-  await $.session.measure({ context: { tokens: 1000, window: 1_000_000 }, rateLimits: [], changed: ['context'] } as never)
-  const ui = await $.ui.mount({
-    plugin: 'session-bar', surface: 'terminal', component: 'AbovePrompt',
-    props: { hasSurvey: false, isWorking: false, maxRows: 3 } as never,
-  })
-  expect(await ui.find({ type: 'Text', text: 'cache ' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: '98%' })).toBeDefined()
   await ui.unmount()
 })

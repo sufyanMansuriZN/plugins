@@ -5,7 +5,7 @@
     {
       "name": "session-bar",
       "source": "./plugins/session-bar",
-      "description": "Session dir, model, ctx, cache and paced usage pills above the prompt"
+      "description": "Session dir, model, ctx and paced usage pills above the prompt"
     }
   ]
 }

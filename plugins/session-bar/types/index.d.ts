@@ -7,7 +7,6 @@ declare module 'claude-code' {
     'session-bar': {
       limits: Limits; weekly: Weekly; fetchedAt: number; ctx?: Ctx
       tick: number
-      cache: number[] // the last two cache-hit ratios, 0-100, oldest first
     }
   }
 }

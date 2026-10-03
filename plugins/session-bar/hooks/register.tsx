@@ -14,7 +14,6 @@ const weekly = atom({ plugin: 'session-bar', key: 'weekly' } as const, [] as Wee
 const fetchedAt = atom({ plugin: 'session-bar', key: 'fetchedAt' } as const, 0)
 const ctx = atom({ plugin: 'session-bar', key: 'ctx' } as const, undefined as Ctx | undefined)
 const tick = atom({ plugin: 'session-bar', key: 'tick' } as const, 0) // bumped each minute so countdowns move while idle
-const cache = atom({ plugin: 'session-bar', key: 'cache' } as const, [] as number[])
 
 export type Level = keyof typeof ATTN | undefined
 
@@ -26,8 +25,10 @@ export const band = (pct: number): Level => pct >= 80 ? 'hot' : pct >= 50 ? 'war
 // 200K window (a 200K model, or an auto-compact window the engine may report instead) still turns hot before it
 // compacts. Warn is never capped: with a ~60K baseline, half of a 200K window would fire after a few reads.
 // Sources: openspec/changes/session-bar-visual-redesign/research-context-size.md
-export const ctxBand = ({ tokens, window }: Ctx): Level =>
-  tokens >= Math.min(250_000, window * 0.8) ? 'hot' : tokens >= 150_000 ? 'warn' : undefined
+export const CTX_WARN = 150_000
+export const ctxHot = ({ window }: Ctx) => Math.min(250_000, window * 0.8)
+export const ctxBand = (c: Ctx): Level =>
+  c.tokens >= ctxHot(c) ? 'hot' : c.tokens >= CTX_WARN ? 'warn' : undefined
 
 // 187400 -> 187K, 1000000 -> 1M
 export const tokensText = (n: number) => n >= 1e6 ? `${+(n / 1e6).toFixed(1)}M` : `${Math.round(n / 1000)}K`
@@ -37,16 +38,6 @@ export const paceBand = (pct: number, elapsed: number): Level => {
   const ahead = pct - elapsed * 100
   return ahead > 30 || pct >= 90 ? 'hot' : ahead > 15 ? 'warn' : undefined
 }
-
-// share of the last response's input served from the prompt cache, 0-100
-export const cacheRatio = (u: { input_tokens: number; cache_read_input_tokens: number; cache_creation_input_tokens: number }) => {
-  const total = u.input_tokens + u.cache_read_input_tokens + u.cache_creation_input_tokens
-  return total ? (u.cache_read_input_tokens / total) * 100 : undefined
-}
-
-// one miss is expected (fresh start, /compact, an idle gap past the cache's life); two in a row is a cache going cold
-export const cacheBand = (ratios: number[]): Level =>
-  ratios.length >= 2 && ratios.slice(-2).every(r => r < 50) ? 'warn' : undefined
 
 const HOUR = 3_600_000
 export const WEEK = 168 * HOUR
@@ -64,11 +55,17 @@ export const countdown = (ms: number) => {
 }
 
 // 10 cells (one per 10%) or 5, at half-cell steps: heavy ━ used, light ─ left, ╾ the half between them.
-// The two parts differ in weight, not only color, so the bar reads on any theme and inside an attention pill
-export const bar = (pct: number, cells = 10) => {
+// The two parts differ in weight, not only color, so the bar reads on any theme and inside an attention pill.
+// `tick` (a share of the scale, 0-1) swaps its cell for ┿, which then takes the look of the part it lands in
+export const bar = (pct: number, cells = 10, tick?: number) => {
   const halves = Math.round((Math.min(100, Math.max(0, pct)) / 100) * cells * 2)
   const used = '━'.repeat(halves >> 1) + (halves % 2 ? '╾' : '')
-  return { used, rest: '─'.repeat(cells - used.length) }
+  let line = used + '─'.repeat(cells - used.length)
+  if (tick !== undefined) {
+    const at = Math.min(cells - 1, Math.floor(tick * cells))
+    line = line.slice(0, at) + '┿' + line.slice(at + 1)
+  }
+  return { used: line.slice(0, used.length), rest: line.slice(used.length) }
 }
 
 // robbyrussell style: trailing path component, or ~ at $HOME
@@ -76,12 +73,14 @@ export const shortDir = (root: string, home?: string) =>
   root === home ? '~' : root.split('/').filter(Boolean).pop() ?? '/'
 
 // $.session.model() answers the id; the status line showed the label. No API gives the label, so derive it:
-// claude-opus-5-5[1m] -> Opus 5.5 1M, claude-haiku-4-5-20251001 -> Haiku 4.5; anything else as given
-export const modelLabel = (id: string) => {
+// claude-opus-5-5[1m] -> Opus 5.5 1M, claude-haiku-4-5-20251001 -> Haiku 4.5; anything else as given.
+// The window, once a reading names it, follows the name: the id carries [1m] only sometimes, and ctx no longer shows it
+export const modelLabel = (id: string, window?: number) => {
+  const size = window ? ` ${tokensText(window)}` : ''
   const m = /^claude-([a-z]+)((?:-\d{1,2})+)(?:-\d{8})?(\[1m\])?$/i.exec(id)
-  if (!m) return id
+  if (!m) return id + size
   const [, name, ver, big] = m as unknown as [string, string, string, string?]
-  return `${name[0]!.toUpperCase()}${name.slice(1)} ${ver.slice(1).replaceAll('-', '.')}${big ? ' 1M' : ''}`
+  return `${name[0]!.toUpperCase()}${name.slice(1)} ${ver.slice(1).replaceAll('-', '.')}${size || (big ? ' 1M' : '')}`
 }
 
 const LIMIT_LABELS: Record<string, string> = { five_hour: '5h', seven_day: '7d', spend_limit: '$' }
@@ -108,9 +107,9 @@ export const fresh = <T extends { resetsAt?: string }>(ls: T[], now: number) =>
 
 export type Run = { text: string; color?: string; backgroundColor?: string; dimColor?: boolean; bold?: boolean }
 export type Win = { label: string; pct: number; resetsAt?: string; windowMs?: number }
-export type BarInput = { dir: string; model?: string; ctx?: Ctx; windows: Win[]; now: number; cache?: number[] }
-// 0 full, 1 no countdowns, 2 short bars, 3 no bars
-export type Tier = 0 | 1 | 2 | 3
+export type BarInput = { dir: string; model?: string; ctx?: Ctx; windows: Win[]; now: number }
+// 0 full, 1 5h countdown only, 2 short bars, 3 no bars, 4 no countdowns
+export type Tier = 0 | 1 | 2 | 3 | 4
 
 const pace = (w: Win, now: number): Level =>
   w.resetsAt && w.windowMs ? paceBand(w.pct, elapsed(w.resetsAt, w.windowMs, now)) : band(w.pct)
@@ -125,8 +124,8 @@ const segment = (level: Level, runs: Run[]): Run[] => {
 
 export const segments = (b: BarInput, tier: Tier): Run[] => {
   const dim = (text: string): Run => ({ text, dimColor: true })
-  const meter = (label: string, pct: number, level: Level, value = `${Math.round(pct)}%`, after?: string) => {
-    const { used, rest } = bar(pct, tier < 2 ? 10 : 5)
+  const meter = (label: string, pct: number, level: Level, value = `${Math.round(pct)}%`, after?: string, tick?: number) => {
+    const { used, rest } = bar(pct, tier < 2 ? 10 : 5, tick)
     return segment(level, [
       dim(`${label} `),
       ...(tier < 3 ? [{ text: used }, dim(rest), { text: ' ' }] : []),
@@ -137,16 +136,16 @@ export const segments = (b: BarInput, tier: Tier): Run[] => {
 
   const groups: Run[][] = [[{ text: b.dir, bold: true }, ...(b.model ? [dim(` · ${b.model}`)] : [])]]
   if (b.ctx) {
-    // the bar shows the window's share; the tokens beside it explain the color
-    const { tokens, window } = b.ctx
-    groups.push(meter('ctx', (tokens / window) * 100, ctxBand(b.ctx), `${tokensText(tokens)}/${tokensText(window)}`))
+    // the bar runs to the hot threshold, so bar and color share one scale: full means hot, ┿ marks warn
+    const hot = ctxHot(b.ctx)
+    groups.push(meter('ctx', (b.ctx.tokens / hot) * 100, ctxBand(b.ctx), tokensText(b.ctx.tokens), undefined, CTX_WARN / hot))
   }
   for (const w of b.windows) {
+    // the 5h reset is the one watched, so it stays until the last tier; weekly ones only show at full width
     const left = w.resetsAt ? Date.parse(w.resetsAt) - b.now : 0
-    groups.push(meter(w.label, w.pct, pace(w, b.now), undefined, tier === 0 && left > 0 ? countdown(left) : undefined))
+    const shown = tier === 0 || (tier < 4 && w.windowMs === WINDOW_MS.five_hour)
+    groups.push(meter(w.label, w.pct, pace(w, b.now), undefined, shown && left > 0 ? countdown(left) : undefined))
   }
-  const last = b.cache?.at(-1)
-  if (last !== undefined) groups.push(segment(cacheBand(b.cache!), [dim('cache '), { text: `${Math.round(last)}%` }]))
   return groups.flatMap((g, i) => i ? [{ text: '   ' }, ...g] : g)
 }
 
@@ -154,11 +153,11 @@ export const width = (runs: Run[]) => runs.reduce((n, r) => n + [...r.text].leng
 
 // the richest tier that fits one row
 export const layout = (b: BarInput, columns = Infinity): Run[] => {
-  for (const tier of [0, 1, 2] as const) {
+  for (const tier of [0, 1, 2, 3] as const) {
     const runs = segments(b, tier)
     if (width(runs) <= columns) return runs
   }
-  return segments(b, 3)
+  return segments(b, 4)
 }
 
 const refreshUsage = async ($: EngineInterface, force = false) => {
@@ -214,29 +213,20 @@ export const register: Register = on => {
     }
     const { tokens, window } = e.context
     if (tokens !== undefined && window) await update($, ctx, () => ({ tokens, window }))
-    const result = await next(e)
-    // the token split rides on the breakdown; 'summary' estimates locally and sends no request
-    if (e.changed.includes('context')) {
-      try {
-        const u = (await $.session.usage({ breakdown: 'summary' })).context.breakdown?.apiUsage
-        const r = u ? cacheRatio(u) : undefined
-        if (r !== undefined) await update($, cache, rs => [...rs, r].slice(-2))
-      } catch {} // no reading: the pill keeps its last one
-    }
-    return result
+    return next(e)
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    const [root, home, model, c, ls, ws, now, , ratios] = await Promise.all([
+    const [root, home, model, c, ls, ws, now] = await Promise.all([
       $.session.root(), $.env.get('HOME'), $.session.model(), read($, ctx), read($, limits), read($, weekly),
-      $.clock.now(), read($, tick), read($, cache),
+      $.clock.now(), read($, tick),
     ])
     const windows: Win[] = [
       ...fresh(ls, now).map(l => ({ label: limitText(l), pct: l.percentUsed, resetsAt: l.resetsAt, windowMs: WINDOW_MS[l.kind] })),
       ...fresh(ws, now).map(w => ({ label: w.name, pct: w.percent, resetsAt: w.resetsAt, windowMs: WEEK })),
     ]
     const runs = layout(
-      { dir: shortDir(root, home), model: model ? modelLabel(model) : undefined, ctx: c, windows, now, cache: ratios },
+      { dir: shortDir(root, home), model: model ? modelLabel(model, c?.window) : undefined, ctx: c, windows, now },
       e.props.bodyColumns,
     )
     const { Box, Text } = $.ui.resolve(e)

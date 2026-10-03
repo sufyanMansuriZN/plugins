@@ -1,1 +1,1 @@
-{ "name": "session-bar", "version": "0.7.2", "description": "Session dir, model, ctx, cache and paced usage pills above the prompt", "types": "./types/index.d.ts" }
+{ "name": "session-bar", "version": "0.8.1", "description": "Session dir, model, ctx and paced usage pills above the prompt", "types": "./types/index.d.ts" }

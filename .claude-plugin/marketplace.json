@@ -1,11 +1,18 @@
 {
   "name": "skills",
-  "owner": { "name": "sufyan.mansuri" },
+  "owner": {
+    "name": "sufyan.mansuri"
+  },
   "plugins": [
     {
       "name": "session-bar",
       "source": "./plugins/session-bar",
       "description": "Session dir, model, ctx and paced usage pills above the prompt"
+    },
+    {
+      "name": "pstack",
+      "source": "./plugins/pstack",
+      "description": "Claude Code port of Cursor's pstack: poteto-mode playbooks, principles, and multi-model panels"
     }
   ]
 }

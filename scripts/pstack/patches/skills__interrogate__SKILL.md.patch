@@ -1,0 +1,24 @@
+diff --git a/skills/interrogate/SKILL.md b/skills/interrogate/SKILL.md
+index 960d630..95a6dc6 100644
+--- a/skills/interrogate/SKILL.md
++++ b/skills/interrogate/SKILL.md
+@@ -44,9 +44,17 @@ Launch all reviewers in a single message using the Agent tool. Use the `interrog
+ For each reviewer:
+ - `subagent_type`: `general-purpose`
+ - `model`: the configured `interrogate reviewers` entry, or the table default with no configured line. For an `auto` or `inherit` entry, omit `model` so that reviewer runs on the parent model.
+-- `readonly`: `true`
++- the seat's stance from the table below, filled into the template's `{STANCE}`
+ 
+-If the Agent tool rejects a configured entry, run that reviewer on the table default of its family and say so. Families go by prefix: `claude-*`, `gpt-*`, and `grok-*`. With no family match, use Reviewer A's default. If it rejects a table default, check the valid slugs in the Agent tool's error message, pick the closest equivalent (prefer the highest-reasoning tier of the same family), spawn with it, and open a separate PR to update the default table. Do not block the review on the slug issue. Never treat an alias entry as a rejected slug or apply either fallback to it.
++If the Agent tool rejects a configured entry, run that reviewer on its table default and say so. Reviewers past C default to Reviewer A's model. Never treat an alias entry as a rejected value.
++
++Claude tiers share a lineage, so each seat also hunts from a different stance. Stances follow the seat, not the model, so `opus, opus, opus` still gets three stances. Reviewers past C get no stance.
++
++| Seat | Stance |
++|------|--------|
++| Reviewer A | Hunt correctness: wrong results, broken edge cases, races, error paths, security holes. |
++| Reviewer B | Hunt the premise and the abstraction: whether this shape is the right one, what could be deleted, where the design fights the problem. |
++| Reviewer C | Hunt reader load and weak tests: what a maintainer will misread, and which tests would still pass if the code were wrong. |
+ 
+ Read `references/reviewer-prompt.md` and fill in the template with:
+ 1. The stated intent

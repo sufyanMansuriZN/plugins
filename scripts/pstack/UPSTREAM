@@ -1,0 +1,7 @@
+# Pinned upstream for scripts/pstack/sync.sh. Sourced by bash.
+# Bump: set UPSTREAM_SHA, rerun sync. If upstream's pstack version changed,
+# sync fails and asks you to set UPSTREAM_VERSION and reset PORT_REV=1.
+UPSTREAM_REPO=https://github.com/cursor/plugins.git
+UPSTREAM_SHA=23e4138daa01c42d4969f7a5465f82704e64f798
+UPSTREAM_VERSION=0.15.6
+PORT_REV=1

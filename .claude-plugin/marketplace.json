@@ -1,0 +1,11 @@
+{
+  "name": "skills",
+  "owner": { "name": "sufyan.mansuri" },
+  "plugins": [
+    {
+      "name": "session-bar",
+      "source": "./plugins/session-bar",
+      "description": "Session dir, model, ctx, cache and paced usage pills above the prompt"
+    }
+  ]
+}

@@ -195,7 +195,7 @@ test('context: tokens of the window, colored by tokens sent', async () => {
   expect(texts(segments(input({ ctx: undefined }), 0))).not.toContain('ctx ')
 })
 
-test('context bar runs to the hot threshold, ┿ at warn', async () => {
+test('context bar runs to the hot threshold, warn tick matches the line weight', async () => {
   const M = 1_000_000
   // the ctx bar is the first run after the label, then its dimmed rest
   const ctxBar = (tokens: number, window = M, tier: 0 | 2 = 0) => {
@@ -204,17 +204,18 @@ test('context bar runs to the hot threshold, ┿ at warn', async () => {
     return [runs[i + 1]!, runs[i + 2]!]
   }
   const line = (...a: Parameters<typeof ctxBar>) => ctxBar(...a).map(r => r.text).join('')
-  expect(line(120_000)).toBe('━━━━━─┿───') // below warn
+  expect(line(120_000)).toBe('━━━━━─┼───') // below warn
   expect(line(187_400)).toBe('━━━━━━┿╾──') // past warn
+  expect(line(160_000)).toBe('━━━━━━┽───') // fill ends on the tick's cell
   expect(line(260_000)).toBe('━━━━━━┿━━━') // past hot: clamped full
-  expect(line(80_000, 200_000)).toBe('━━━━━────┿') // a 200K window runs to 160K
-  expect(line(120_000, M, 2)).toBe('━━╾┿─') // short bars
+  expect(line(80_000, 200_000)).toBe('━━━━━────┼') // a 200K window runs to 160K
+  expect(line(120_000, M, 2)).toBe('━━╾┼─') // short bars
 
   const [usedRun, restRun] = ctxBar(120_000)
-  expect(restRun).toEqual({ text: '─┿───', dimColor: true }) // tick not reached: dimmed with the rest
+  expect(restRun).toEqual({ text: '─┼───', dimColor: true }) // tick not reached: dimmed with the rest
   expect(usedRun!.dimColor).toBeUndefined()
   const [reached] = ctxBar(149_000, 200_000) // still calm, but the fill has reached the tick's cell
-  expect(reached).toEqual({ text: '━━━━━━━━━┿' }) // drawn like the used part
+  expect(reached).toEqual({ text: '━━━━━━━━━┽' }) // drawn like the used part
 })
 
 test('tiers and layout', async () => {

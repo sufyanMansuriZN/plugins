@@ -78,11 +78,15 @@ The context segment SHALL show the context's input tokens (e.g. `187K`), labelle
 - **THEN** no context segment is drawn
 
 ### Requirement: Context bar
-The context segment SHALL show a bar before its token count that runs from 0 to its vermillion threshold, so a full bar means vermillion. It SHALL use the usage bars' glyphs, cell counts and half-cell steps, clamped at full. The cell holding the orange threshold SHALL be a `┿` tick, drawn like the used part once the fill reaches that cell and dimmed like the rest before that.
+The context segment SHALL show a bar before its token count that runs from 0 to its vermillion threshold, so a full bar means vermillion. It SHALL use the usage bars' glyphs, cell counts and half-cell steps, clamped at full. The cell holding the orange threshold SHALL be a tick whose horizontal stroke keeps the weight of the cell it replaces: `┿` on a used cell, `┼` on a remaining cell, and `┽` on the half-filled cell. The tick SHALL be drawn like the used part once the fill reaches that cell and dimmed like the rest before that.
 
 #### Scenario: Below the warn tick
 - **WHEN** the context holds 120,000 tokens of a 1,000,000-token window
-- **THEN** its bar reads `━━━━━─┿───`
+- **THEN** its bar reads `━━━━━─┼───`
+
+#### Scenario: Fill ends on the tick's cell
+- **WHEN** the context holds 160,000 tokens of a 1,000,000-token window
+- **THEN** its bar reads `━━━━━━┽───`
 
 #### Scenario: Past the warn tick
 - **WHEN** the context holds 187,400 tokens of a 1,000,000-token window
@@ -94,11 +98,11 @@ The context segment SHALL show a bar before its token count that runs from 0 to 
 
 #### Scenario: A 200K window shortens the scale
 - **WHEN** the context holds 80,000 tokens of a 200,000-token window
-- **THEN** its bar runs to 160,000 tokens and reads `━━━━━────┿`
+- **THEN** its bar runs to 160,000 tokens and reads `━━━━━────┼`
 
 #### Scenario: Short bars
 - **WHEN** the bar is drawn at 5 cells with 120,000 tokens of a 1,000,000-token window
-- **THEN** its bar reads `━━╾┿─`
+- **THEN** its bar reads `━━╾┼─`
 
 ### Requirement: Model label
 The model segment SHALL show the model's name and version (e.g. `Opus 5.5`) followed by the context window size once the session has a context reading (e.g. `Opus 5.5 1M`). Before that, it SHALL show `1M` only when the model ID names the 1M window (`[1m]`).

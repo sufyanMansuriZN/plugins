@@ -56,14 +56,16 @@ export const countdown = (ms: number) => {
 
 // 10 cells (one per 10%) or 5, at half-cell steps: heavy ━ used, light ─ left, ╾ the half between them.
 // The two parts differ in weight, not only color, so the bar reads on any theme and inside an attention pill.
-// `tick` (a share of the scale, 0-1) swaps its cell for ┿, which then takes the look of the part it lands in
+// `tick` (a share of the scale, 0-1) swaps its cell for a cross keeping that cell's line weight: ┿ on used,
+// ┽ on the half, ┼ on what's left. It then takes the look of the part it lands in
 export const bar = (pct: number, cells = 10, tick?: number) => {
   const halves = Math.round((Math.min(100, Math.max(0, pct)) / 100) * cells * 2)
   const used = '━'.repeat(halves >> 1) + (halves % 2 ? '╾' : '')
   let line = used + '─'.repeat(cells - used.length)
   if (tick !== undefined) {
     const at = Math.min(cells - 1, Math.floor(tick * cells))
-    line = line.slice(0, at) + '┿' + line.slice(at + 1)
+    const mark = at < halves >> 1 ? '┿' : at < used.length ? '┽' : '┼'
+    line = line.slice(0, at) + mark + line.slice(at + 1)
   }
   return { used: line.slice(0, used.length), rest: line.slice(used.length) }
 }
@@ -136,7 +138,7 @@ export const segments = (b: BarInput, tier: Tier): Run[] => {
 
   const groups: Run[][] = [[{ text: b.dir, bold: true }, ...(b.model ? [dim(` · ${b.model}`)] : [])]]
   if (b.ctx) {
-    // the bar runs to the hot threshold, so bar and color share one scale: full means hot, ┿ marks warn
+    // the bar runs to the hot threshold, so bar and color share one scale: full means hot, the tick marks warn
     const hot = ctxHot(b.ctx)
     groups.push(meter('ctx', (b.ctx.tokens / hot) * 100, ctxBand(b.ctx), tokensText(b.ctx.tokens), undefined, CTX_WARN / hot))
   }

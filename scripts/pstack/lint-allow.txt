@@ -1,3 +1,0 @@
-# Files allowed to mention Cursor-only tokens (attribution only), one path per line.
-NOTICE.md
-LICENSE

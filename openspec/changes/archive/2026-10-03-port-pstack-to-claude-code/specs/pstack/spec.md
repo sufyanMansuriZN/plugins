@@ -104,8 +104,8 @@ Every instruction that upstream sends to a Cursor cloud agent SHALL instead run 
 Skills that read past sessions (recall, session-pickup, eval, worktree-audit) SHALL find transcripts at `~/.claude/projects/<slug>/<session-id>.jsonl`. `<slug>` is the absolute workspace path with every character that is not a letter or digit replaced by `-`, so `/` and `.` both become `-` and the leading `-` stays.
 
 #### Scenario: Recall in this repository
-- **WHEN** `/recall` runs in `/home/sufyan.mansuri/Projects/dev/skills`
-- **THEN** it searches `~/.claude/projects/-home-sufyan-mansuri-Projects-dev-skills/*.jsonl`
+- **WHEN** `/recall` runs in `~/Projects/plugins`
+- **THEN** it searches `~/.claude/projects/-home-me-Projects-plugins/*.jsonl`
 
 #### Scenario: Worktree audit
 - **WHEN** `worktree-audit.sh` runs on a machine with Claude Code transcripts

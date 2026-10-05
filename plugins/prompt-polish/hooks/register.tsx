@@ -1,15 +1,16 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, PromptSubmitInput, PromptSubmitResult, Register, SessionMessage } from 'claude-code'
+import type { EngineInterface, Register, SessionMessage } from 'claude-code'
 
-import type { Held } from '../types'
+import type { Held, HeldView } from '../types'
 
 // ---------------------------------------------------------------------------
 // Session state
 // ---------------------------------------------------------------------------
 
 const enabled = atom({ plugin: 'prompt-polish', key: 'enabled' } as const, true)
+const ready = atom({ plugin: 'prompt-polish', key: 'ready' } as const, false)
+const busy = atom({ plugin: 'prompt-polish', key: 'busy' } as const, false)
 const held = atom({ plugin: 'prompt-polish', key: 'held' } as const, null as Held | null)
-const armed = atom({ plugin: 'prompt-polish', key: 'armed' } as const, false)
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -35,11 +36,8 @@ Rules:
 - Output only the polished prompt: no preamble, no explanation, no quotes or code fence around it, no notes after it.`
 
 // ---------------------------------------------------------------------------
-// Gate: what is never polished
+// Polishable: what the hint shows for
 // ---------------------------------------------------------------------------
-
-export type GateInput = Pick<PromptSubmitInput, 'origin' | 'turnId' | 'attachments'>
-export type GateReason = 'off' | 'origin' | 'mid-turn' | 'attachments' | 'short' | 'ack' | 'command'
 
 const ACKS = new Set([
   // English
@@ -82,17 +80,12 @@ export const isAck = (text: string): boolean => {
   return true
 }
 
-/** The reason a submission passes through untouched, or null to polish it. */
-export const gate = (text: string, e: GateInput, isEnabled = true): GateReason | null => {
-  if (!isEnabled) return 'off'
-  if (e.origin.kind !== 'composer') return 'origin'
-  if (e.turnId !== undefined) return 'mid-turn'
-  if (e.attachments !== undefined && e.attachments.length > 0) return 'attachments'
+/** True for a draft worth offering to polish: a task of six words or more, not a command line, not a bare acknowledgement. */
+export const polishable = (text: string): boolean => {
   const trimmed = text.trim()
-  if (!trimmed.includes('\n') && /^[/!]/.test(trimmed)) return 'command'
-  if (words(trimmed).length < MIN_WORDS) return 'short'
-  if (isAck(trimmed)) return 'ack'
-  return null
+  if (!trimmed.includes('\n') && /^[/!]/.test(trimmed)) return false
+  if (words(trimmed).length < MIN_WORDS) return false
+  return !isAck(trimmed)
 }
 
 // ---------------------------------------------------------------------------
@@ -286,36 +279,26 @@ export const clean = (original: string, reply: string): string => {
 // Engine hooks
 // ---------------------------------------------------------------------------
 
-type Next = (e: PromptSubmitInput) => Promise<PromptSubmitResult>
-
-export const COMMAND_DESCRIPTION = 'Prompt polishing: on, off, restore (original back in the box), or no argument for status'
-export const POLISHED_NOTICE = 'polished; the draft is in the box above'
-/** The band's lead line; the choices under it carry the keys. */
-export const BAND_LEAD = 'review and press Enter to send, or ctrl+x tab, then:'
-export const BAND_TAG = 'polished'
+/** The engine action whose chord (ctrl+↓ or alt+↓ by default) presses the band's polish Button from the prompt. */
+export const CHORD_ACTION = 'app:diffFileListDown'
+export const CHORD = 'ctrl+↓'
+export const COMMAND_DESCRIPTION = 'Polish the draft in the prompt box: no argument or <text> polishes, on, off, restore (original back in the box)'
+export const TAG_READY = 'polish'
+export const TAG_HELD = 'polished'
+export const LEAD_READY = `${CHORD} polishes this draft before you send it, or ctrl+x tab, then:`
+export const LEAD_BUSY = 'polishing…'
+export const LEAD_HELD = `review and press Enter to send · ${CHORD} swaps the original back`
+export const LABEL_POLISH = 'Polish draft'
+export const LABEL_RESTORE = 'Restore original'
+export const LABEL_POLISHED = 'Use polished'
+export const LABEL_OFF = 'Polishing off'
+export const LABEL_DISMISS = 'Dismiss'
+export const NOTHING_TO_POLISH = 'Nothing to polish: the prompt box is empty.'
 
 const setEnabled = async ($: EngineInterface, value: boolean) => {
   await update($, enabled, () => value)
   await $.store.set('enabled', value)
   if (!value) await update($, held, () => null)
-}
-
-/** Puts the held original back in the box and arms the next Enter to send it as typed. */
-const restore = async ($: EngineInterface): Promise<string> => {
-  const h = await read($, held)
-  if (!h) return 'Nothing to restore: no prompt has been polished in this session.'
-  const r = await $.prompt.fill({ text: h.original, mode: 'replace' })
-  if (!r.isFilled) return `Could not write the prompt box (${r.refusal ?? 'refused'}).`
-  await update($, armed, () => true)
-  return 'Original prompt restored; Enter sends it as typed.'
-}
-
-/** Every failure path: the original back in the box, armed, and the reason as the notice. */
-const giveBack = async ($: EngineInterface, e: PromptSubmitInput, next: Next, reason: string): Promise<PromptSubmitResult> => {
-  const r = await $.prompt.fill({ text: e.text, mode: 'replace' })
-  if (!r.isFilled) return next(e)
-  await update($, armed, () => true)
-  return { drop: reason }
 }
 
 const gather = async ($: EngineInterface): Promise<Context> => {
@@ -330,85 +313,163 @@ const gather = async ($: EngineInterface): Promise<Context> => {
   return trimContext(rows, instructions)
 }
 
+const decorate = (original: string, polished: string) =>
+  added(original, polished).map(r => ({ ...r, color: ADDED_COLOR }))
+
+/** Puts one of the held texts in the box and records which. */
+const show = async ($: EngineInterface, h: Held, view: Exclude<HeldView, 'edited'>): Promise<string> => {
+  const text = view === 'polished' ? h.polished : h.original
+  const r = await $.prompt.fill({
+    text,
+    mode: 'replace',
+    ...(view === 'polished' ? { decorations: decorate(h.original, h.polished) } : {}),
+  })
+  if (!r.isFilled) return `Could not write the prompt box (${r.refusal ?? 'refused'}).`
+  await update($, held, () => ({ ...h, view }))
+  return view === 'polished' ? 'Polished text back in the box; Enter sends it.' : 'Original prompt restored; Enter sends it as typed.'
+}
+
+/**
+ * Polishes `text` (the box's draft when absent) into the box. Every failure
+ * leaves the box as it was and says why in a toast; nothing reaches the
+ * transcript. Resolves to the line the caller may show.
+ */
+const polishNow = async ($: EngineInterface, given?: string): Promise<string> => {
+  if (await read($, busy)) return LEAD_BUSY
+  const original = (given ?? (await $.prompt.read()).text).trim()
+  if (original.length === 0) {
+    $.ui.toast(NOTHING_TO_POLISH)
+    return NOTHING_TO_POLISH
+  }
+  const fail = (reason: string): string => {
+    $.ui.toast(reason)
+    return reason
+  }
+  await update($, busy, () => true)
+  $.ui.status(LEAD_BUSY)
+  try {
+    const context = await gather($)
+    const reply = await $.model.complete({
+      model: MODEL,
+      system: SYSTEM,
+      prompt: buildPrompt(original, context),
+      maxTokens: MAX_TOKENS,
+      effort: 'low',
+      timeoutMs: TIMEOUT_MS,
+    })
+    if (!reply.isAnswered) return fail(`Polish failed (${reply.reason}); the draft is unchanged.`)
+    const polished = clean(original, reply.text)
+    if (polished.length === 0) return fail('Polish discarded: empty reply; the draft is unchanged.')
+    if (!preserves(original, polished)) {
+      return fail('Polish discarded: a code span, path or identifier was altered; the draft is unchanged.')
+    }
+    if (!withinLength(original, polished)) return fail('Polish discarded: the reply grew too long; the draft is unchanged.')
+    const fill = await $.prompt.fill({ text: polished, mode: 'replace', decorations: decorate(original, polished) })
+    if (!fill.isFilled) return fail(`Could not write the prompt box (${fill.refusal ?? 'refused'}); the draft is unchanged.`)
+    await update($, held, () => ({ original, polished, view: 'polished' }))
+    return 'Polished; review and press Enter to send.'
+  } finally {
+    await update($, busy, () => false)
+    $.ui.status(undefined)
+  }
+}
+
+/** The chord's work: swap between the held texts while the box shows one of them unedited, else polish afresh. */
+const toggle = async ($: EngineInterface): Promise<string> => {
+  const h = await read($, held)
+  if (h) {
+    const box = (await $.prompt.read()).text
+    if (box === h.polished) return show($, h, 'original')
+    if (box === h.original) return show($, h, 'polished')
+  }
+  return polishNow($)
+}
+
+const restore = async ($: EngineInterface): Promise<string> => {
+  const h = await read($, held)
+  if (!h) return 'Nothing to restore: no prompt has been polished in this session.'
+  return show($, h, 'original')
+}
+
+const status = async ($: EngineInterface): Promise<string> => {
+  const isOn = await read($, enabled)
+  return [
+    `Prompt polishing is ${isOn ? 'on' : 'off'}.`,
+    `With a draft in the box, ${CHORD} (or alt+↓, the chord bound to ${CHORD_ACTION}) polishes it; ctrl+x tab then 1 does the same.`,
+    'For a key of your own, bind "command:polish" in the Chat context of ~/.claude/keybindings.json.',
+    'Arguments: on, off, restore, or the text to polish.',
+  ].join('\n')
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const stored = await $.store.get('enabled')
     await update($, enabled, () => stored !== false)
+    await update($, ready, () => false)
+    await update($, busy, () => false)
     await update($, held, () => null)
-    await update($, armed, () => false)
-    await $.command.register({ name: 'polish', description: COMMAND_DESCRIPTION, argumentHint: '[on|off|restore]' })
+    await $.command.register({ name: 'polish', description: COMMAND_DESCRIPTION, argumentHint: '[on|off|restore|text]' })
     return next(e)
   })
 
   on('command.run', { command: 'polish' }, async ($, e) => {
-    const arg = e.args.trim().toLowerCase()
-    if (arg === 'on' || arg === 'off') {
-      await setEnabled($, arg === 'on')
-      return { text: `Prompt polishing ${arg}${arg === 'off' ? ' for this session and as the default; /polish on turns it back' : ''}.` }
+    // Typing the command emptied the box; the hint has nothing to point at.
+    await update($, ready, () => false)
+    const arg = e.args.trim()
+    const word = arg.toLowerCase()
+    if (word === 'on' || word === 'off') {
+      await setEnabled($, word === 'on')
+      return { text: `Prompt polishing ${word}${word === 'off' ? ' for this session and as the default; /polish on turns it back' : ''}.` }
     }
-    if (arg === 'restore') return { text: await restore($) }
-    const isOn = await read($, enabled)
-    return { text: `Prompt polishing is ${isOn ? 'on' : 'off'}. Arguments: on, off, restore.` }
+    if (word === 'restore') return { text: await restore($) }
+    if (!(await read($, enabled))) return { text: await status($) }
+    if (arg.length > 0) return { text: await polishNow($, arg) }
+    const box = (await $.prompt.read()).text
+    if (box.trim().length > 0) return { text: await polishNow($, box) }
+    return { text: await status($) }
   })
 
   on('prompt.submit', async ($, e, next) => {
-    if (e.origin.kind !== 'composer') return next(e)
-    if (await read($, armed)) {
-      await update($, armed, () => false)
-      await update($, held, () => null)
-      return next(e)
+    // Never held, never dropped: the send empties the box without a prompt.edit, so tidy here.
+    if (e.origin.kind === 'composer') {
+      if (await read($, ready)) await update($, ready, () => false)
+      if (await read($, held)) await update($, held, () => null)
     }
-    const reason = gate(e.text, e, await read($, enabled))
-    if (reason !== null) return next(e)
-
-    $.ui.status('polishing…')
-    try {
-      const context = await gather($)
-      const reply = await $.model.complete({
-        model: MODEL,
-        system: SYSTEM,
-        prompt: buildPrompt(e.text, context),
-        maxTokens: MAX_TOKENS,
-        effort: 'low',
-        timeoutMs: TIMEOUT_MS,
-      })
-      if (!reply.isAnswered) return giveBack($, e, next, `polish failed (${reply.reason}); original restored, Enter sends it`)
-      const polished = clean(e.text, reply.text)
-      if (polished.length === 0) return giveBack($, e, next, 'polish discarded: empty reply; original restored, Enter sends it')
-      if (!preserves(e.text, polished)) {
-        return giveBack($, e, next, 'polish discarded: a code span, path or identifier was altered; original restored, Enter sends it')
-      }
-      if (!withinLength(e.text, polished)) {
-        return giveBack($, e, next, 'polish discarded: the reply grew too long; original restored, Enter sends it')
-      }
-      const decorations = added(e.text, polished).map(r => ({ ...r, color: ADDED_COLOR }))
-      const fill = await $.prompt.fill({ text: polished, mode: 'replace', decorations })
-      if (!fill.isFilled) return next(e)
-      await update($, held, () => ({ original: e.text, polished }))
-      await update($, armed, () => true)
-      return { drop: POLISHED_NOTICE }
-    } finally {
-      $.ui.status(undefined)
-    }
+    return next(e)
   })
 
   on('prompt.edit', async ($, e, next) => {
     const box = await next(e)
-    if (box.text.length === 0 && (await read($, armed))) await update($, armed, () => false)
+    const isReady = polishable(box.text)
+    if (isReady !== (await read($, ready))) await update($, ready, () => isReady)
+    const h = await read($, held)
+    if (h) {
+      if (box.text.length === 0) {
+        await update($, held, () => null)
+      } else {
+        const view: HeldView = box.text === h.polished ? 'polished' : box.text === h.original ? 'original' : 'edited'
+        if (view !== h.view) await update($, held, () => ({ ...h, view }))
+      }
+    }
     return box
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    const h0 = await read($, held)
-    const isOn = await read($, enabled)
-    if (!h0 || !isOn || e.props.hasSurvey) return next(e)
+    if (!(await read($, enabled)) || e.props.hasSurvey) return next(e)
+    const isBusy = await read($, busy)
+    const hold = await read($, held)
+    const isReady = await read($, ready)
+    if (!isBusy && !hold && !isReady) return next(e)
     const { Box, Button, Text } = $.ui.resolve(e)
     const below = await next(e)
-    const choice = (key: string, hotkey: string, label: string, onPress: () => void, role?: 'dismiss') => (
+    const choice = (key: string, hotkey: string, label: string, onPress: () => void, extra: { action?: string; role?: 'dismiss' } = {}) => (
       <Box key={key} marginRight={3}>
-        <Button key={key} hotkey={hotkey} label={label} plain role={role} onPress={onPress} />
+        <Button key={key} hotkey={hotkey} label={label} plain onPress={onPress} {...extra} />
       </Box>
     )
+    const tag = hold ? TAG_HELD : TAG_READY
+    const lead = isBusy ? LEAD_BUSY : hold ? LEAD_HELD : LEAD_READY
+    const first = hold ? (hold.view === 'original' ? LABEL_POLISHED : LABEL_RESTORE) : LABEL_POLISH
     return (
       <Box flexDirection="column">
         <Box flexDirection="column" marginTop={1}>
@@ -417,18 +478,20 @@ export const register: Register = on => {
               <Text color="suggestion">✦</Text>
             </Box>
             <Text wrap="wrap">
-              <Text dimColor>{BAND_TAG} · </Text>
-              {BAND_LEAD}
+              <Text dimColor>{tag} · </Text>
+              {lead}
             </Text>
           </Box>
-          <Box flexDirection="row" alignItems="flex-start">
-            <Box flexShrink={0} width={2} />
-            <Box flexWrap="wrap">
-              {choice('restore', '1', 'Restore original', () => void restore($))}
-              {choice('off', '2', 'Polishing off', () => void setEnabled($, false))}
-              {choice('dismiss', '0', 'Dismiss', () => void update($, held, () => null), 'dismiss')}
+          {!isBusy && (
+            <Box flexDirection="row" alignItems="flex-start">
+              <Box flexShrink={0} width={2} />
+              <Box flexWrap="wrap">
+                {choice('polish', '1', first, () => void toggle($), { action: CHORD_ACTION })}
+                {choice('off', '2', LABEL_OFF, () => void setEnabled($, false))}
+                {hold && choice('dismiss', '0', LABEL_DISMISS, () => void update($, held, () => null), { role: 'dismiss' })}
+              </Box>
             </Box>
-          </Box>
+          )}
         </Box>
         {below}
       </Box>

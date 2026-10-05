@@ -14,61 +14,57 @@ import type {
 } from 'claude-code'
 
 import {
+  CHORD_ACTION,
   INSTRUCTION_CHARS,
-  POLISHED_NOTICE,
+  LABEL_DISMISS,
+  LABEL_OFF,
+  LABEL_POLISH,
+  LABEL_POLISHED,
+  LABEL_RESTORE,
+  LEAD_BUSY,
   RECENT_ROWS,
   added,
   buildPrompt,
   clean,
-  gate,
+  polishable,
   preserves,
   spans,
   trimContext,
   withinLength,
 } from './register'
 
-const composer = { origin: { kind: 'composer' } as const }
-
 // ---------------------------------------------------------------------------
-// gate
+// polishable
 // ---------------------------------------------------------------------------
 
-describe('gate', () => {
-  test('passes "yes, go ahead" as an acknowledgement', async () => {
-    expect(gate('yes, go ahead', composer)).toBe('short')
-    expect(gate('yes, go ahead, please do it and continue', composer)).toBe('ack')
+describe('polishable', () => {
+  test('"yes, go ahead" is not offered', async () => {
+    expect(polishable('yes, go ahead')).toBe(false)
+    expect(polishable('yes, go ahead, please do it and continue')).toBe(false)
   })
 
-  test('passes "haan kar do" as a Hinglish acknowledgement', async () => {
-    expect(gate('haan kar do', composer)).toBe('short')
-    expect(gate('haan bhai theek hai kar do chalo', composer)).toBe('ack')
+  test('"haan kar do" is not offered', async () => {
+    expect(polishable('haan kar do')).toBe(false)
+    expect(polishable('haan bhai theek hai kar do chalo')).toBe(false)
   })
 
-  test('passes a 5-word task as short', async () => {
-    expect(gate('fix the login redirect bug', composer)).toBe('short')
+  test('a 5-word task is not offered', async () => {
+    expect(polishable('fix the login redirect bug')).toBe(false)
   })
 
-  test('polishes a 7-word task', async () => {
-    expect(gate('fix the login redirect bug in prod', composer)).toBeNull()
+  test('a 7-word task is offered', async () => {
+    expect(polishable('fix the login redirect bug in prod')).toBe(true)
   })
 
-  test('passes a /command line', async () => {
-    expect(gate('/foo bar baz qux quux corge grault', composer)).toBe('command')
-    expect(gate('!ls -la the whole directory tree please', composer)).toBe('command')
+  test('a /command or ! line is not offered', async () => {
+    expect(polishable('/foo bar baz qux quux corge grault')).toBe(false)
+    expect(polishable('!ls -la the whole directory tree please')).toBe(false)
+    expect(polishable('/foo bar\nfix the login redirect bug in prod')).toBe(true)
   })
 
-  test('passes a peer origin', async () => {
-    expect(gate('please merge the feature branch into main now', { origin: { kind: 'peer' } })).toBe('origin')
-  })
-
-  test('passes a mid-turn prompt', async () => {
-    expect(gate('also run the tests after you finish that', { ...composer, turnId: 't1' })).toBe('mid-turn')
-  })
-
-  test('passes attachments and off', async () => {
-    const attachments = [{ kind: 'image' }] as never
-    expect(gate('what is wrong in this screenshot of the page', { ...composer, attachments })).toBe('attachments')
-    expect(gate('fix the login redirect bug in prod', composer, false)).toBe('off')
+  test('an empty box is not offered', async () => {
+    expect(polishable('')).toBe(false)
+    expect(polishable('   ')).toBe(false)
   })
 })
 
@@ -228,14 +224,18 @@ describe('withinLength', () => {
 // ---------------------------------------------------------------------------
 
 type Harness = {
+  box: string
   fills: PromptFillInput[]
   completes: ModelCompleteRequest[]
   nexts: PromptSubmitInput[]
   commands: CommandSpec[]
+  toasts: string[]
   stored: Record<string, unknown>
   rows: SessionMessage[]
-  reply: () => ModelCompleteResult
+  reply: () => ModelCompleteResult | Promise<ModelCompleteResult>
   fillResult: PromptFillResult
+  /** Called after each fill, for a test waiting on a press whose work outlives it. */
+  filled?: () => void
 }
 
 const ORIGINAL = 'fix the date bug in src/dates.ts, `parseDate` is returning wrong year for leap days'
@@ -244,12 +244,15 @@ const POLISHED = 'Fix the date bug in src/dates.ts: `parseDate` is returning the
 const answered = (text: string): ModelCompleteResult =>
   ({ isAnswered: true, text, usage: {} }) as unknown as ModelCompleteResult
 
+/** Mocks beneath the plugin. `box` is the prompt box: fills write it, `prompt.read` reads it, a submit empties it. */
 const harness = (on: On, init: Partial<Harness> = {}): Harness => {
   const hx: Harness = {
+    box: '',
     fills: [],
     completes: [],
     nexts: [],
     commands: [],
+    toasts: [],
     stored: {},
     rows: [row('user', 'earlier we looked at the leap-day case'), row('assistant', 'the parser is in src/dates.ts')],
     reply: () => answered(POLISHED),
@@ -265,29 +268,35 @@ const harness = (on: On, init: Partial<Harness> = {}): Harness => {
     hx.commands.push(e)
     return { value: { command: e.name } }
   })
-  on('command.list', async () => ({
-    value: hx.commands.map(c => ({ name: c.name, description: c.description, source: 'plugin', plugin: 'prompt-polish' })) as never,
-  }))
   on('session.start', async (_$, e) => e as never)
   on('session.messages', async () => ({ value: hx.rows }))
   on('session.root', async () => ({ value: '/proj' }))
   on('fs.exists', async () => ({ value: true }))
   on('fs.read', async () => ({ value: '# Project\nDates are UTC.' }))
   on('ui.status', async () => ({ value: undefined }))
+  on('ui.toast', async (_$, e) => {
+    hx.toasts.push(e.text)
+    return { value: undefined }
+  })
   on('model.complete', async (_$, e) => {
     hx.completes.push(e)
-    return { value: hx.reply() }
+    return { value: await hx.reply() }
   })
+  on('prompt.read', async () => ({ value: { text: hx.box, cursor: hx.box.length } }))
   on('prompt.fill', async (_$, e) => {
     hx.fills.push(e)
+    if (hx.fillResult.isFilled) hx.box = e.mode === 'append' ? hx.box + e.text : e.text
+    hx.filled?.()
     return hx.fillResult
   })
   on('prompt.submit', async (_$, e) => {
     hx.nexts.push(e)
+    hx.box = ''
     return { text: e.text }
   })
   on('prompt.edit', async (_$, e) => {
     const text = e.text.slice(0, e.start) + e.inputText + e.text.slice(e.end)
+    hx.box = text
     return { text, cursor: e.start + e.inputText.length }
   })
   on('ui.render', async () => h('Box', {}) as never)
@@ -303,19 +312,40 @@ const submit = ($: Engine, text: string) => $.prompt.submit({ text, origin: { ki
 const edit = ($: Engine, e: PromptEditInput) =>
   ($.prompt as unknown as { edit: (e: PromptEditInput) => Promise<PromptEditResult> }).edit(e)
 
+/** The person types `text` into an empty box, as one folded edit. */
+const type = ($: Engine, hx: Harness, text: string) =>
+  edit($, { origin: { kind: 'user' } as never, text: hx.box, cursor: hx.box.length, start: hx.box.length, end: hx.box.length, inputText: text })
+
+/** The person replaces the whole box with `text`. */
+const retype = ($: Engine, hx: Harness, text: string) =>
+  edit($, { origin: { kind: 'user' } as never, text: hx.box, cursor: 0, start: 0, end: hx.box.length, inputText: text })
+
 const polish = ($: Engine, args: string) =>
   $.command.run({ command: 'polish', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 80 } })
+
+const PROPS = { hasSurvey: false, isWorking: false, maxRows: 3 } as never
+const mount = ($: Engine, surface: 'terminal' | 'desktop' = 'terminal', props = PROPS) =>
+  $.ui.mount({ plugin: 'prompt-polish', surface, component: 'AbovePrompt', props })
+
+/** Types a draft, mounts the band and presses the polish choice: what the chord does. */
+const pressPolish = async ($: Engine, hx: Harness, draft = ORIGINAL) => {
+  await type($, hx, draft)
+  const ui = await mount($)
+  await ui.press({ key: 'polish' })
+  return ui
+}
 
 describe('session.start', () => {
   test('seeds enabled from the store and registers /polish', async ($, on) => {
     const hx = harness(on, { stored: { enabled: false } })
     await start($)
-    expect((await polish($, '')).text).toMatch(/is off/)
     expect(hx.commands.map(c => c.name)).toContain('polish')
-    expect(hx.commands[0]?.description).toMatch(/on.*off.*restore/)
-    const result = await submit($, ORIGINAL)
-    expect(result).toEqual({ text: ORIGINAL })
-    expect(hx.completes).toHaveLength(0)
+    expect(hx.commands[0]?.description).toMatch(/on, off, restore/)
+    expect((await polish($, '')).text).toMatch(/is off/)
+    await type($, hx, ORIGINAL)
+    const ui = await mount($)
+    expect(await ui.findAll({ type: 'Button' })).toHaveLength(0)
+    await ui.unmount()
   })
 
   test('defaults enabled to true with an empty store', async ($, on) => {
@@ -325,36 +355,168 @@ describe('session.start', () => {
   })
 })
 
-describe('command.run polish', () => {
-  test('off makes a submit pass through without a model call and persists', async ($, on) => {
+describe('polishNow', () => {
+  test('the chord fills the polished text with decorations and holds both texts', async ($, on) => {
     const hx = harness(on)
     await start($)
-    const r = await polish($, 'off')
-    expect(r.text).toMatch(/off/)
-    expect(hx.stored['enabled']).toBe(false)
-    const result = await submit($, ORIGINAL)
-    expect(result).toEqual({ text: ORIGINAL })
-    expect(hx.completes).toHaveLength(0)
-    expect(hx.nexts).toHaveLength(1)
-    const on2 = await polish($, 'on')
-    expect(on2.text).toMatch(/on/)
-    expect(hx.stored['enabled']).toBe(true)
+    const ui = await pressPolish($, hx)
+    expect(hx.completes).toHaveLength(1)
+    expect(hx.completes[0]?.prompt).toContain(ORIGINAL)
+    expect(hx.completes[0]?.prompt).toContain('leap-day case')
+    expect(hx.fills).toHaveLength(1)
+    expect(hx.fills[0]).toMatchObject({ text: POLISHED, mode: 'replace' })
+    expect(hx.fills[0]?.decorations?.length).toBeGreaterThan(0)
+    expect(hx.box).toBe(POLISHED)
+    expect(hx.toasts).toHaveLength(0)
+    await ui.redraw()
+    expect(await ui.find({ type: 'Button', text: LABEL_RESTORE })).toBeDefined()
+    expect(hx.nexts).toHaveLength(0)
+    await ui.unmount()
   })
 
-  test('restore puts the original back and the next submit reaches next unchanged', async ($, on) => {
+  test('an empty or blank box draws no band and issues no model call', async ($, on) => {
     const hx = harness(on)
     await start($)
-    const first = await submit($, ORIGINAL)
-    expect(first.drop).toBeDefined()
-    expect(hx.fills[0]?.text).toBe(POLISHED)
-    const r = await polish($, 'restore')
-    expect(r.text).toMatch(/restored/)
-    expect(hx.fills[1]?.text).toBe(ORIGINAL)
-    expect(hx.fills[1]?.mode).toBe('replace')
-    const second = await submit($, ORIGINAL)
-    expect(second).toEqual({ text: ORIGINAL })
-    expect(hx.nexts.map(n => n.text)).toEqual([ORIGINAL])
+    await type($, hx, '   ')
+    const ui = await mount($)
+    expect(await ui.findAll({ type: 'Button' })).toHaveLength(0)
+    expect((await polish($, '')).text).toMatch(/is on/)
+    expect(hx.completes).toHaveLength(0)
+    expect(hx.fills).toHaveLength(0)
+    await ui.unmount()
+  })
+
+  test('a second press during a pending completion issues no second call', async ($, on) => {
+    let release: (r: ModelCompleteResult) => void = () => {}
+    let called: () => void = () => {}
+    const pending = new Promise<ModelCompleteResult>(resolve => {
+      release = resolve
+    })
+    const calling = new Promise<void>(resolve => {
+      called = resolve
+    })
+    const hx = harness(on, {
+      reply: () => {
+        called()
+        return pending
+      },
+    })
+    await start($)
+    await type($, hx, ORIGINAL)
+    const ui = await mount($)
+    const first = ui.press({ key: 'polish' })
+    await calling
     expect(hx.completes).toHaveLength(1)
+    await ui.redraw()
+    expect(await ui.find({ type: 'Text', text: new RegExp(LEAD_BUSY) })).toBeDefined()
+    expect(await ui.findAll({ type: 'Button' })).toHaveLength(0)
+    expect((await polish($, '')).text).toBe(LEAD_BUSY)
+    const filled = new Promise<void>(resolve => {
+      hx.filled = resolve
+    })
+    release(answered(POLISHED))
+    await first
+    await filled
+    expect(hx.completes).toHaveLength(1)
+    expect(hx.fills).toHaveLength(1)
+    expect(hx.box).toBe(POLISHED)
+    await ui.unmount()
+  })
+})
+
+describe('failures leave the draft intact', () => {
+  const cases: { name: string; init: Partial<Harness>; toast: RegExp; fills: number }[] = [
+    { name: 'an aborted completion', init: { reply: () => ({ isAnswered: false, reason: 'aborted' }) as ModelCompleteResult }, toast: /failed \(aborted\)/, fills: 0 },
+    { name: 'an empty reply', init: { reply: () => answered('   ') }, toast: /empty reply/, fills: 0 },
+    { name: 'a reply that drops a path', init: { reply: () => answered(POLISHED.replace('src/dates.ts', 'src/date.ts')) }, toast: /path or identifier/, fills: 0 },
+    { name: 'a reply over the length cap', init: { reply: () => answered(`${POLISHED} ${'Also note that this matters. '.repeat(10)}`) }, toast: /too long/, fills: 0 },
+    { name: 'a refused fill', init: { fillResult: { isFilled: false, refusal: 'no_composer' } }, toast: /Could not write the prompt box/, fills: 1 },
+  ]
+  for (const c of cases) {
+    test(`${c.name} keeps the box as typed and toasts`, async ($, on) => {
+      const hx = harness(on, c.init)
+      await start($)
+      const ui = await pressPolish($, hx)
+      expect(hx.completes).toHaveLength(1)
+      expect(hx.fills).toHaveLength(c.fills)
+      expect(hx.box).toBe(ORIGINAL)
+      expect(hx.toasts).toHaveLength(1)
+      expect(hx.toasts[0]).toMatch(c.toast)
+      await ui.redraw()
+      expect(await ui.find({ type: 'Button', text: LABEL_POLISH })).toBeDefined()
+      expect((await polish($, 'restore')).text).toMatch(/Nothing to restore/)
+      expect(hx.nexts).toHaveLength(0)
+      await ui.unmount()
+    })
+  }
+})
+
+describe('toggle', () => {
+  test('the chord swaps back to the original, forward to the polished text, with one model call', async ($, on) => {
+    const hx = harness(on)
+    await start($)
+    const ui = await pressPolish($, hx)
+    await ui.redraw()
+    await ui.press({ key: 'polish' })
+    expect(hx.box).toBe(ORIGINAL)
+    expect(hx.fills[1]).toMatchObject({ text: ORIGINAL, mode: 'replace' })
+    expect(hx.fills[1]?.decorations).toBeUndefined()
+    await ui.redraw()
+    expect(await ui.find({ type: 'Button', text: LABEL_POLISHED })).toBeDefined()
+    await ui.press({ key: 'polish' })
+    expect(hx.box).toBe(POLISHED)
+    expect(hx.fills[2]?.decorations?.length).toBeGreaterThan(0)
+    expect(hx.completes).toHaveLength(1)
+    await ui.redraw()
+    expect(await ui.find({ type: 'Button', text: LABEL_RESTORE })).toBeDefined()
+    await ui.unmount()
+  })
+
+  test('the chord on an edited draft polishes afresh', async ($, on) => {
+    const hx = harness(on)
+    await start($)
+    const ui = await pressPolish($, hx)
+    const edited = `${POLISHED} Keep the tests green.`
+    hx.reply = () => answered(`${edited}`)
+    await retype($, hx, edited)
+    await ui.redraw()
+    expect(await ui.find({ type: 'Button', text: LABEL_RESTORE })).toBeDefined()
+    await ui.press({ key: 'polish' })
+    expect(hx.completes).toHaveLength(2)
+    expect(hx.completes[1]?.prompt).toContain(edited)
+    expect((await polish($, 'restore')).text).toMatch(/restored/)
+    expect(hx.box).toBe(edited)
+    await ui.unmount()
+  })
+})
+
+describe('command.run polish', () => {
+  test('off persists, empties the band and makes the chord do nothing', async ($, on) => {
+    const hx = harness(on)
+    await start($)
+    expect((await polish($, 'off')).text).toMatch(/off/)
+    expect(hx.stored['enabled']).toBe(false)
+    await type($, hx, ORIGINAL)
+    const ui = await mount($)
+    expect(await ui.findAll({ type: 'Button' })).toHaveLength(0)
+    expect((await polish($, '')).text).toMatch(/is off/)
+    expect(hx.completes).toHaveLength(0)
+    expect((await polish($, 'on')).text).toMatch(/on/)
+    expect(hx.stored['enabled']).toBe(true)
+    await ui.unmount()
+  })
+
+  test('restore after a polish puts the original back', async ($, on) => {
+    const hx = harness(on)
+    await start($)
+    const ui = await pressPolish($, hx)
+    expect((await polish($, 'restore')).text).toMatch(/restored/)
+    expect(hx.box).toBe(ORIGINAL)
+    const result = await submit($, ORIGINAL)
+    expect(result).toMatchObject({ text: ORIGINAL })
+    expect(hx.nexts).toHaveLength(1)
+    expect(hx.completes).toHaveLength(1)
+    await ui.unmount()
   })
 
   test('restore with nothing held says so', async ($, on) => {
@@ -363,212 +525,164 @@ describe('command.run polish', () => {
     expect((await polish($, 'restore')).text).toMatch(/Nothing to restore/)
   })
 
-  test('bare /polish names the current state', async ($, on) => {
-    harness(on)
+  test('/polish <text> polishes that text into the box', async ($, on) => {
+    const hx = harness(on)
     await start($)
-    expect((await polish($, '')).text).toMatch(/is on/)
-    await polish($, 'off')
-    expect((await polish($, '')).text).toMatch(/is off/)
+    const result = await polish($, ORIGINAL)
+    expect(result.text).toMatch(/Polished/)
+    expect(hx.completes).toHaveLength(1)
+    expect(hx.completes[0]?.prompt).toContain(ORIGINAL)
+    expect(hx.box).toBe(POLISHED)
+  })
+
+  test('bare /polish polishes a box that holds text and otherwise names the state and chord', async ($, on) => {
+    const hx = harness(on)
+    await start($)
+    const status = (await polish($, '')).text
+    expect(status).toMatch(/is on/)
+    expect(status).toMatch(/ctrl\+↓/)
+    expect(status).toMatch(/command:polish/)
+    expect(status).toMatch(/on, off, restore/)
+    expect(hx.completes).toHaveLength(0)
+    hx.box = ORIGINAL
+    expect((await polish($, '')).text).toMatch(/Polished/)
+    expect(hx.completes).toHaveLength(1)
+    expect(hx.box).toBe(POLISHED)
   })
 })
 
 describe('prompt.submit', () => {
-  test('an answered polish fills with decorations, holds, arms and drops', async ($, on) => {
+  test('every submit reaches next unchanged with no model call', async ($, on) => {
     const hx = harness(on)
     await start($)
+    await type($, hx, ORIGINAL)
     const result = await submit($, ORIGINAL)
-    expect(result.drop).toMatch(/polished/)
-    expect(hx.completes).toHaveLength(1)
-    expect(hx.completes[0]).toMatchObject({ model: 'haiku', effort: 'low', maxTokens: 1024, timeoutMs: 8000 })
-    expect(hx.completes[0]?.prompt).toContain(`<prompt>\n${ORIGINAL}\n</prompt>`)
-    expect(hx.completes[0]?.prompt).toContain('Dates are UTC.')
-    expect(hx.completes[0]?.prompt).toContain('assistant: the parser is in src/dates.ts')
-    expect(hx.fills).toHaveLength(1)
-    expect(hx.fills[0]?.text).toBe(POLISHED)
-    expect(hx.fills[0]?.decorations?.length).toBeGreaterThan(0)
-    expect(hx.nexts).toHaveLength(0)
-
-    const edited = `${POLISHED} Keep the tests green.`
-    const second = await submit($, edited)
-    expect(second).toEqual({ text: edited })
-    expect(hx.nexts.map(n => n.text)).toEqual([edited])
-    expect(hx.completes).toHaveLength(1)
-    const third = await submit($, ORIGINAL)
-    expect(third.drop).toMatch(/polished/)
-    expect(hx.completes).toHaveLength(2)
-  })
-
-  test('short replies, commands and non-composer origins pass through without a model call', async ($, on) => {
-    const hx = harness(on)
-    await start($)
-    await submit($, 'yes, go ahead')
-    await submit($, 'haan kar do')
-    await submit($, '/foo bar baz qux quux corge grault')
+    expect(result).toMatchObject({ text: ORIGINAL })
     await $.prompt.submit({ text: ORIGINAL, origin: { kind: 'task-notification' }, wait: false })
     await $.prompt.submit({ text: ORIGINAL, origin: { kind: 'composer' }, turnId: 't1', wait: false })
+    expect(hx.nexts).toHaveLength(3)
+    expect(hx.nexts.map(n => n.text)).toEqual([ORIGINAL, ORIGINAL, ORIGINAL])
     expect(hx.completes).toHaveLength(0)
-    expect(hx.fills).toHaveLength(0)
-    expect(hx.nexts).toHaveLength(5)
   })
 
-  test('a refused fill after a polish lets the original through', async ($, on) => {
-    const hx = harness(on, { fillResult: { isFilled: false, refusal: 'no_composer' } })
+  test('a send clears the hold and the hint', async ($, on) => {
+    const hx = harness(on)
     await start($)
-    const result = await submit($, ORIGINAL)
-    expect(result).toEqual({ text: ORIGINAL })
-    expect(hx.nexts.map(n => n.text)).toEqual([ORIGINAL])
-  })
-})
-
-describe('giveBack', () => {
-  test('an aborted completion fills the original and drops', async ($, on) => {
-    const hx = harness(on, { reply: () => ({ isAnswered: false, reason: 'aborted' }) as ModelCompleteResult })
-    await start($)
-    const result = await submit($, ORIGINAL)
-    expect(result.drop).toMatch(/aborted/)
-    expect(hx.fills).toHaveLength(1)
-    expect(hx.fills[0]).toMatchObject({ text: ORIGINAL, mode: 'replace' })
-    const again = await submit($, ORIGINAL)
-    expect(again).toEqual({ text: ORIGINAL })
-    expect(hx.completes).toHaveLength(1)
-  })
-
-  test('a refused fill on failure lets the original through to next', async ($, on) => {
-    const hx = harness(on, {
-      reply: () => ({ isAnswered: false, reason: 'aborted' }) as ModelCompleteResult,
-      fillResult: { isFilled: false, refusal: 'no_composer' },
-    })
-    await start($)
-    const result = await submit($, ORIGINAL)
-    expect(result).toEqual({ text: ORIGINAL })
-    expect(hx.nexts.map(n => n.text)).toEqual([ORIGINAL])
-  })
-
-  test('a reply that drops a path is discarded', async ($, on) => {
-    const hx = harness(on, { reply: () => answered(POLISHED.replace('src/dates.ts', 'src/date.ts')) })
-    await start($)
-    const result = await submit($, ORIGINAL)
-    expect(result.drop).toMatch(/discarded/)
-    expect(hx.fills).toHaveLength(1)
-    expect(hx.fills[0]).toMatchObject({ text: ORIGINAL, mode: 'replace' })
+    const ui = await pressPolish($, hx)
+    await submit($, POLISHED)
+    expect(hx.nexts).toHaveLength(1)
     expect((await polish($, 'restore')).text).toMatch(/Nothing to restore/)
-  })
-
-  test('a reply over the length cap is discarded', async ($, on) => {
-    const hx = harness(on, { reply: () => answered(`${POLISHED} ${'Also note that this matters. '.repeat(10)}`) })
-    await start($)
-    const result = await submit($, ORIGINAL)
-    expect(result.drop).toMatch(/discarded.*too long/)
-    expect(hx.fills).toHaveLength(1)
-    expect(hx.fills[0]).toMatchObject({ text: ORIGINAL, mode: 'replace' })
-  })
-
-  test('an empty reply is discarded', async ($, on) => {
-    const hx = harness(on, { reply: () => answered('   ') })
-    await start($)
-    const result = await submit($, ORIGINAL)
-    expect(result.drop).toMatch(/empty/)
-    expect(hx.fills[0]?.text).toBe(ORIGINAL)
+    await ui.redraw()
+    expect(await ui.findAll({ type: 'Button' })).toHaveLength(0)
+    await ui.unmount()
   })
 })
 
 describe('prompt.edit', () => {
-  test('emptying the box disarms so a new prompt is polished again', async ($, on) => {
+  test('a 7-word draft shows the hint and a 5-word one does not', async ($, on) => {
     const hx = harness(on)
     await start($)
-    await submit($, ORIGINAL)
-    const box = await edit($, { origin: { kind: 'composer' }, text: POLISHED, cursor: POLISHED.length, start: 0, end: POLISHED.length, inputText: '' })
-    expect(box.text).toBe('')
-    const fresh = 'now also make the formatter print four-digit years everywhere'
-    hx.reply = () => answered('Now also make the formatter print four-digit years everywhere.')
-    const result = await submit($, fresh)
-    expect(result.drop).toMatch(/polished/)
-    expect(hx.completes).toHaveLength(2)
-    expect((await polish($, 'restore')).text).toMatch(/restored/)
+    const ui = await mount($)
+    expect(await ui.findAll({ type: 'Button' })).toHaveLength(0)
+    await type($, hx, 'fix the login redirect bug')
+    await ui.redraw()
+    expect(await ui.findAll({ type: 'Button' })).toHaveLength(0)
+    await type($, hx, ' in prod')
+    await ui.redraw()
+    expect(await ui.find({ type: 'Button', text: LABEL_POLISH })).toBeDefined()
+    await retype($, hx, 'fix the login redirect bug')
+    await ui.redraw()
+    expect(await ui.findAll({ type: 'Button' })).toHaveLength(0)
+    await ui.unmount()
   })
 
-  test('a non-empty edit keeps the arm', async ($, on) => {
+  test('editing a polished draft keeps the hold; emptying the box clears it', async ($, on) => {
     const hx = harness(on)
     await start($)
-    await submit($, ORIGINAL)
-    await edit($, { origin: { kind: 'composer' }, text: POLISHED, cursor: 0, start: 0, end: 0, inputText: 'x' })
-    const result = await submit($, `x${POLISHED}`)
-    expect(result).toEqual({ text: `x${POLISHED}` })
-    expect(hx.completes).toHaveLength(1)
+    const ui = await pressPolish($, hx)
+    await type($, hx, ' please')
+    await ui.redraw()
+    expect(await ui.find({ type: 'Button', text: LABEL_RESTORE })).toBeDefined()
+    expect((await polish($, 'restore')).text).toMatch(/restored/)
+    await retype($, hx, '')
+    await ui.redraw()
+    expect(await ui.findAll({ type: 'Button' })).toHaveLength(0)
+    expect((await polish($, 'restore')).text).toMatch(/Nothing to restore/)
+    await ui.unmount()
   })
 })
 
 describe('AbovePrompt band', () => {
   for (const surface of ['terminal', 'desktop'] as const) {
-    test(`${surface}: draws nothing until a draft is held`, async ($, on) => {
+    test(`${surface}: draws nothing without a draft`, async ($, on) => {
       harness(on)
       await start($)
-      const ui = await $.ui.mount({ plugin: 'prompt-polish', surface, component: 'AbovePrompt', props: { hasSurvey: false, isWorking: false, maxRows: 3 } as never })
+      const ui = await mount($, surface)
       expect(await ui.findAll({ type: 'Button' })).toHaveLength(0)
+      expect(await ui.findAll({ type: 'Text' })).toHaveLength(0)
       await ui.unmount()
     })
 
-    test(`${surface}: offers restore and off while a draft is held`, async ($, on) => {
+    test(`${surface}: the hint names the chord and carries the action`, async ($, on) => {
       const hx = harness(on)
       await start($)
-      await submit($, ORIGINAL)
-      const ui = await $.ui.mount({ plugin: 'prompt-polish', surface, component: 'AbovePrompt', props: { hasSurvey: false, isWorking: false, maxRows: 3 } as never })
-      const restoreButton = await ui.find({ type: 'Button', text: 'Restore original' })
-      const offButton = await ui.find({ type: 'Button', text: 'Polishing off' })
-      const dismissButton = await ui.find({ type: 'Button', text: 'Dismiss' })
+      await type($, hx, ORIGINAL)
+      const ui = await mount($, surface)
+      const polishButton = await ui.find({ type: 'Button', text: LABEL_POLISH })
+      expect(polishButton?.props['hotkey']).toBe('1')
+      expect(polishButton?.props['action']).toBe(CHORD_ACTION)
+      expect((await ui.find({ type: 'Button', text: LABEL_OFF }))?.props['hotkey']).toBe('2')
+      expect(await ui.find({ type: 'Button', text: LABEL_DISMISS })).toBeUndefined()
+      expect((await ui.find({ type: 'Text', text: /^polish · $/ }))?.props['dimColor']).toBe(true)
+      expect(await ui.find({ type: 'Text', text: /ctrl\+↓/ })).toBeDefined()
+      expect(await ui.find({ type: 'Text', text: /ctrl\+x tab/ })).toBeDefined()
+      expect((await ui.find({ type: 'Text', text: '✦' }))?.props['color']).toBe('suggestion')
+      await ui.unmount()
+    })
+
+    test(`${surface}: the review band offers restore, off and dismiss`, async ($, on) => {
+      const hx = harness(on)
+      await start($)
+      const ui = await pressPolish($, hx)
+      await ui.redraw()
+      const restoreButton = await ui.find({ type: 'Button', text: LABEL_RESTORE })
       expect(restoreButton?.props['hotkey']).toBe('1')
-      expect(offButton?.props['hotkey']).toBe('2')
+      expect(restoreButton?.props['action']).toBe(CHORD_ACTION)
+      expect((await ui.find({ type: 'Button', text: LABEL_OFF }))?.props['hotkey']).toBe('2')
+      const dismissButton = await ui.find({ type: 'Button', text: LABEL_DISMISS })
       expect(dismissButton?.props['hotkey']).toBe('0')
       expect(dismissButton?.props['role']).toBe('dismiss')
       expect((await ui.find({ type: 'Text', text: /^polished · $/ }))?.props['dimColor']).toBe(true)
-      expect(await ui.find({ type: 'Text', text: /ctrl\+x tab/ })).toBeDefined()
-
-      await ui.press({ key: 'restore' })
-      expect(hx.fills[hx.fills.length - 1]).toMatchObject({ text: ORIGINAL, mode: 'replace' })
+      expect(await ui.find({ type: 'Text', text: /press Enter to send/ })).toBeDefined()
 
       await ui.press({ key: 'off' })
       expect(hx.stored['enabled']).toBe(false)
-      expect((await polish($, '')).text).toMatch(/is off/)
       expect((await polish($, 'restore')).text).toMatch(/Nothing to restore/)
       await ui.redraw()
       expect(await ui.findAll({ type: 'Button' })).toHaveLength(0)
-      await ui.unmount()
-    })
-
-    test(`${surface}: goes away once the draft is sent`, async ($, on) => {
-      const hx = harness(on)
-      await start($)
-      await submit($, ORIGINAL)
-      const ui = await $.ui.mount({ plugin: 'prompt-polish', surface, component: 'AbovePrompt', props: { hasSurvey: false, isWorking: false, maxRows: 3 } as never })
-      expect(await ui.findAll({ type: 'Button' })).toHaveLength(3)
-      await submit($, POLISHED)
-      expect(hx.nexts).toHaveLength(1)
-      await ui.redraw()
-      expect(await ui.findAll({ type: 'Button' })).toHaveLength(0)
-      expect((await polish($, 'restore')).text).toMatch(/Nothing to restore/)
       await ui.unmount()
     })
 
     test(`${surface}: dismiss hides the band and keeps the draft`, async ($, on) => {
       const hx = harness(on)
       await start($)
-      await submit($, ORIGINAL)
-      const ui = await $.ui.mount({ plugin: 'prompt-polish', surface, component: 'AbovePrompt', props: { hasSurvey: false, isWorking: false, maxRows: 3 } as never })
-      await ui.press({ key: 'dismiss' })
-      expect(hx.fills).toHaveLength(1)
+      const ui = await pressPolish($, hx)
       await ui.redraw()
-      expect(await ui.findAll({ type: 'Button' })).toHaveLength(0)
-      await submit($, POLISHED)
-      expect(hx.nexts).toHaveLength(1)
+      await ui.press({ key: 'dismiss' })
+      expect(hx.box).toBe(POLISHED)
+      await ui.redraw()
+      expect(await ui.find({ type: 'Button', text: LABEL_DISMISS })).toBeUndefined()
+      const result = await submit($, POLISHED)
+      expect(result).toMatchObject({ text: POLISHED })
       expect(hx.completes).toHaveLength(1)
       await ui.unmount()
     })
 
     test(`${surface}: yields to a survey`, async ($, on) => {
-      harness(on)
+      const hx = harness(on)
       await start($)
-      await submit($, ORIGINAL)
-      const ui = await $.ui.mount({ plugin: 'prompt-polish', surface, component: 'AbovePrompt', props: { hasSurvey: true, isWorking: false, maxRows: 3 } as never })
+      await type($, hx, ORIGINAL)
+      const ui = await mount($, surface, { hasSurvey: true, isWorking: false, maxRows: 3 } as never)
       expect(await ui.findAll({ type: 'Button' })).toHaveLength(0)
       await ui.unmount()
     })
@@ -585,37 +699,37 @@ type Fixture = { name: string; rows: SessionMessage[]; input: string; output: st
 
 const FIXTURES: Fixture[] = [
   {
-    name: "ambiguous target",
-    rows: [row("user", "the parser in src/dates/parse.ts mangles leap days"), row("assistant", "I see it, parseDate assumes 365 days."), row("user", "also the formatter prints 2-digit years in src/dates/format.ts"), row("assistant", "formatDate uses 'YY' there.")],
-    input: "fix the date bug, keep the rest same and dont touch tests",
+    name: 'ambiguous target',
+    rows: [row('user', 'the parser in src/dates/parse.ts mangles leap days'), row('assistant', 'I see it, parseDate assumes 365 days.'), row('user', 'also the formatter prints 2-digit years in src/dates/format.ts'), row('assistant', "formatDate uses 'YY' there.")],
+    input: 'fix the date bug, keep the rest same and dont touch tests',
     output: "Fix the date bug, keep the rest the same, and don't touch tests.\n\nNot sure if you mean the leap day bug or the 2-digit year issue.",
     asks: true,
   },
   {
-    name: "clear task",
+    name: 'clear task',
     rows: [],
-    input: "add a --dry-run flag to the sync script so it prints what it would copy without copying, update the README usage section too",
-    output: "Add a --dry-run flag to the sync script so it prints what it would copy without copying, and update the README usage section too.",
+    input: 'add a --dry-run flag to the sync script so it prints what it would copy without copying, update the README usage section too',
+    output: 'Add a --dry-run flag to the sync script so it prints what it would copy without copying, and update the README usage section too.',
     asks: false,
   },
   {
-    name: "Hinglish",
+    name: 'Hinglish',
     rows: [],
-    input: "yaar `useReportStore` me jo selector hai wo har render pe naya object bana raha hai, src/store/report.ts dekho aur memoize kar do, baki kuch mat chhedna",
+    input: 'yaar `useReportStore` me jo selector hai wo har render pe naya object bana raha hai, src/store/report.ts dekho aur memoize kar do, baki kuch mat chhedna',
     output: "The selector in `useReportStore` creates a new object on every render. Look at src/store/report.ts and memoize it. Don't touch anything else.",
     asks: false,
   },
   {
-    name: "pasted error",
-    rows: [row("user", "run the build"), row("assistant", "Ran `npm run build`, it failed.")],
+    name: 'pasted error',
+    rows: [row('user', 'run the build'), row('assistant', 'Ran `npm run build`, it failed.')],
     input: "build fail ho raha hai is error ke saath, fix karo\nError: Cannot find module './dates/format'\n    at Function.Module._resolveFilename (node:internal/modules/cjs/loader:1145:15)",
     output: "The build is failing with this error, fix it.\n\nError: Cannot find module './dates/format'\n    at Function.Module._resolveFilename (node:internal/modules/cjs/loader:1145:15)",
     asks: false,
   },
   {
-    name: "pronoun resolved by the transcript",
-    rows: [row("user", "look at hooks/register.tsx, the band draws even when a survey is up"), row("assistant", "The ui.render hook in hooks/register.tsx ignores e.props.hasSurvey. I can gate on it."), row("user", "show me the diff first"), row("assistant", "Here is the diff: it returns next(e) when hasSurvey is true.")],
-    input: "ok apply it but also make sure it doesnt redraw on every keystroke, that was slow before",
+    name: 'pronoun resolved by the transcript',
+    rows: [row('user', 'look at hooks/register.tsx, the band draws even when a survey is up'), row('assistant', 'The ui.render hook in hooks/register.tsx ignores e.props.hasSurvey. I can gate on it.'), row('user', 'show me the diff first'), row('assistant', 'Here is the diff: it returns next(e) when hasSurvey is true.')],
+    input: 'ok apply it but also make sure it doesnt redraw on every keystroke, that was slow before',
     output: "ok apply the diff but also make sure the band doesn't redraw on every keystroke, that was slow before",
     asks: false,
   },
@@ -626,14 +740,14 @@ describe('fixtures', () => {
     test(f.name, async ($, on) => {
       const hx = harness(on, { rows: f.rows, reply: () => answered(f.output) })
       await start($)
-      const r = await submit($, f.input)
-      expect(r).toMatchObject({ drop: POLISHED_NOTICE })
+      const ui = await pressPolish($, hx, f.input)
       const [call] = hx.completes
       expect(call?.prompt).toContain(f.input)
       for (const row of f.rows) expect(call?.prompt).toContain(row.text)
       expect(hx.completes).toHaveLength(1)
       expect(hx.fills).toHaveLength(1)
       expect(hx.fills[0]?.text).toBe(f.output)
+      expect(hx.box).toBe(f.output)
       expect(preserves(f.input, f.output)).toBe(true)
       expect(withinLength(f.input, f.output)).toBe(true)
       // One open point at most: exactly one extra line, at the end, and only in the ambiguous case.
@@ -641,6 +755,8 @@ describe('fixtures', () => {
       expect(lines(f.output)).toHaveLength(lines(f.input).length + (f.asks ? 1 : 0))
       if (f.asks) expect(lines(f.output).at(-1)).toMatch(/\?|not sure/i)
       expect(hx.nexts).toHaveLength(0)
+      expect(hx.toasts).toHaveLength(0)
+      await ui.unmount()
     })
   }
 })

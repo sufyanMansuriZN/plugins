@@ -12,7 +12,7 @@
     {
       "name": "prompt-polish",
       "source": "./plugins/prompt-polish",
-      "description": "Polishes a submitted prompt into clearer English and holds it in the box for review before it is sent"
+      "description": "Polishes the draft in the prompt box into clearer English on a chord (ctrl+↓), for review before you press Enter"
     }
   ]
 }

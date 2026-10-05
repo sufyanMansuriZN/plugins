@@ -34,6 +34,6 @@
 
 ## 5. Integration check
 
-- [x] 5.1 Verify the public install path once: `claude plugin marketplace add sufyanMansuriZn/plugins --scope local` from a directory outside the repository fails with a name clash or succeeds; if it succeeds, `claude plugin install session-bar@plugins --scope local` succeeds, then remove both (`claude plugin uninstall session-bar@plugins --scope local`, `claude plugin marketplace remove plugins --scope local`) and verify `claude plugin marketplace list` still shows the directory-source `plugins` only
+- [x] 5.1 Verify the public install path for real: uninstall `session-bar@plugins`, `claude plugin marketplace remove plugins` (the folder source), `claude plugin marketplace add sufyanMansuriZn/plugins`, `claude plugin install session-bar@plugins`; verify `claude plugin marketplace list` shows `plugins` as `GitHub (sufyanMansuriZn/plugins)`, `grep -c 'session-bar@plugins' ~/.claude/settings.json` prints `1`, `ls ~/.claude/plugins/cache/plugins/session-bar/` shows `0.8.2`, and the recorded `gitCommitSha` equals `git rev-parse origin/main`
 - [x] 5.2 Walk the README as a stranger: every command in it is pasted verbatim and succeeds or is the one just verified in 5.1; every plugin in `marketplace.json` has a line in the README
 - [x] 5.3 Run `openspec validate` and verify it passes; the change is ready for `/opsx:archive`

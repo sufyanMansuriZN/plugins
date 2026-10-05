@@ -28,7 +28,7 @@ Observed machine state on 2026-10-05:
 
 **Delete the generated tree and the generator together.** `plugins/pstack/` is regenerable from `scripts/pstack/`, so keeping one without the other is meaningless. Deleting both in one commit keeps `git revert` of that commit a complete restore. Alternative considered: keep `scripts/pstack/` so the port could be regenerated later. Rejected because the archived change plus git history already serve that purpose, and a dormant sync script against a moving upstream rots.
 
-**Express the spec removal as REMOVED deltas, then delete the spec directories at archive time.** The spec-driven schema has no "delete capability" operation; `## REMOVED Requirements` under each capability is the supported form, and archiving syncs it into the main specs. That sync leaves `openspec/specs/pstack/spec.md` and `openspec/specs/pstack-sync/spec.md` with a Purpose and no requirements. The last task deletes those two directories right after `openspec archive` so the spec inventory matches reality. Alternative considered: delete the main spec files during apply and set `skip_specs`. Rejected because it loses the Reason/Migration record and leaves the archive with nothing to sync.
+**Express the spec removal as REMOVED deltas and retire the capabilities at archive time.** `## REMOVED Requirements` under each capability is the supported form. When a change removes a capability's last requirement, `openspec archive` refuses to write a spec with zero requirements unless the change's `.openspec.yaml` sets `retire_capabilities: true`; with that flag the archive deletes `openspec/specs/pstack/` and `openspec/specs/pstack-sync/` itself. The change sets the flag, so no hand deletion is needed. Alternative considered: delete the main spec files during apply and set `skip_specs`. Rejected because it loses the Reason/Migration record and leaves the archive with nothing to sync.
 
 **Keep the archived changes.** They are the only written record of the port's design decisions (panel stances, hook routing, transcript paths) and are referenced from the REMOVED migrations. Deleting them saves nothing material.
 
@@ -43,11 +43,11 @@ Observed machine state on 2026-10-05:
 - [A session is still running with pstack hooks loaded from the stale cache] → Not possible on this machine: the plugin is not enabled, so no hooks load. If `enabledPlugins` ever gains `pstack@skills: true`, remove that line first.
 - [Removing `@pstack-models.md` changes the user's global `~/.claude/CLAUDE.md`] → The file is checked before editing; only the import line is removed, and the user confirms the task before it runs.
 - [Someone else installed `pstack@skills` from a clone of this repository] → They keep their cached copy and lose updates. Acceptable; the proposal marks this breaking.
-- [`openspec archive` leaves empty spec shells] → Covered by the final task that deletes the two spec directories after archive and re-runs `openspec validate`.
+- [`openspec archive` refuses a spec left with zero requirements] → `retire_capabilities: true` in `.openspec.yaml` tells it to delete the spec instead; the final task verifies both directories are gone and re-runs `openspec validate`.
 
 ## Migration Plan
 
 1. Apply tasks 1 to 3 on a branch; verify with `git status`, `openspec validate remove-pstack`, and a marketplace listing that shows only `session-bar`.
 2. Commit as one removal commit. Rollback is `git revert` of that commit.
 3. Run the home-directory cleanup (task group 4) with the user present or explicitly authorised; it is independent of the commit.
-4. Archive the change; delete the emptied spec directories; validate; commit.
+4. Archive the change with `retire_capabilities: true`; verify the two spec directories are gone; validate; commit.

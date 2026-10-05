@@ -39,7 +39,7 @@ See proposal.md for motivation. Observed state on 2026-10-05, on the `remove-pst
 
 **`.gitignore` is short and specific.** `.remember/`, plus `.DS_Store`, `*.swp`, `.idea/`, `.vscode/`. No `node_modules/` or build output: nothing in the repository builds. Alternative considered: a generic Node template. Rejected: it would ignore things that do not exist and hide what actually matters.
 
-**README is the manifest, in prose.** Three parts: what the repository is (a personal Claude Code plugin marketplace), the two commands (`marketplace add`, `plugin install`), and one line per plugin generated from the manifest's `description`. It states that there is no license. Alternative considered: per-plugin READMEs. Deferred until a plugin needs more than a line.
+**README is the manifest, in prose.** Three parts: what the repository is (a personal Claude Code plugin marketplace), the two commands (`marketplace add`, `plugin install`), and one line per plugin generated from the manifest's `description`. Each command is shown both as a shell `claude plugin` call and as the in-session `/plugin` form. The README does not mention licensing; the absence of a LICENSE file carries that on its own. Alternative considered: per-plugin READMEs. Deferred until a plugin needs more than a line.
 
 **GitHub repository is created by the user, or by `gh` once it works.** `gh` currently fails on an invalid `GITHUB_TOKEN`. The apply task has the user either unset that variable for the command (`env -u GITHUB_TOKEN gh auth login`) or create `sufyanMansuriZn/plugins` in the browser as public, empty (no README, no license, no `.gitignore`), then add it as `origin`. Either way the repository is created empty so the first push is our `main`.
 

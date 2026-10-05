@@ -4,22 +4,22 @@ A personal [Claude Code](https://docs.anthropic.com/en/docs/claude-code) plugin 
 
 ## Install
 
-Add the marketplace once:
+Add the marketplace once, then install a plugin by `<name>@plugins`.
+
+From a shell:
 
 ```sh
 claude plugin marketplace add sufyanMansuriZn/plugins
+claude plugin install session-bar@plugins
 ```
 
-Then install a plugin by `<name>@plugins`:
+From inside a Claude Code session:
 
-```sh
-claude plugin install session-bar@plugins
+```
+/plugin marketplace add sufyanMansuriZn/plugins
+/plugin install session-bar@plugins
 ```
 
 ## Plugins
 
 - **session-bar**: Session dir, model, ctx and paced usage pills above the prompt
-
-## License
-
-None. The code is public to read; all rights reserved.

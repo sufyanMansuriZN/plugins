@@ -34,7 +34,7 @@ The polish chord SHALL be the chord the user has bound to the engine action `app
 
 #### Scenario: Keybound command
 - **WHEN** the user has bound a chord to `command:polish` and presses it with a draft in the box
-- **THEN** the draft is polished if the engine leaves the draft in the box for the command, and otherwise the status output says how to polish
+- **THEN** the draft is polished in place, exactly as the polish chord does
 
 ### Requirement: Light-touch polishing
 The polished text SHALL be the user's request in the user's own order and voice, with grammar and clarity fixed and Hindi or Hinglish translated to English. It MAY add a short clause making explicit something the user clearly implied, drawn from the original text, the recent conversation or the project's instruction file. It SHALL NOT restructure the prompt into a template, SHALL NOT exceed roughly one and a half times the original length, and SHALL NOT add a requirement, constraint or scope the user did not have.
@@ -116,7 +116,7 @@ After a polish, the user SHALL be able to get the original text back into the pr
 - **THEN** the original text is in the box and Enter sends it unchanged
 
 ### Requirement: Session toggle with a persisted default
-The user SHALL be able to turn polishing off and on within a session with a `/polish` command, and the band SHALL offer an off choice in its hint and review states. The last explicit choice SHALL persist as the default for new sessions on the same machine. `/polish <text>` SHALL polish the given text into the box, and `/polish` with no argument SHALL polish the box when it holds text and otherwise report the state, the chord and how to bind a dedicated key.
+The user SHALL be able to turn polishing off and on within a session with a `/polish` command, and the band SHALL offer an off choice in its hint and review states. The last explicit choice SHALL persist as the default for new sessions on the same machine. `/polish <text>` SHALL polish the given text into the box, and `/polish` with no argument SHALL polish the box when it holds text (which is what a keybound `command:polish` delivers) and otherwise report the state, the chord and how to bind a dedicated key.
 
 #### Scenario: Turn off mid-session
 - **WHEN** the user runs `/polish off`

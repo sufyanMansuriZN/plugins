@@ -26,10 +26,10 @@
 
 ## 4. Live check and prompt tuning
 
-- [ ] 4.1 In a live session with the plugin loaded, submit a rough Hinglish task prompt that names a file path and contains a backticked identifier; verify the notice appears, the box holds English text in the same order with the path and identifier intact, the added words are tinted, the band shows the restore hint, and Enter sends the draft and starts a turn with that exact text as the user message
-- [ ] 4.2 In the same session, submit "yes, go ahead"; verify no notice, no band, the turn starts immediately, and `claude --debug` logs show no `model.complete` call for it
+- [x] 4.1 In a live session with the plugin loaded, submit a rough Hinglish task prompt that names a file path and contains a backticked identifier; verify the notice appears, the box holds English text in the same order with the path and identifier intact, the added words are tinted, the band shows the restore hint, and Enter sends the draft and starts a turn with that exact text as the user message
+- [x] 4.2 In the same session, submit "yes, go ahead"; verify no notice, no band, the turn starts immediately, and `claude --debug` logs show no `model.complete` call for it
 - [ ] 4.3 Submit a task prompt, clear the box, press `1`; verify the original text is back and Enter sends it unchanged with no second polish. If the bare digit does not press a plugin band Button, change the band text to name `ctrl+x tab` then `1`, update the spec scenario `Digit restore from an empty box` accordingly, and re-verify with that gesture
-- [ ] 4.4 Run `/polish off`, submit a task prompt, verify it enters untouched and the band draws nothing; start a new session, verify `/polish` reports off; run `/polish on`
+- [x] 4.4 Run `/polish off`, submit a task prompt, verify it enters untouched and the band draws nothing; start a new session, verify `/polish` reports off; run `/polish on`
 - [x] 4.5 Tune `SYSTEM` against at least five real rough prompts from recent sessions (ambiguous target, clear task, Hinglish, pasted error, prompt with "it" resolved by the transcript); verify each result keeps order and voice, adds nothing uninvited, and carries a trailing question only in the ambiguous case; record the five inputs and accepted outputs as fixtures in `hooks/register.test.ts` guarded by the mocked model so they document the expected shape
 
 ## 5. Publish

@@ -59,7 +59,7 @@ Every span of code, file path, identifier, command, URL and error message presen
 - **THEN** the polished reply is not used, the original text is placed in the box, and the notice says the polish was discarded
 
 ### Requirement: Review shows what changed
-While a polished draft is in the box and the user has not yet edited it, the system SHALL visually distinguish the text the polish added from the text the user wrote, and SHALL show a single dim line above the prompt saying the draft is polished and how to restore the original.
+While a polished draft is in the box and the user has not yet edited it, the system SHALL visually distinguish the text the polish added from the text the user wrote. While a draft is held, the system SHALL show a band above the prompt, laid out like the engine's own side-agent notice (a lead line saying the draft is polished and how to reach the choices, then a row of numbered choices: restore, polishing off, dismiss). The band SHALL go away when the draft is sent, dismissed, or polishing is turned off. The engine's one-line drop notice in the transcript stays short and points at the box.
 
 #### Scenario: Added clause is highlighted
 - **WHEN** the polished draft lands in the box
@@ -69,11 +69,19 @@ While a polished draft is in the box and the user has not yet edited it, the sys
 - **WHEN** the user makes any edit to the draft
 - **THEN** the highlight disappears and the text stays
 
+#### Scenario: Band clears after send
+- **WHEN** the held draft is sent with Enter
+- **THEN** the band draws nothing and `/polish restore` reports nothing to restore
+
+#### Scenario: Band dismissed
+- **WHEN** the user presses the dismiss choice
+- **THEN** the band draws nothing, the draft stays in the box, and Enter sends it as typed
+
 ### Requirement: Restore the original
 The user SHALL be able to get the original text back into the prompt box with at most two gestures and no configuration. Restoring SHALL arm the next Enter to send the restored text as typed, without polishing it again.
 
-#### Scenario: Digit restore from an empty box
-- **WHEN** a polished draft is in the box, the user clears the box and presses the restore digit shown in the band
+#### Scenario: Digit restore
+- **WHEN** a polished draft is in the box and the user presses `ctrl+x tab` then the restore digit shown in the band, or clears the box and presses that digit, or clicks the choice
 - **THEN** the original text is in the box and Enter sends it unchanged
 
 #### Scenario: Command restore

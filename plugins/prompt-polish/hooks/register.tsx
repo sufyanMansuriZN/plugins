@@ -289,7 +289,10 @@ export const clean = (original: string, reply: string): string => {
 type Next = (e: PromptSubmitInput) => Promise<PromptSubmitResult>
 
 export const COMMAND_DESCRIPTION = 'Prompt polishing: on, off, restore (original back in the box), or no argument for status'
-export const POLISHED_NOTICE = 'polished; review and press Enter to send, or clear the box and press 1 to restore the original'
+export const POLISHED_NOTICE = 'polished; the draft is in the box above'
+/** The band's lead line; the choices under it carry the keys. */
+export const BAND_LEAD = 'review and press Enter to send, or ctrl+x tab, then:'
+export const BAND_TAG = 'polished'
 
 const setEnabled = async ($: EngineInterface, value: boolean) => {
   await update($, enabled, () => value)
@@ -352,6 +355,7 @@ export const register: Register = on => {
     if (e.origin.kind !== 'composer') return next(e)
     if (await read($, armed)) {
       await update($, armed, () => false)
+      await update($, held, () => null)
       return next(e)
     }
     const reason = gate(e.text, e, await read($, enabled))
@@ -400,13 +404,31 @@ export const register: Register = on => {
     if (!h0 || !isOn || e.props.hasSurvey) return next(e)
     const { Box, Button, Text } = $.ui.resolve(e)
     const below = await next(e)
+    const choice = (key: string, hotkey: string, label: string, onPress: () => void, role?: 'dismiss') => (
+      <Box key={key} marginRight={3}>
+        <Button key={key} hotkey={hotkey} label={label} plain role={role} onPress={onPress} />
+      </Box>
+    )
     return (
       <Box flexDirection="column">
-        <Box>
-          <Text dimColor>polished · clear the box, then </Text>
-          <Button key="restore" hotkey="1" label="Restore original" plain onPress={() => void restore($)} />
-          <Text dimColor> · </Text>
-          <Button key="off" hotkey="2" label="Polishing off" plain onPress={() => void setEnabled($, false)} />
+        <Box flexDirection="column" marginTop={1}>
+          <Box flexDirection="row" alignItems="flex-start">
+            <Box flexShrink={0} width={2}>
+              <Text color="suggestion">✦</Text>
+            </Box>
+            <Text wrap="wrap">
+              <Text dimColor>{BAND_TAG} · </Text>
+              {BAND_LEAD}
+            </Text>
+          </Box>
+          <Box flexDirection="row" alignItems="flex-start">
+            <Box flexShrink={0} width={2} />
+            <Box flexWrap="wrap">
+              {choice('restore', '1', 'Restore original', () => void restore($))}
+              {choice('off', '2', 'Polishing off', () => void setEnabled($, false))}
+              {choice('dismiss', '0', 'Dismiss', () => void update($, held, () => null), 'dismiss')}
+            </Box>
+          </Box>
         </Box>
         {below}
       </Box>

@@ -29,7 +29,7 @@
 
 - [x] 4.1 Delete stale branches after confirming their tips are on `main`: for each of `pstack-route-gated-skills` and `sync-version-flag`, `git merge-base --is-ancestor <branch> main && git branch -d <branch>`; if a tip is not an ancestor, show `git log main..<branch> --oneline` to the user and delete with `-D` only on their say-so; verify `git branch` lists only `main`
 - [x] 4.2 Final private-content check on the whole history: `git log -p --all | grep -nE '/home/[a-z]|ghp_|sk-ant|AKIA|password|secret' | grep -v 'sufyan.mansuri/Projects/dev/skills'` prints nothing new beyond the accepted author-email lines, and `git log --format=%ae | sort -u` shows only the expected address
-- [ ] 4.3 Create the public, empty GitHub repository `sufyanMansuriZn/plugins` (no README, license or .gitignore): either `env -u GITHUB_TOKEN gh auth login` then `gh repo create sufyanMansuriZn/plugins --public`, or in the browser; verify `gh repo view sufyanMansuriZn/plugins --json visibility -q .visibility` prints `PUBLIC` or the user confirms the page loads
+- [x] 4.3 Create the public, empty GitHub repository `sufyanMansuriZn/plugins` (no README, license or .gitignore): either `env -u GITHUB_TOKEN gh auth login` then `gh repo create sufyanMansuriZn/plugins --public`, or in the browser; verify `gh repo view sufyanMansuriZn/plugins --json visibility -q .visibility` prints `PUBLIC` or the user confirms the page loads
 - [ ] 4.4 Run `git remote add origin git@github.com:sufyanMansuriZn/plugins.git` (or the https URL) and `git push -u origin main`; verify `git status -sb` shows `## main...origin/main` with no ahead/behind and the README renders at `https://github.com/sufyanMansuriZn/plugins`
 
 ## 5. Integration check

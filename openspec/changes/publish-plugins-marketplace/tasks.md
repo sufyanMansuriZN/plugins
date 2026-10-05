@@ -17,9 +17,9 @@
 
 ## 3. Re-register the marketplace on this machine and rename the directory
 
-- [ ] 3.1 Record the before state: `claude plugin marketplace list` includes `skills` as a directory source, and `grep -c 'session-bar@skills' ~/.claude/settings.json` prints `1`
-- [ ] 3.2 Run `claude plugin uninstall session-bar@skills`; verify `grep -c 'session-bar@skills' ~/.claude/plugins/installed_plugins.json` prints `0`
-- [ ] 3.3 Run `claude plugin marketplace remove skills`; verify `claude plugin marketplace list` no longer shows `skills` (if it refuses, run `claude plugin disable session-bar@skills` and retry)
+- [x] 3.1 Record the before state: `claude plugin marketplace list` includes `skills` as a directory source, and `grep -c 'session-bar@skills' ~/.claude/settings.json` prints `1`
+- [x] 3.2 Run `claude plugin uninstall session-bar@skills`; verify `grep -c 'session-bar@skills' ~/.claude/plugins/installed_plugins.json` prints `0`
+- [x] 3.3 Run `claude plugin marketplace remove skills`; verify `claude plugin marketplace list` no longer shows `skills` (if it refuses, run `claude plugin disable session-bar@skills` and retry)
 - [ ] 3.4 Merge the branch to `main` (`git checkout main && git merge --ff-only publish-plugins-marketplace`) and verify `git status` is clean; then tell the user the next step renames the working directory and ends this session
 - [ ] 3.5 From a shell outside Claude Code, run `mv ~/Projects/dev/skills ~/Projects/dev/plugins`; verify `ls ~/Projects/dev/plugins/.claude-plugin/marketplace.json` exists and `~/Projects/dev/skills` does not
 - [ ] 3.6 Reopen Claude Code in `~/Projects/dev/plugins`, run `claude plugin marketplace add ~/Projects/dev/plugins`, and verify `claude plugin marketplace list` shows `plugins` as a directory source

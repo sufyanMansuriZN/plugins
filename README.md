@@ -23,3 +23,4 @@ From inside a Claude Code session:
 ## Plugins
 
 - **session-bar**: Session dir, model, ctx and paced usage pills above the prompt
+- **prompt-polish**: Polishes a submitted prompt into clearer English and holds it in the box for review before it is sent

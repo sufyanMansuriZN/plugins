@@ -8,6 +8,11 @@
       "name": "session-bar",
       "source": "./plugins/session-bar",
       "description": "Session dir, model, ctx and paced usage pills above the prompt"
+    },
+    {
+      "name": "prompt-polish",
+      "source": "./plugins/prompt-polish",
+      "description": "Polishes a submitted prompt into clearer English and holds it in the box for review before it is sent"
     }
   ]
 }

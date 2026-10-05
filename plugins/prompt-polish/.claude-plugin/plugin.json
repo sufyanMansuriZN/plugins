@@ -1,0 +1,6 @@
+{
+  "name": "prompt-polish",
+  "version": "0.1.0",
+  "description": "Polishes a submitted prompt into clearer English and holds it in the box for review before it is sent",
+  "types": "./types/index.d.ts"
+}

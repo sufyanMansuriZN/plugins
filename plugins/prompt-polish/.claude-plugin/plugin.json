@@ -1,0 +1,6 @@
+{
+  "name": "prompt-polish",
+  "version": "0.1.0",
+  "description": "Polishes the draft in the prompt box into clearer English on a chord (ctrl+↓), for review before you press Enter",
+  "types": "./types/index.d.ts"
+}

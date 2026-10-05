@@ -37,4 +37,4 @@
 
 - [x] 5.1 Add `prompt-polish` to `.claude-plugin/marketplace.json` (`source` `./plugins/prompt-polish`, `description` from `plugin.json`) and a one-line entry under `## Plugins` in `README.md`; verify `python3 -c 'import json;m=json.load(open(".claude-plugin/marketplace.json"));print([p["name"] for p in m["plugins"]])'` lists both plugins and `grep -c prompt-polish README.md` prints at least `1`
 - [x] 5.2 Update the plugin and marketplace descriptions to the gesture wording; run `git grep -nE '/home/[a-z]' -- plugins/prompt-polish` and verify it prints nothing; run `openspec validate add-prompt-polish` and verify it passes
-- [ ] 5.3 Commit, merge to `main`, push; then `claude plugin marketplace update plugins` and `claude plugin install prompt-polish@plugins`; verify `claude plugin list` shows `prompt-polish@plugins` and a fresh session polishes a draft as in 4.1
+- [x] 5.3 Commit, merge to `main`, push; then `claude plugin marketplace update plugins` and `claude plugin install prompt-polish@plugins`; verify `claude plugin list` shows `prompt-polish@plugins` and a fresh session polishes a draft as in 4.1

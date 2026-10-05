@@ -74,11 +74,11 @@ Every span of code, file path, identifier, command, URL and error message presen
 - **THEN** the box still holds the draft as typed, a toast says the polish was discarded, and the transcript shows nothing
 
 ### Requirement: Band shows the state and what changed
-The system SHALL show a band above the prompt, laid out like the engine's own side-agent notice (a star, a dim tag, a lead line, then a row of numbered choices), in three states: a one-line hint naming the chord while a task-sized draft is in the box and nothing is held; "polishing…" while the model works; and, once a polish has landed, a review line with the choices restore (or use polished), polishing off, dismiss. While a polished draft is in the box and the user has not yet edited it, the system SHALL visually distinguish the text the polish added from the text the user wrote. The band SHALL draw nothing when the box is empty, when polishing is off, when a survey holds the band, or when the draft has been sent.
+The system SHALL show a band above the prompt, laid out like the engine's own side-agent notice (a star, a dim tag, a lead line, then a row of numbered choices), in three states: a single-row hint, the tag and the numbered choices on one line with the chord in the polish choice's label, while a task-sized draft is in the box and nothing is held; "polishing…" while the model works; and, once a polish has landed, a review line with the choices restore (or use polished), polishing off, dismiss. While a polished draft is in the box and the user has not yet edited it, the system SHALL visually distinguish the text the polish added from the text the user wrote. The band SHALL draw nothing when the box is empty, when polishing is off, when a survey holds the band, or when the draft has been sent.
 
 #### Scenario: Hint for a task-sized draft
 - **WHEN** polishing is on and the user has typed a draft of six or more words that is not a command line or a bare acknowledgement
-- **THEN** the band shows one dim line naming the chord and the polish choice; it draws nothing for a shorter draft or an empty box
+- **THEN** the band shows one row: the dim tag, `1: Polish draft (ctrl+↓)` and `2: Polishing off`, and nothing else; it draws nothing for a shorter draft or an empty box
 
 #### Scenario: Added clause is highlighted
 - **WHEN** the polished draft lands in the box

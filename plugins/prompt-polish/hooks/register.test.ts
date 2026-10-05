@@ -633,9 +633,10 @@ describe('AbovePrompt band', () => {
       expect(polishButton?.props['action']).toBe(CHORD_ACTION)
       expect((await ui.find({ type: 'Button', text: LABEL_OFF }))?.props['hotkey']).toBe('2')
       expect(await ui.find({ type: 'Button', text: LABEL_DISMISS })).toBeUndefined()
-      expect((await ui.find({ type: 'Text', text: /^polish · $/ }))?.props['dimColor']).toBe(true)
-      expect(await ui.find({ type: 'Text', text: /ctrl\+↓/ })).toBeDefined()
-      expect(await ui.find({ type: 'Text', text: /ctrl\+x tab/ })).toBeDefined()
+      expect((await ui.find({ type: 'Text', text: /^polish ·$/ }))?.props['dimColor']).toBe(true)
+      expect(await ui.find({ type: 'Button', text: /ctrl\+↓/ })).toBeDefined()
+      // One row only: no lead Text beside the tag, so the hint costs a single line above the box.
+      expect(await ui.findAll({ type: 'Text' })).toHaveLength(2)
       expect((await ui.find({ type: 'Text', text: '✦' }))?.props['color']).toBe('suggestion')
       await ui.unmount()
     })

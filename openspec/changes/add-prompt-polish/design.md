@@ -39,11 +39,11 @@ See proposal.md for motivation and specs/prompt-polish/spec.md for the behaviour
 
 **The band is the only surface and follows the engine's side-agent notice.** The `AbovePrompt` hook answers `next(e)` when polishing is off, a survey holds the band, or nothing is to be shown. Otherwise it draws a star column (`✦`), a dim tag and lead line, and a wrapped row of plain numbered choices, one of three states:
 
-- *ready* (a task-sized draft is in the box, nothing held): tag `polish`, lead "ctrl+↓ polishes this draft before you send it, or ctrl+x tab, then:", choices `1: Polish draft` (with the action) and `2: Polishing off`.
+- *ready* (a task-sized draft is in the box, nothing held): one row only, tag `polish` followed on the same line by the choices `1: Polish draft (ctrl+↓)` (with the action) and `2: Polishing off`. No lead line: this state shows on most drafts, so it costs a single line above the box.
 - *busy*: tag `polish`, lead "polishing…", no choices.
 - *held* (a polish landed): tag `polished`, lead "review and press Enter to send · ctrl+↓ swaps the original back", choices `1: Restore original` or `1: Use polished` (with the action; the label follows which text is in the box), `2: Polishing off`, `0: Dismiss` (role `dismiss`).
 
-The Button with the action must be mounted for the chord to work, so the ready hint is not hideable; it is one dim line and appears only for drafts the plugin would polish. Alternative considered: a Button hidden behind an empty label so the hint could be turned off. Rejected: invisible controls, and a refused tree risk.
+The Button with the action must be mounted for the chord to work, so the ready hint is not hideable; it is one dim row and appears only for drafts the plugin would polish. Found during review: a two-row hint (lead plus choices) would have put more on screen per prompt than the transcript line the redesign removes, so the hint folds the chord into the Button's label and drops the lead. Alternative considered: a Button hidden behind an empty label so the hint could be turned off. Rejected: invisible controls, and a refused tree risk.
 
 **The draft is tracked through `prompt.edit`, with writes only on change.** The hook awaits `next(e)`, computes `ready = polishable(box.text)` and, while a draft is held, which of the two texts the box shows (`polished`, `original` or `edited`). It writes an atom only when the value changed, so a draft costs at most a handful of redraws, not one per keystroke. The box becoming empty clears the hold. `prompt.submit` from the composer clears both `ready` and the hold and calls `next(e)`, because the engine empties the box on send without a `prompt.edit`. `command.run` for `polish` also clears `ready`, since typing the command empties the box.
 

@@ -285,10 +285,9 @@ export const CHORD = 'ctrl+↓'
 export const COMMAND_DESCRIPTION = 'Polish the draft in the prompt box: no argument or <text> polishes, on, off, restore (original back in the box)'
 export const TAG_READY = 'polish'
 export const TAG_HELD = 'polished'
-export const LEAD_READY = `${CHORD} polishes this draft before you send it, or ctrl+x tab, then:`
 export const LEAD_BUSY = 'polishing…'
 export const LEAD_HELD = `review and press Enter to send · ${CHORD} swaps the original back`
-export const LABEL_POLISH = 'Polish draft'
+export const LABEL_POLISH = `Polish draft (${CHORD})`
 export const LABEL_RESTORE = 'Restore original'
 export const LABEL_POLISHED = 'Use polished'
 export const LABEL_OFF = 'Polishing off'
@@ -467,29 +466,52 @@ export const register: Register = on => {
         <Button key={key} hotkey={hotkey} label={label} plain onPress={onPress} {...extra} />
       </Box>
     )
-    const tag = hold ? TAG_HELD : TAG_READY
-    const lead = isBusy ? LEAD_BUSY : hold ? LEAD_HELD : LEAD_READY
-    const first = hold ? (hold.view === 'original' ? LABEL_POLISHED : LABEL_RESTORE) : LABEL_POLISH
+    const choices = hold
+      ? [
+          choice('polish', '1', hold.view === 'original' ? LABEL_POLISHED : LABEL_RESTORE, () => void toggle($), { action: CHORD_ACTION }),
+          choice('off', '2', LABEL_OFF, () => void setEnabled($, false)),
+          choice('dismiss', '0', LABEL_DISMISS, () => void update($, held, () => null), { role: 'dismiss' }),
+        ]
+      : [
+          choice('polish', '1', LABEL_POLISH, () => void toggle($), { action: CHORD_ACTION }),
+          choice('off', '2', LABEL_OFF, () => void setEnabled($, false)),
+        ]
+    const star = (
+      <Box flexShrink={0} width={2}>
+        <Text color="suggestion">✦</Text>
+      </Box>
+    )
+    // The hint is one row: the chord has to have a drawn Button to reach, so the row is as small as it can be.
+    if (!hold && !isBusy) {
+      return (
+        <Box flexDirection="column">
+          <Box flexDirection="row" alignItems="flex-start" marginTop={1}>
+            {star}
+            <Box flexWrap="wrap">
+              <Box marginRight={1}>
+                <Text dimColor>{TAG_READY} ·</Text>
+              </Box>
+              {choices}
+            </Box>
+          </Box>
+          {below}
+        </Box>
+      )
+    }
     return (
       <Box flexDirection="column">
         <Box flexDirection="column" marginTop={1}>
           <Box flexDirection="row" alignItems="flex-start">
-            <Box flexShrink={0} width={2}>
-              <Text color="suggestion">✦</Text>
-            </Box>
+            {star}
             <Text wrap="wrap">
-              <Text dimColor>{tag} · </Text>
-              {lead}
+              <Text dimColor>{isBusy && !hold ? TAG_READY : TAG_HELD} · </Text>
+              {isBusy ? LEAD_BUSY : LEAD_HELD}
             </Text>
           </Box>
           {!isBusy && (
             <Box flexDirection="row" alignItems="flex-start">
               <Box flexShrink={0} width={2} />
-              <Box flexWrap="wrap">
-                {choice('polish', '1', first, () => void toggle($), { action: CHORD_ACTION })}
-                {choice('off', '2', LABEL_OFF, () => void setEnabled($, false))}
-                {hold && choice('dismiss', '0', LABEL_DISMISS, () => void update($, held, () => null), { role: 'dismiss' })}
-              </Box>
+              <Box flexWrap="wrap">{choices}</Box>
             </Box>
           )}
         </Box>

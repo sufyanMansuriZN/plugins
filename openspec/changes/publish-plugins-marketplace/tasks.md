@@ -13,7 +13,7 @@
 - [x] 2.4 Replace `/home/sufyan.mansuri/Projects/dev/skills` with `~/Projects/plugins` in `openspec/changes/archive/2026-10-03-port-pstack-to-claude-code/specs/pstack/spec.md`; verify `git grep -nE '/home/[a-z]' -- . ':!openspec/changes/publish-plugins-marketplace'` prints nothing
 - [x] 2.5 Confirm no LICENSE exists and none is added: `ls LICENSE* COPYING* 2>/dev/null | wc -l` prints `0`
 - [x] 2.6 Run `openspec validate publish-plugins-marketplace` and verify it passes with the `marketplace` delta recognised
-- [ ] 2.7 Commit tasks 2.1 to 2.4 and the change artifacts as one commit (`Rename marketplace to plugins and prepare for publishing`); verify `git show --stat HEAD` lists `.claude-plugin/marketplace.json`, `README.md`, `.gitignore`, the archived spec, and `openspec/changes/publish-plugins-marketplace/`
+- [x] 2.7 Commit tasks 2.1 to 2.4 and the change artifacts as one commit (`Rename marketplace to plugins and prepare for publishing`); verify `git show --stat HEAD` lists `.claude-plugin/marketplace.json`, `README.md`, `.gitignore`, the archived spec, and `openspec/changes/publish-plugins-marketplace/`
 
 ## 3. Re-register the marketplace on this machine and rename the directory
 

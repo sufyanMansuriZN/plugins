@@ -384,6 +384,12 @@ const toggle = async ($: EngineInterface): Promise<string> => {
   return polishNow($)
 }
 
+/** Hides the band until the box changes: the hold goes, and the hint stays down for the draft as it stands. */
+const dismiss = async ($: EngineInterface) => {
+  await update($, held, () => null)
+  await update($, ready, () => false)
+}
+
 const restore = async ($: EngineInterface): Promise<string> => {
   const h = await read($, held)
   if (!h) return 'Nothing to restore: no prompt has been polished in this session.'
@@ -470,7 +476,7 @@ export const register: Register = on => {
       ? [
           choice('polish', '1', hold.view === 'original' ? LABEL_POLISHED : LABEL_RESTORE, () => void toggle($), { action: CHORD_ACTION }),
           choice('off', '2', LABEL_OFF, () => void setEnabled($, false)),
-          choice('dismiss', '0', LABEL_DISMISS, () => void update($, held, () => null), { role: 'dismiss' }),
+          choice('dismiss', '0', LABEL_DISMISS, () => void dismiss($), { role: 'dismiss' }),
         ]
       : [
           choice('polish', '1', LABEL_POLISH, () => void toggle($), { action: CHORD_ACTION }),

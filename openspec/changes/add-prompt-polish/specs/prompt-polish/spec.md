@@ -94,7 +94,7 @@ The system SHALL show a band above the prompt, laid out like the engine's own si
 
 #### Scenario: Band dismissed
 - **WHEN** the user presses the dismiss choice
-- **THEN** the band draws nothing until the box changes, the draft stays in the box, and Enter sends it as typed
+- **THEN** the band draws nothing, not even the hint, until the next edit to the box; the draft stays in the box and Enter sends it as typed
 
 ### Requirement: Restore the original
 After a polish, the user SHALL be able to get the original text back into the prompt box with one gesture: the polish chord again, the band's first choice, or `/polish restore`. The chord SHALL swap between the original and the polished text while the box holds one of them unedited, and SHALL polish the current text afresh when the user has edited it.

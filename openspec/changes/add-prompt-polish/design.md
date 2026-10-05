@@ -41,7 +41,7 @@ See proposal.md for motivation and specs/prompt-polish/spec.md for the behaviour
 
 - *ready* (a task-sized draft is in the box, nothing held): one row only, tag `polish` followed on the same line by the choices `1: Polish draft (ctrl+↓)` (with the action) and `2: Polishing off`. No lead line: this state shows on most drafts, so it costs a single line above the box.
 - *busy*: tag `polish`, lead "polishing…", no choices.
-- *held* (a polish landed): tag `polished`, lead "review and press Enter to send · ctrl+↓ swaps the original back", choices `1: Restore original` or `1: Use polished` (with the action; the label follows which text is in the box), `2: Polishing off`, `0: Dismiss` (role `dismiss`).
+- *held* (a polish landed): tag `polished`, lead "review and press Enter to send · ctrl+↓ swaps the original back", choices `1: Restore original` or `1: Use polished` (with the action; the label follows which text is in the box), `2: Polishing off`, `0: Dismiss` (role `dismiss`). Dismiss clears the hold and also lowers `ready`, so the hint does not come straight back for the same draft; the next edit recomputes it. Found during the live check: without that, dismissing the review band left the hint row in its place.
 
 The Button with the action must be mounted for the chord to work, so the ready hint is not hideable; it is one dim row and appears only for drafts the plugin would polish. Found during review: a two-row hint (lead plus choices) would have put more on screen per prompt than the transcript line the redesign removes, so the hint folds the chord into the Button's label and drops the lead. Alternative considered: a Button hidden behind an empty label so the hint could be turned off. Rejected: invisible controls, and a refused tree risk.
 

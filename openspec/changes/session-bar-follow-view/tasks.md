@@ -17,4 +17,4 @@
 
 ## 4. Release
 
-- [ ] 4.1 Bump `plugins/session-bar/.claude-plugin/plugin.json` to 0.9.0, run `claude plugin validate plugins/session-bar`, `tsc -p plugins/session-bar` and `claude plugin test plugins/session-bar`, commit, merge to main and push; verify `claude plugin update session-bar@plugins` installs 0.9.0
+- [x] 4.1 Bump `plugins/session-bar/.claude-plugin/plugin.json` to 0.9.0, run `claude plugin validate plugins/session-bar`, `tsc -p plugins/session-bar` and `claude plugin test plugins/session-bar`, commit, merge to main and push; verify `claude plugin update session-bar@plugins` installs 0.9.0

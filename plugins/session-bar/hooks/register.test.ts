@@ -1,6 +1,6 @@
 import { test, expect, mock } from 'claude-code/testing'
 import {
-  band, paceBand, ctxBand, tokensText, shortDir, limitText, parseUsage, fresh, modelLabel,
+  band, paceBand, ctxBand, tokensText, shortDir, limitText, parseUsage, fresh, modelLabel, withModel,
   elapsed, countdown, bar, segments, layout, width, WINDOW_MS, WEEK,
 } from './register'
 import type { BarInput, Run } from './register'
@@ -237,6 +237,60 @@ test('tiers and layout', async () => {
   expect(layout(b, width(noBars!))).toEqual(noBars)
   expect(layout(b, width(noBars!) - 1)).toEqual(bare)
   expect(layout(b, 10)).toEqual(bare)
+})
+
+test('a subagent in view: type before its model, no ctx at any tier', async () => {
+  const sub = input({ agent: 'Explore', model: 'Haiku 4.5', ctx: undefined })
+  expect(texts(segments(sub, 3)).join('')).toBe('skills · Explore · Haiku 4.5   5h 23% 2h40m   7d 61%')
+  expect(texts(segments(input({ agent: 'Plan', model: undefined, ctx: undefined }), 4)).join(''))
+    .toBe('skills · Plan   5h 23%   7d 61%') // no model until its first request
+  for (const tier of [0, 1, 2, 3, 4] as const) expect(texts(segments(sub, tier))).not.toContain('ctx ')
+  expect(texts(layout(sub, 10)).join('')).toBe('skills · Explore · Haiku 4.5   5h 23%   7d 61%')
+  expect(modelLabel('claude-sonnet-5-5')).toBe('Sonnet 5.5') // no window borrowed from main
+})
+
+test('agent models: recorded per id, unchanged map on a repeat or main', async () => {
+  const ms = withModel({}, 'a1', 'claude-haiku-4-5-20251001')
+  expect(ms).toEqual({ a1: 'claude-haiku-4-5-20251001' }) // new id
+  expect(withModel(ms, 'a1', 'claude-haiku-4-5-20251001')).toBe(ms) // same model: no write
+  expect(withModel(ms, 'a1', 'claude-sonnet-5-5')).toEqual({ a1: 'claude-sonnet-5-5' }) // a fallback moves it
+  expect(withModel(ms, undefined, 'claude-opus-5-5')).toBe(ms) // main's step
+})
+
+test('band follows the transcript in view: spawn seeds the model, a step overrides it', async ($, on) => {
+  on('session.root', async () => ({ value: '/home/me/.claude/skills' }))
+  on('env.get', async () => ({ value: '/home/me' }))
+  on('session.model', async () => ({ value: 'claude-opus-5-5' }))
+  on('clock.now', async () => ({ value: 1e12 }))
+  on('session.measure', async (_$, e) => ({ changed: e.changed }))
+  on('ui.render', async () => h('Box', {}) as never)
+  on('agent.list', async () => ({ value: [{ id: 'a1', type: 'Explore', status: 'running' }, { id: 'a2', type: 'Plan', status: 'running' }] as never }))
+  on('agent.spawn', async () => ({ model: 'claude-haiku-4-5-20251001', agentId: 'a1' }))
+  on('turn.step', async function* (_$, e) { return { turnId: e.turnId, index: e.index, answer: '', toolUses: [] } as never })
+  on('store.set', async () => ({ value: undefined }))
+
+  await $.session.measure({ context: { tokens: 187_400, window: 1_000_000 }, rateLimits: [{ kind: 'five_hour', percentUsed: 41 }], changed: ['context', 'rateLimits'] } as never)
+  const mount = (agentId?: string) => $.ui.mount({
+    plugin: 'session-bar', surface: 'terminal', component: 'AbovePrompt',
+    props: { hasSurvey: false, isWorking: false, maxRows: 3, view: agentId ? { agentId } : {} } as never,
+  })
+  const step = async (agentId: string | undefined, model: string) => {
+    for await (const _ of $.turn.step({ turnId: 't', index: 0, model, messageCount: 1, agentId })) { /* drain */ }
+  }
+  const sees = async (agentId: string | undefined, has: string[], hasNot: string[] = []) => {
+    const ui = await mount(agentId)
+    for (const text of has) expect(await ui.find({ type: 'Text', text })).toBeDefined()
+    for (const text of hasNot) expect(await ui.find({ type: 'Text', text })).toBeUndefined()
+    await ui.unmount()
+  }
+
+  await $.agent.spawn({ prompt: 'look', subagentType: 'Explore', parentModel: 'claude-opus-5-5' } as never)
+  await sees('a1', [' · Explore', ' · Haiku 4.5', '41%'], ['ctx ', '187K', ' · Opus 5.5 1M']) // seeded by the spawn
+  await step('a1', 'claude-sonnet-5-5')
+  await sees('a1', [' · Sonnet 5.5'], [' · Haiku 4.5', ' · Sonnet 5.5 1M']) // a step overrides; no window from main
+  await sees('a2', [' · Plan'], [' · Opus 5.5 1M', ' · Opus 5.5']) // no request yet: type alone
+  await step(undefined, 'claude-fable-5-1') // main's step names no agent
+  await sees(undefined, [' · Opus 5.5 1M', 'ctx ', '187K', '41%'], [' · Explore'])
 })
 
 test('calm segments are bare text; only attention gets a pill, all on its fill', async () => {

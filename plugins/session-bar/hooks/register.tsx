@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Ctx, Limits, Weekly } from '../types'
+import type { AgentModels, Ctx, Limits, Weekly } from '../types'
 
 // Calm segments are plain text in the terminal's own colors, so they read on any theme (it can be `auto`,
 // which a mod cannot resolve). Only a segment that needs attention becomes a pill: orange, or vermillion when
@@ -13,7 +13,12 @@ const limits = atom({ plugin: 'session-bar', key: 'limits' } as const, [] as Lim
 const weekly = atom({ plugin: 'session-bar', key: 'weekly' } as const, [] as Weekly)
 const fetchedAt = atom({ plugin: 'session-bar', key: 'fetchedAt' } as const, 0)
 const ctx = atom({ plugin: 'session-bar', key: 'ctx' } as const, undefined as Ctx | undefined)
+const agentModels = atom({ plugin: 'session-bar', key: 'agentModels' } as const, {} as AgentModels)
 const tick = atom({ plugin: 'session-bar', key: 'tick' } as const, 0) // bumped each minute so countdowns move while idle
+
+// a subagent's model into the map; the same map when main's step or a repeat leaves it as it was
+export const withModel = (ms: AgentModels, agentId: string | undefined, model: string): AgentModels =>
+  !agentId || ms[agentId] === model ? ms : { ...ms, [agentId]: model }
 
 export type Level = keyof typeof ATTN | undefined
 
@@ -109,7 +114,8 @@ export const fresh = <T extends { resetsAt?: string }>(ls: T[], now: number) =>
 
 export type Run = { text: string; color?: string; backgroundColor?: string; dimColor?: boolean; bold?: boolean }
 export type Win = { label: string; pct: number; resetsAt?: string; windowMs?: number }
-export type BarInput = { dir: string; model?: string; ctx?: Ctx; windows: Win[]; now: number }
+// agent: the type of the subagent whose transcript is in view; absent on main
+export type BarInput = { dir: string; agent?: string; model?: string; ctx?: Ctx; windows: Win[]; now: number }
 // 0 full, 1 5h countdown only, 2 short bars, 3 no bars, 4 no countdowns
 export type Tier = 0 | 1 | 2 | 3 | 4
 
@@ -136,7 +142,9 @@ export const segments = (b: BarInput, tier: Tier): Run[] => {
     ])
   }
 
-  const groups: Run[][] = [[{ text: b.dir, bold: true }, ...(b.model ? [dim(` · ${b.model}`)] : [])]]
+  const groups: Run[][] = [[
+    { text: b.dir, bold: true }, ...[b.agent, b.model].filter(Boolean).map(t => dim(` · ${t}`)),
+  ]]
   if (b.ctx) {
     // the bar runs to the hot threshold, so bar and color share one scale: full means hot, the tick marks warn
     const hot = ctxHot(b.ctx)
@@ -206,6 +214,22 @@ export const register: Register = on => {
     return result
   })
 
+  // $.agent.list() names no model, so a subagent's is kept from its requests, a fallback's included
+  on('turn.step', async function* ($, e, next) {
+    // update() always writes, so look first: most steps repeat the model the agent already has
+    if (e.agentId && (await read($, agentModels))[e.agentId] !== e.model) {
+      await update($, agentModels, ms => withModel(ms, e.agentId, e.model))
+    }
+    return yield* next(e)
+  })
+
+  // an early reading, so the model shows before the subagent's first request; its steps stay the source
+  on('agent.spawn', async ($, e, next) => {
+    const r = await next(e)
+    if (!r.deny && r.agentId) await update($, agentModels, ms => withModel(ms, r.agentId, r.model))
+    return r
+  })
+
   // pushed after each turn and whenever a window moves a point, so the band redraws live
   on('session.measure', async ($, e, next) => {
     // absent until a request lands: keep the last seen reading so 5h/7d don't blink out
@@ -227,10 +251,15 @@ export const register: Register = on => {
       ...fresh(ls, now).map(l => ({ label: limitText(l), pct: l.percentUsed, resetsAt: l.resetsAt, windowMs: WINDOW_MS[l.kind] })),
       ...fresh(ws, now).map(w => ({ label: w.name, pct: w.percent, resetsAt: w.resetsAt, windowMs: WEEK })),
     ]
-    const runs = layout(
-      { dir: shortDir(root, home), model: model ? modelLabel(model, c?.window) : undefined, ctx: c, windows, now },
-      e.props.bodyColumns,
-    )
+    // a subagent's transcript in view: its type and model; main's ctx and window say nothing about it
+    const agentId = e.props.view?.agentId
+    let shown: Pick<BarInput, 'agent' | 'model' | 'ctx'> = { model: model ? modelLabel(model, c?.window) : undefined, ctx: c }
+    if (agentId) {
+      const [ms, agents] = await Promise.all([read($, agentModels), $.agent.list()])
+      const a = agents.find(a => a.id === agentId), m = ms[agentId]
+      shown = { agent: a?.type ?? a?.name, model: m ? modelLabel(m) : undefined }
+    }
+    const runs = layout({ dir: shortDir(root, home), ...shown, windows, now }, e.props.bodyColumns)
     const { Box, Text } = $.ui.resolve(e)
     const below = await next(e)
 

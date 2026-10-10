@@ -13,6 +13,11 @@
       "name": "prompt-polish",
       "source": "./plugins/prompt-polish",
       "description": "Polishes the draft in the prompt box into clearer English on a chord (ctrl+↓), for review before you press Enter"
+    },
+    {
+      "name": "plain-focus",
+      "source": "./plugins/plain-focus",
+      "description": "Always-on lean ADHD output rules plus ASD-STE100-style simple English"
     }
   ]
 }

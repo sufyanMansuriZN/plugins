@@ -24,3 +24,4 @@ From inside a Claude Code session:
 
 - **session-bar**: Session dir, model, ctx and paced usage pills above the prompt
 - **prompt-polish**: Polishes the draft in the prompt box into clearer English on a chord (ctrl+↓), for review before you press Enter
+- **plain-focus**: Always-on lean ADHD output rules plus ASD-STE100-style simple English (based on ayghri/i-have-adhd, MIT)

@@ -115,7 +115,7 @@ export const fresh = <T extends { resetsAt?: string }>(ls: T[], now: number) =>
 export type Run = { text: string; color?: string; backgroundColor?: string; dimColor?: boolean; bold?: boolean }
 export type Win = { label: string; pct: number; resetsAt?: string; windowMs?: number }
 // agent: the type of the subagent whose transcript is in view; absent on main
-export type BarInput = { dir: string; agent?: string; model?: string; ctx?: Ctx; windows: Win[]; now: number }
+export type BarInput = { dir: string; branch?: string; agent?: string; model?: string; ctx?: Ctx; windows: Win[]; now: number }
 // 0 full, 1 5h countdown only, 2 short bars, 3 no bars, 4 no countdowns
 export type Tier = 0 | 1 | 2 | 3 | 4
 
@@ -143,7 +143,7 @@ export const segments = (b: BarInput, tier: Tier): Run[] => {
   }
 
   const groups: Run[][] = [[
-    { text: b.dir, bold: true }, ...[b.agent, b.model].filter(Boolean).map(t => dim(` · ${t}`)),
+    { text: b.dir, bold: true }, ...(b.branch ? [dim(` (${b.branch})`)] : []), ...[b.agent, b.model].filter(Boolean).map(t => dim(` · ${t}`)),
   ]]
   if (b.ctx) {
     // the bar runs to the hot threshold, so bar and color share one scale: full means hot, the tick marks warn
@@ -259,7 +259,10 @@ export const register: Register = on => {
       const a = agents.find(a => a.id === agentId), m = ms[agentId]
       shown = { agent: a?.type ?? a?.name, model: m ? modelLabel(m) : undefined }
     }
-    const runs = layout({ dir: shortDir(root, home), ...shown, windows, now }, e.props.bodyColumns)
+    // shortcut: one git spawn per redraw, no cache; detached HEAD reads "HEAD". Cache on turn.complete if it shows
+    const git = await $.process.run(['git', 'rev-parse', '--abbrev-ref', 'HEAD']).catch(() => undefined)
+    const branch = git?.exitCode === 0 ? git.stdout.trim() || undefined : undefined
+    const runs = layout({ dir: shortDir(root, home), branch, ...shown, windows, now }, e.props.bodyColumns)
     const { Box, Text } = $.ui.resolve(e)
     const below = await next(e)
 

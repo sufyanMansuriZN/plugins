@@ -330,3 +330,8 @@ test('countdown moves while idle', async ($, on) => {
   expect(await ui.find({ type: 'Text', text: ' 2h37m' })).toBeDefined()
   await ui.unmount()
 })
+
+test('branch shows after the dir, only when given', () => {
+  expect(texts(segments(input({ branch: 'main' }), 0)).slice(0, 3)).toEqual(['skills', ' (main)', ' · Opus 5.5'])
+  expect(texts(segments(input(), 0))).not.toContain(' (main)')
+})

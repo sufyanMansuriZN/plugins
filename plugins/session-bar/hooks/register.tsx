@@ -187,7 +187,7 @@ export const desktopSegments = (b: BarInput): Badge[] => {
       ].filter(Boolean).join(' · '),
     })
   }
-  return all.some(x => x.level) ? all : []
+  return all
 }
 
 // One Svg per pill, a meter: shape says which segment, color says severity only. An Svg cannot read CSS variables, so
@@ -369,6 +369,8 @@ export const register: Register = on => {
               <Box gap={1}>
                 {group.map(badge => {
                   const { source, width } = pill(badge)
+                  // never isInteractive: the engine rebuilds an interactive Svg on every redraw, which flickered the bar on
+                  // send and turn complete, even for one pill
                   return <Svg source={source} alt={badge.tip} width={width} height={PILL_H} />
                 })}
               </Box>

@@ -14,10 +14,16 @@
 
 ## 3. Decide from the result
 
-- [ ] 3.1 Record the result of 2.3 in design.md, replacing the open question about `alt` and picking the branch in decision 3.
-- [ ] 3.2 If hover was the cause: with the user, choose steady bar with no hover, hover on the 5h pill only, or another way to reach the countdown. Write the delta for "Desktop pill hover" in `specs/session-bar/spec.md` (MODIFIED, or REMOVED with Reason and Migration) and make the matching code and test changes. Verify: `openspec validate session-bar-desktop-flicker-on-turn --strict` passes, tests and `tsc` pass, and the user confirms on Desktop.
-- [ ] 3.3 If hover was not the cause: restore `isInteractive`, re-run tests and `tsc`, release the restore, and add a note to design.md that Desktop re-renders regardless. Replace the "Pending after the experiment" section of the spec delta with nothing. Verify: hover shows the countdown again on Desktop.
-- [ ] 3.4 Remove the "Pending after the experiment" section from `specs/session-bar/spec.md` in this change. Verify: `openspec validate session-bar-desktop-flicker-on-turn --strict` passes.
+- [x] 3.1 Record the result of 2.3 in design.md, replacing the open question about `alt` and picking the branch in decision 3.
+- [x] 3.2 If hover was the cause: with the user, choose steady bar with no hover, hover on the 5h pill only, or another way to reach the countdown. Write the delta for "Desktop pill hover" in `specs/session-bar/spec.md` (MODIFIED, or REMOVED with Reason and Migration) and make the matching code and test changes. Verify: `openspec validate session-bar-desktop-flicker-on-turn --strict` passes, tests and `tsc` pass, and the user confirms on Desktop.
+- [x] 3.3 (Not applicable: hover was the cause.) If hover was not the cause: restore `isInteractive`, re-run tests and `tsc`, release the restore, and add a note to design.md that Desktop re-renders regardless. Replace the "Pending after the experiment" section of the spec delta with nothing. Verify: hover shows the countdown again on Desktop.
+- [x] 3.4 Remove the "Pending after the experiment" section from `specs/session-bar/spec.md` in this change. Verify: `openspec validate session-bar-desktop-flicker-on-turn --strict` passes.
+
+## 4. Always show the Desktop bar
+
+- [x] 4.1 Make `desktopSegments` return every badge, not `[]` while calm; update the tests that expect nothing while calm (the `desktop: nothing while calm` unit test and the `desktop mount` test's `n` of 0) to expect neutral pills. Verify: `claude plugin test .` passes, and a test finds neutral pills for a calm reading, none for an absent context, and none for an expired 5h window.
+- [x] 4.2 Run `bunx --bun tsc --noEmit -p .` and the full test file. Verify: both pass.
+- [x] 4.3 Hot-swap `register.tsx` into the installed copy as before and restart Desktop. Verify on screen: neutral pills show above the prompt with the calm readings. Do this before the flicker check in 2.3.
 
 ## Workflow follow-up
 

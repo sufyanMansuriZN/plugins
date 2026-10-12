@@ -12,6 +12,7 @@ Separately, `refreshUsage` writes `fetchedAt` to `$.state` every 5 minutes. Noth
 - **If the flicker stops:** decide how to trade hover for a steady bar, and whether the countdown stays reachable some other way. Update the hover requirement to match.
 - **If it does not stop:** restore `isInteractive` (hover and countdown back as in 0.14.3) and record that Desktop re-renders regardless of the pills.
 - **Always:** stop writing `fetchedAt` to `$.state`. The 5-minute gate reads and writes `$.store` only, so a fetch that changes nothing on screen causes no redraw.
+- **Always visible:** the Desktop bar shows a pill for every reading that exists, calm ones neutral and attention ones tinted, instead of drawing nothing while all is calm. Absent readings are skipped. This reverses the "only while one needs attention" rule.
 - Terminal output is unchanged.
 
 ## Capabilities
@@ -22,12 +23,12 @@ None.
 
 ### Modified Capabilities
 
-- `session-bar`: the redraw requirement now covers fetch bookkeeping. The hover requirement may change after the experiment; its delta is written in task 3, once the result is known.
+- `session-bar`: the Desktop visibility requirement now shows pills whether or not any needs attention, and the redraw requirement now covers fetch bookkeeping. The hover requirement may change after the experiment; its delta is written in task 3, once the result is known.
 
 ## Impact
 
-- `plugins/session-bar/hooks/register.tsx`: `Svg` loses `isInteractive` for the experiment; `refreshUsage` drops the `fetchedAt` atom and gates on `$.store`.
-- `plugins/session-bar/hooks/register.test.ts`: a test for the bookkeeping write; a pill test that tracks the experiment.
+- `plugins/session-bar/hooks/register.tsx`: `Svg` loses `isInteractive` for the experiment; `refreshUsage` drops the `fetchedAt` atom and gates on `$.store`; `desktopSegments` no longer returns nothing while calm.
+- `plugins/session-bar/hooks/register.test.ts`: a test for the bookkeeping write; a pill test that tracks the experiment; the "calm draws nothing" tests now expect neutral pills.
 - `plugins/session-bar/.claude-plugin/plugin.json`: version 0.14.4.
 - `openspec/specs/session-bar/spec.md`: redraw requirement now; hover requirement after the result.
 - Cannot be fully verified in tests: the flicker shows only in the live Desktop app. The user judges it by eye.

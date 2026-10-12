@@ -339,8 +339,10 @@ test('branch shows after the dir, only when given', () => {
   expect(texts(segments(input(), 0))).not.toContain(' (main)')
 })
 
-test('desktop: nothing while calm; once one needs attention, every pill shows', () => {
-  expect(desktopSegments(input())).toEqual([]) // calm: dir, branch, model, ctx, 5h, 7d all left to the app
+test('desktop: every reading shows as a pill, calm ones neutral', () => {
+  const calm = desktopSegments(input()) // dir, branch and model stay with the app
+  expect(calm.map(b => [b.kind, b.level])).toEqual([['ctx', undefined], ['5h', undefined], ['7d', undefined]])
+  expect(desktopSegments(input({ ctx: undefined, windows: [] }))).toEqual([]) // no reading, no pill
   const win = (label: string, pct: number, hours: number, windowMs: number) =>
     ({ label, pct, resetsAt: new Date(NOW + hours * 3_600_000).toISOString(), windowMs })
   const hot = desktopSegments(input({ windows: [win('5h', 71, 3.5, WINDOW_MS.five_hour!), win('7d', 61, 31, WEEK)] }))
@@ -427,11 +429,20 @@ test('desktop mount: calm draws nothing of ours and spawns no git; attention is 
   }
 
   await $.session.measure({ context: { tokens: 50_000, window: 1_000_000 }, rateLimits: [{ kind: 'five_hour', percentUsed: 20 }], changed: ['context', 'rateLimits'] } as never)
-  expect((await pills()).n).toBe(0) // calm: nothing of ours
+  expect(await pills()).toEqual({ n: 2, text: undefined }) // calm: neutral ctx and 5h pills, still no dir, branch or model
   await $.session.measure({ context: { tokens: 187_400, window: 1_000_000 }, rateLimits: [{ kind: 'five_hour', percentUsed: 71 }], changed: ['context', 'rateLimits'] } as never)
   expect(await pills()).toEqual({ n: 2, text: undefined }) // ctx and 5h pills, no dir, branch or model text
   expect((await pills('a1')).n).toBe(1) // a subagent in view: the 5h pill only, no ctx
   expect(spawns).toBe(0)
+
+  // an interactive Svg is rebuilt on every redraw and flickered the bar, even with one, so no pill has hover
+  const ui = await $.ui.mount({
+    plugin: 'session-bar', surface: 'desktop', component: 'AbovePrompt',
+    props: { hasSurvey: false, isWorking: false, maxRows: 3, view: {} } as never,
+  })
+  const svgs = (await ui.findAll({ type: 'Svg' })).map(s => s.props as { alt: string, isInteractive?: boolean })
+  await ui.unmount()
+  expect(svgs.map(s => [s.alt.split(':')[0], !!s.isInteractive])).toEqual([['Session limit', false], ['Context', false]])
 })
 
 test('an unchanged reading is not written, so it does not redraw', async ($, on) => {

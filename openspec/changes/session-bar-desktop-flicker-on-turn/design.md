@@ -37,13 +37,21 @@ See proposal.md for the symptom. The cause of the send and turn flicker is uncon
 
 5. **Tests cover what is testable.** The flicker is not testable. The bookkeeping write is: after a refresh the redraw count does not rise by the `fetchedAt` write. Use the existing `ui.findAll`/render-count helpers in `register.test.ts` if they can count renders, otherwise assert `$.state` has no `fetchedAt` key.
 
+6. **Always show readings.** `desktopSegments` ends with `all.some(x => x.level) ? all : []`; it returns `all`. The Desktop branch of `ui.render` then no longer falls through to `next(e)` alone when calm. Calm pills already have a neutral look (a white chip track and gray fill), so no styling changes. An absent reading yields no badge today (`b.ctx` unset, an expired window dropped by `fresh`), so skipping follows without new code. Alternative: a force-show env switch for the test only. Rejected: the user wants the bar always visible, not only under test.
+   - The minute tick already redraws on a pace-band change, so it is unaffected.
+
 ## Risks / Trade-offs
+
+- [The bar is always on screen, so any redraw is more noticeable] → That also makes the flicker check in task 2.3 possible, since there is always a pill to watch.
 
 - [Removing `isInteractive` loses hover and the reachable countdown] → The experiment is reversible in one line, and the spec's hover requirement is not edited until the result is known.
 - [The flicker may not come from `isInteractive` at all] → Step 3 of the decision tree records that and restores hover. The result is still useful.
 - [The user can only judge by eye, on Desktop, after a restart] → Task 2 lists exactly what to do and what to report. It needs `claude plugin update session-bar` and a Desktop restart.
 - [Spec delta can go stale if the experiment succeeds] → Task 3 is explicit about writing the hover delta before archive.
 
+7. **Result of the experiment (0.14.4, hot-swapped).** With `isInteractive` removed from every pill, the user saw no flicker on send and none on turn complete, and no hover. So the interactive pills are the cause. Desktop shows nothing for `alt`. Chosen branch: hover on the 5h pill only (option b of decision 3), because the countdown is the only content not already on a pill. The other pills have no hover.
+   - **Second result:** with hover on the 5h pill only, that pill flickered on send. One interactive pill is enough, so the fix is no interactive pill (option a). The spec delta removes "Desktop pill hover" and adds "Desktop pills are not interactive". The countdown has no Desktop home now. Ideas for later, not decided: a text note in the pill that does not change each minute (such as the reset clock time), or a hover on something that is not redrawn.
+
 ## Open Questions
 
-- Does Desktop show `alt` as a native tooltip? Answered by looking in task 2; does not change the plan.
+- None.

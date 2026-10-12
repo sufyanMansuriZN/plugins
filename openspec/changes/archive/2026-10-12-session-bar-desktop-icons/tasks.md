@@ -14,7 +14,7 @@
 ## 3. Release 0.14.0
 
 - [x] 3.1 Bumped `plugin.json` to 0.14.0, committed (`3956d7b`), pushed and updated the plugin. On screen the user found the colors off, which led to group 4.
-- [ ] 3.2 Leave the bar open for several minutes. Verify: the user reports no flicker each minute; if it persists, record which event still redraws it.
+- [x] 3.2 Leave the bar open for several minutes. Verified: the per-minute flicker is gone. It still flickers when a prompt is sent and when a turn completes; that moves to a new change (`session-bar-desktop-flicker-on-turn`) that tests dropping `isInteractive`.
 
 ## 4. Color redesign (0.14.1)
 
@@ -25,12 +25,12 @@
 ## 5. Calm track on the app strip (0.14.2)
 
 - [x] 5.1 Make the calm track a white chip (0.75, dark 0.07) and the calm fill gray at 0.30, per design decision 3. Verify: tests find the `t` track class and its dark value, and no `t` class on an attention pill; the full test file and `tsc --noEmit` pass.
-- [ ] 5.2 Bump to 0.14.2, commit and push, update the plugin, restart Desktop. Verify on screen in light and dark: the share reads clearly on the app's gray strip. Tune the dark value if it looks washed out.
+- [x] 5.2 Bump to 0.14.2, commit and push, update the plugin, restart Desktop. Verify on screen in light and dark: the share reads clearly on the app's gray strip. Tune the dark value if it looks washed out.
 
 ## 6. Stronger attention pills (0.14.3)
 
 - [x] 6.1 Raise the warn and hot pills to a 0.30 track, 0.80 fill and 0.70 border, per design decision 3. Verify: tests find the 0.8 fill for both and the firmer border; the full test file and `tsc --noEmit` pass.
-- [ ] 6.2 Bump to 0.14.3, commit and push, update the plugin, restart Desktop. Verify on screen: a hot context reads red, not pink, and amber reads clearly, in light and dark.
+- [x] 6.2 Bump to 0.14.3, commit and push, update the plugin, restart Desktop. Verify on screen: a hot context reads red, not pink, and amber reads clearly, in light and dark.
 
 ## Workflow follow-up
 

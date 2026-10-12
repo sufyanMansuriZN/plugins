@@ -222,15 +222,27 @@ On the desktop surface the bar SHALL NOT show the directory or the branch, which
 - **THEN** the usage pills show and no context pill does
 
 ### Requirement: Desktop pills
-On the desktop surface each segment SHALL be a rounded pill holding a ring whose filled arc is the share used, then its text. The context pill SHALL show only its token count, with no `ctx` label. A usage pill SHALL show a dim label then a bold percentage, and only the 5h pill SHALL add its countdown. A segment needing attention SHALL be tinted orange or vermillion; a calm one SHALL be neutral.
+On the desktop surface each segment SHALL be a rounded pill holding an icon that identifies the segment, then its text. The pill background SHALL fill from the left edge to the share used. The context, the 5h window, the 7d window and a per-model weekly window SHALL each have a different icon. Icons and text SHALL use the theme's text colors, never a color of their own. The context pill SHALL show only its token count, with no `ctx` label. A usage pill SHALL show a dim label then a bold percentage. No pill SHALL show a countdown. Color SHALL mean severity only: a segment needing attention SHALL be amber (warn) or red (hot) in a translucent tone that reads on light and dark surfaces; a calm one SHALL be gray.
 
 #### Scenario: Context needing attention
 - **WHEN** the context holds 213,000 tokens of a 1,000,000-token window
-- **THEN** its pill is orange, shows `213K` with no `ctx` text, and its ring fills 85% of the way to the vermillion threshold
+- **THEN** its pill is red, shows `213K` with no `ctx` text, shows the context icon, and its fill reaches 85% of the pill, the share of the vermillion threshold
 
 #### Scenario: Usage pills
 - **WHEN** the 5h window is 15% used with 4h13m left and the 7d window is 76% used
-- **THEN** the 5h pill shows `5h 15% 4h13m` and the 7d pill shows `7d 76%` with no countdown
+- **THEN** the 5h pill shows `5h 15%` and the 7d pill shows `7d 76%`, and neither shows `4h13m`
+
+#### Scenario: Each segment has its own icon
+- **WHEN** the desktop surface draws the context, 5h, 7d and a per-model weekly pill
+- **THEN** the four pills show four different icons, all in the theme's text color
+
+#### Scenario: Color means severity
+- **WHEN** one pill is warn, one is hot and one is calm
+- **THEN** the warn pill is amber, the hot pill is red, the calm pill is gray, and their icons and text keep the same ink
+
+#### Scenario: Fill shows the share
+- **WHEN** a usage window is 41% used
+- **THEN** the left 41% of its pill is filled a shade darker than the rest
 
 #### Scenario: Limits left, context right
 - **WHEN** the desktop surface draws the context pill and the 5h and 7d pills
@@ -242,7 +254,7 @@ On the desktop surface each segment SHALL be a rounded pill holding a ring whose
 
 #### Scenario: Calm pills are neutral
 - **WHEN** a pill's segment does not need attention but another does
-- **THEN** that pill has a neutral fill and a gray arc
+- **THEN** that pill has a neutral background and a gray fill
 
 ### Requirement: Redraw only when something on screen changed
 The bar SHALL be redrawn only when a reading differs from the last one, or a countdown or pace band that is on screen has moved. A reading identical to the last SHALL NOT cause a redraw, and neither SHALL a passing minute with no countdown text or pace band changed, nor a usage fetch that stores only its own bookkeeping.
@@ -277,3 +289,18 @@ On the desktop surface no pill SHALL be an interactive element, so that the bar 
 #### Scenario: Steady on send and turn complete
 - **WHEN** a prompt is sent, and when a turn completes
 - **THEN** the pills do not flicker
+
+### Requirement: Desktop redraws only on a visible change
+When Desktop is the only surface on the session, the minute tick SHALL redraw the bar only when a pill's pace band moved, because no countdown is drawn on Desktop. When the terminal surface is also on the session, the tick SHALL also redraw for a countdown change, as before.
+
+#### Scenario: A quiet minute on Desktop
+- **WHEN** a minute passes, the 5h countdown drops from `4h13m` to `4h12m`, and no pace band moved
+- **THEN** the tick does not redraw the bar
+
+#### Scenario: Pace band moves
+- **WHEN** a minute passes and the 5h window moves from on pace to ahead of pace
+- **THEN** the tick redraws the bar and the pill tint changes
+
+#### Scenario: Terminal also attached
+- **WHEN** the session has the terminal and desktop surfaces and a countdown text changes
+- **THEN** the tick redraws the bar

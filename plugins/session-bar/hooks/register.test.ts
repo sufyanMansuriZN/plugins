@@ -378,22 +378,22 @@ test('pill: fill is the share used, icon per kind, tint by level, neutral when c
   expect(Math.abs(half.w - half.total / 2)).toBeLessThan(0.01) // the left half of the pill is filled
   expect(fillW({ share: 100 }).w).toBe(fillW({ share: 100 }).total)
   expect(fillW({ share: 0 }).w).toBe(0)
-  expect(src()).toContain('fill="#FBE3B0"') // warn tint, dark ink
-  expect(src({ level: 'hot' })).toContain('fill="#D55E00" fill-opacity=".35"')
+  // color means severity only: a translucent track and meter fill in the status color, gray when calm
+  expect(src()).toContain('fill="#fab219" fill-opacity="0.55"') // warn: amber fill
+  expect(src({ level: 'hot' })).toContain('fill="#d03b3b" fill-opacity="0.5"')
   const calm = src({ level: undefined })
-  expect(calm).toContain('class="n"') // neutral fill, light and dark by scheme
-  expect(calm).toContain('prefers-color-scheme:dark')
-  expect(calm).not.toContain('#FBE3B0')
-  expect(calm).toContain('fill="rgb(127,127,127)" fill-opacity=".2"')
+  expect(calm).toContain('fill="rgb(127,127,127)" fill-opacity="0.26"')
+  expect(calm).not.toContain('#fab219')
+  expect(calm).toContain('prefers-color-scheme:dark') // ink follows the scheme
   expect(src()).toContain('<title>a &amp; b &lt;c></title>') // escaped
   const kinds = ['ctx', '5h', '7d', 'model'] as const
   const paths = kinds.map(kind => /<g [^>]*>(.*?)<\/g>/.exec(src({ kind }))![1])
   expect(new Set(paths).size).toBe(4) // four different icons
   expect(calm).toContain('stroke-width="2"') // 1.5px on screen at 18/24 scale
-  expect(src({ kind: '5h' })).toContain('stroke="#0C447C"') // darker shade on a tint
-  expect(src({ kind: '5h', level: undefined })).toContain('class="k-5h"')
-  expect(src({ kind: '5h', level: undefined })).toContain('.k-5h{stroke:#185FA5}') // light; dark is in the media block
-  expect(src({ kind: '5h', level: undefined })).toContain('.k-5h{stroke:#85B7EB}')
+  const colors = (s: string) => s.match(/#[0-9a-f]{6}/gi)!.filter(c => !['#1f1f1e', '#6b6b6b', '#f0efe9', '#a8a79f'].includes(c))
+  expect(new Set(kinds.map(kind => colors(src({ kind, level: undefined })).join())).size).toBe(1) // no color per kind
+  expect(calm).toContain('class="s"') // a calm icon is secondary ink, an attention one primary
+  expect(src()).toContain('class="p"')
   const wide = desktopPill({ ...b, label: '5h', value: '15%', share: 15, level: undefined, tip: '' })
   expect(wide.width).toBeGreaterThan(desktopPill({ ...b, value: '15%', share: 15, level: undefined, tip: '' }).width) // the label widens it
   expect(src()).not.toContain('>ctx') // no label text on the context pill

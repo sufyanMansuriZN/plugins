@@ -11,10 +11,16 @@
 - [x] 2.2 Rework `pill`: remove the ring; draw the clipped fill rect to `share`% (neutral gray at 0.20, tinted its accent at 0.35); draw the 18px icon at stroke 1.5, 12px from the left, text 7px after it. Add a `GLYPH` table for the four icons and the color table from design decision 3, with dark-mode classes. Verify: tests find the fill width per share, four different icon paths, the icon color per kind (neutral and tinted), and a pill width that fits label and value.
 - [x] 2.3 Run the full test file and `tsc --noEmit`. Verify: both pass, and the terminal tests are unchanged.
 
-## 3. Release
+## 3. Release 0.14.0
 
-- [ ] 3.1 Bump `plugin.json`, commit and push after the user's go-ahead, update the plugin, restart Desktop. Verify on screen in light and dark: icons are drawn correctly and unclipped, the fill reads as the share, text has even padding, and hover shows the countdown. Adjust any icon path that reads badly.
+- [x] 3.1 Bumped `plugin.json` to 0.14.0, committed (`3956d7b`), pushed and updated the plugin. On screen the user found the colors off, which led to group 4.
 - [ ] 3.2 Leave the bar open for several minutes. Verify: the user reports no flicker each minute; if it persists, record which event still redraws it.
+
+## 4. Color redesign (0.14.1)
+
+- [x] 4.1 Rework `pill` colors per design decision 3: drop the `GLYPH` colors and `TINT`; icon and text use scheme ink classes; the meter is gray, amber `#fab219` or red `#d03b3b` with the alphas in the table. Verify: tests find no per-kind icon color, the three state alphas and colors, and the scheme classes for dark mode.
+- [x] 4.2 Run the full test file and `tsc --noEmit`. Verify: both pass.
+- [ ] 4.3 Bump to 0.14.1, commit and push, update the plugin, restart Desktop. Verify on screen in light and dark: the colors read as one system, the icons are legible in ink, and amber and red show clearly. Adjust any alpha that reads weak or loud.
 
 ## Workflow follow-up
 

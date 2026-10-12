@@ -191,50 +191,44 @@ export const desktopSegments = (b: BarInput): Badge[] => {
   return all.some(x => x.level) ? all : []
 }
 
-// One Svg per pill: an Svg cannot read CSS variables, so the neutral pill carries a prefers-color-scheme style, and a
-// tinted pill sets dark ink on a light tint, which reads on both. shortcut: width is estimated from the character
-// count (an Svg has no font metrics); the OS scheme stands in for the app's, which differ only when the app is not on auto
-const TINT = {
-  warn: { fill: '#FBE3B0', ink: '#3a2a00', bar: '#B26A00' },
-  hot: { fill: '#F8CDB8', ink: '#4a1700', bar: '#D55E00' },
-} as const
+// One Svg per pill, a meter: shape says which segment, color says severity only. An Svg cannot read CSS variables, so
+// ink comes from a prefers-color-scheme style, and the status colors are translucent so the app's own surface shows
+// through on light and dark. shortcut: width is estimated from the character count (an Svg has no font metrics); the
+// OS scheme stands in for the app's, which differ only when the app is not on auto
+const STATUS = { warn: '#fab219', hot: '#d03b3b' } as const
+const GRAY = 'rgb(127,127,127)'
+const FILL = { calm: 0.26, warn: 0.55, hot: 0.5 } as const // meter fill opacity; the track is .12 calm, .2 otherwise
 const PILL_H = 28, ICON = 18, ICON_STROKE = 1.5
 const xml = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;')
 
-// Tabler-style outline paths in a 24x24 box; color per kind: light, dark, and the darker one used on a tint
-const GLYPH: Record<Kind, { d: string; color: [string, string, string] }> = {
-  ctx: { d: '<path d="M12 4l-8 4l8 4l8-4z"/><path d="M4 12l8 4l8-4"/><path d="M4 16l8 4l8-4"/>', color: ['#993C1D', '#F0997B', '#712B13'] },
-  '5h': { d: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/>', color: ['#185FA5', '#85B7EB', '#0C447C'] },
-  '7d': { d: '<path d="M4 7a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><path d="M16 3v4M8 3v4M4 11h16"/>', color: ['#534AB7', '#AFA9EC', '#3C3489'] },
-  model: { d: '<path d="M16 18a2 2 0 0 1 2 2a2 2 0 0 1 2-2a2 2 0 0 1-2-2a2 2 0 0 1-2 2zM16 6a2 2 0 0 1 2 2a2 2 0 0 1 2-2a2 2 0 0 1-2-2a2 2 0 0 1-2 2zM9 18a6 6 0 0 1 6-6a6 6 0 0 1-6-6a6 6 0 0 1-6 6a6 6 0 0 1 6 6z"/>', color: ['#0F6E56', '#5DCAA5', '#085041'] },
+// Tabler-style outline paths in a 24x24 box
+const GLYPH: Record<Kind, string> = {
+  ctx: '<path d="M12 4l-8 4l8 4l8-4z"/><path d="M4 12l8 4l8-4"/><path d="M4 16l8 4l8-4"/>',
+  '5h': '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/>',
+  '7d': '<path d="M4 7a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><path d="M16 3v4M8 3v4M4 11h16"/>',
+  model: '<path d="M16 18a2 2 0 0 1 2 2a2 2 0 0 1 2-2a2 2 0 0 1-2-2a2 2 0 0 1-2 2zM16 6a2 2 0 0 1 2 2a2 2 0 0 1 2-2a2 2 0 0 1-2-2a2 2 0 0 1-2 2zM9 18a6 6 0 0 1 6-6a6 6 0 0 1-6-6a6 6 0 0 1-6 6a6 6 0 0 1 6 6z"/>',
 }
 
 export const pill = (b: Badge) => {
-  const t = b.level && TINT[b.level]
-  const g = GLYPH[b.kind]
+  const color = b.level ? STATUS[b.level] : GRAY
   const text = (b.label ? b.label.length * 6.4 + 5 : 0) + b.value.length * 7.4 // measured live: 6.4 left the 5h pill ~7px short on the right
   const width = Math.ceil(12 + ICON + 7 + text + 12)
-  const ink = t ? ` fill="${t.ink}"` : ' class="i"'
-  const dim = t ? ` fill="${t.ink}" fill-opacity=".7"` : ' class="d"'
   const scale = ICON / 24
-  const kinds = (Object.keys(GLYPH) as Kind[])
+  const shape = `x=".5" y=".5" width="${width - 1}" height="${PILL_H - 1}" rx="${PILL_H / 2 - .5}"`
   return {
     width,
     source: `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${PILL_H}" viewBox="0 0 ${width} ${PILL_H}">`
       + `<title>${xml(b.tip)}</title>`
-      + '<style>.i{fill:#1f1f1e}.d{fill:#6b6b6b}.n{fill:rgba(127,127,127,.14);stroke:rgba(127,127,127,.3)}'
-      + kinds.map(k => `.k-${k}{stroke:${GLYPH[k].color[0]}}`).join('')
-      + '@media (prefers-color-scheme:dark){.i{fill:#f0efe9}.d{fill:#a8a79f}'
-      + kinds.map(k => `.k-${k}{stroke:${GLYPH[k].color[1]}}`).join('') + '}</style>'
-      + `<clipPath id="c"><rect x=".5" y=".5" width="${width - 1}" height="${PILL_H - 1}" rx="${PILL_H / 2 - .5}"/></clipPath>`
-      + `<rect x=".5" y=".5" width="${width - 1}" height="${PILL_H - 1}" rx="${PILL_H / 2 - .5}" ${t ? `fill="${t.fill}"` : 'class="n"'}/>`
-      + `<rect width="${+((width * b.share) / 100).toFixed(2)}" height="${PILL_H}" clip-path="url(#c)" `
-      + (t ? `fill="${t.bar}" fill-opacity=".35"` : 'fill="rgb(127,127,127)" fill-opacity=".2"') + '/>'
+      + '<style>.i{fill:#1f1f1e}.d{fill:#6b6b6b}.p{stroke:#1f1f1e}.s{stroke:#6b6b6b}'
+      + '@media (prefers-color-scheme:dark){.i{fill:#f0efe9}.d{fill:#a8a79f}.p{stroke:#f0efe9}.s{stroke:#a8a79f}}</style>'
+      + `<clipPath id="c"><rect ${shape}/></clipPath>`
+      + `<rect ${shape} fill="${color}" fill-opacity="${b.level ? '.2' : '.12'}" stroke="${color}" stroke-opacity="${b.level ? '.45' : '.3'}"/>`
+      + `<rect width="${+((width * b.share) / 100).toFixed(2)}" height="${PILL_H}" clip-path="url(#c)" fill="${color}" fill-opacity="${FILL[b.level ?? 'calm']}"/>`
       + `<g transform="translate(12 ${(PILL_H - ICON) / 2}) scale(${scale})" fill="none" stroke-width="${+(ICON_STROKE / scale).toFixed(2)}" `
-      + `stroke-linecap="round" stroke-linejoin="round" ${t ? `stroke="${g.color[2]}"` : `class="k-${b.kind}"`}>${g.d}</g>`
+      + `stroke-linecap="round" stroke-linejoin="round" class="${b.level ? 'p' : 's'}">${GLYPH[b.kind]}</g>`
       + `<text x="${12 + ICON + 7}" y="18.5" font-size="13" font-family="system-ui,-apple-system,sans-serif">`
-      + (b.label ? `<tspan font-size="12"${dim}>${xml(b.label)} </tspan>` : '')
-      + `<tspan font-weight="500"${ink}>${xml(b.value)}</tspan>`
+      + (b.label ? `<tspan font-size="12" class="d">${xml(b.label)} </tspan>` : '')
+      + `<tspan font-weight="500" class="i">${xml(b.value)}</tspan>`
       + '</text></svg>',
   }
 }

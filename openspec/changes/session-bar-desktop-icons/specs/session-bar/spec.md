@@ -3,23 +3,23 @@
 ## MODIFIED Requirements
 
 ### Requirement: Desktop pills
-On the desktop surface each segment SHALL be a rounded pill holding a colored icon that identifies the segment, then its text. The pill background SHALL fill from the left edge to the share used. The context, the 5h window, the 7d window and a per-model weekly window SHALL each have a different icon and icon color. The context pill SHALL show only its token count, with no `ctx` label. A usage pill SHALL show a dim label then a bold percentage. No pill SHALL show a countdown. A segment needing attention SHALL be tinted orange or vermillion; a calm one SHALL be neutral.
+On the desktop surface each segment SHALL be a rounded pill holding an icon that identifies the segment, then its text. The pill background SHALL fill from the left edge to the share used. The context, the 5h window, the 7d window and a per-model weekly window SHALL each have a different icon. Icons and text SHALL use the theme's text colors, never a color of their own. The context pill SHALL show only its token count, with no `ctx` label. A usage pill SHALL show a dim label then a bold percentage. No pill SHALL show a countdown. Color SHALL mean severity only: a segment needing attention SHALL be amber (warn) or red (hot) in a translucent tone that reads on light and dark surfaces; a calm one SHALL be gray.
 
 #### Scenario: Context needing attention
 - **WHEN** the context holds 213,000 tokens of a 1,000,000-token window
-- **THEN** its pill is orange, shows `213K` with no `ctx` text, shows the context icon, and its fill reaches 85% of the pill, the share of the vermillion threshold
+- **THEN** its pill is red, shows `213K` with no `ctx` text, shows the context icon, and its fill reaches 85% of the pill, the share of the vermillion threshold
 
 #### Scenario: Usage pills have no countdown
 - **WHEN** the 5h window is 15% used with 4h13m left and the 7d window is 76% used
 - **THEN** the 5h pill shows `5h 15%` and the 7d pill shows `7d 76%`, and neither shows `4h13m`
 
-#### Scenario: Each segment has its own colored icon
+#### Scenario: Each segment has its own icon
 - **WHEN** the desktop surface draws the context, 5h, 7d and a per-model weekly pill
-- **THEN** the four pills show four different icons in four different colors
+- **THEN** the four pills show four different icons, all in the theme's text color
 
-#### Scenario: Icon on a tinted pill
-- **WHEN** a pill is tinted for attention
-- **THEN** its icon is the darker shade of its own color, so it reads on the tint
+#### Scenario: Color means severity
+- **WHEN** one pill is warn, one is hot and one is calm
+- **THEN** the warn pill is amber, the hot pill is red, the calm pill is gray, and their icons and text keep the same ink
 
 #### Scenario: Fill shows the share
 - **WHEN** a usage window is 41% used

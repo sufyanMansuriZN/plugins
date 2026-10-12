@@ -9,8 +9,8 @@
 ## 2. Experiment: pills without `isInteractive` (0.14.4)
 
 - [x] 2.1 Remove `isInteractive` from the pill `Svg` in the Desktop branch of `ui.render`; keep `alt={badge.tip}`. Update any pill test that expects the prop. Verify: the terminal branch diff is empty, and `claude plugin test .` and `tsc --noEmit` pass.
-- [ ] 2.2 Bump `plugin.json` to 0.14.4, commit and push, run `claude plugin update session-bar`, restart Desktop. Verify: `/plugin` shows 0.14.4.
-- [ ] 2.3 User check on Desktop, two separate checks: send a prompt, then let a turn finish. Report for each: flicker stops, lessens, or stays. Also report whether hovering a pill shows anything. Verify: both answers recorded in this file under task 3.
+- [x] 2.2 Bump `plugin.json` to 0.14.4, commit and push, run `claude plugin update session-bar`, restart Desktop. Verify: `/plugin` shows 0.14.4.
+- [x] 2.3 User check on Desktop, two separate checks: send a prompt, then let a turn finish. Report for each: flicker stops, lessens, or stays. Also report whether hovering a pill shows anything. Verify: both answers recorded in this file under task 3.
 
 ## 3. Decide from the result
 

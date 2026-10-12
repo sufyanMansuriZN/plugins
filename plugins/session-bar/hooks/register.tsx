@@ -14,8 +14,7 @@ const weekly = atom({ plugin: 'session-bar', key: 'weekly' } as const, [] as Wee
 const ctx = atom({ plugin: 'session-bar', key: 'ctx' } as const, undefined as Ctx | undefined)
 const agentModels = atom({ plugin: 'session-bar', key: 'agentModels' } as const, {} as AgentModels)
 const tick = atom({ plugin: 'session-bar', key: 'tick' } as const, 0) // bumped each minute so countdowns move while idle
-const noPanes = atom({ plugin: 'session-bar', key: 'noPanes' } as const, false) // set once Desktop answers a pane open with isPlaced false
-const PANE = 'usage'
+const usageOpen = atom({ plugin: 'session-bar', key: 'usageOpen' } as const, false) // the Desktop usage block; collapsed each session
 
 // a subagent's model into the map; the same map when main's step or a repeat leaves it as it was
 export const withModel = (ms: AgentModels, agentId: string | undefined, model: string): AgentModels =>
@@ -202,43 +201,53 @@ export const resetTime = (resetsAt: string, now: number) => {
   return d.toDateString() === new Date(now).toDateString() ? clock : `${DAYS[d.getDay()]} ${clock}`
 }
 
-// A row of the usage pane. share and tick are 0-100; tick marks the share of the window already elapsed (or, for the
-// context, the warn threshold on the scale that runs to hot); detail is one dim line
-export type PaneRow = { kind: Kind; name: string; value: string; share: number; tick?: number; level: Level; detail: string }
+// A row of the Desktop usage block. share and shadow are 0-100; shadow is the share of the window already gone, so
+// a quota meant to be used up reads as room (shadow past the fill) or overspend (fill past it); line is one dim line
+export type UsageRow = { kind: Kind; name: string; value: string; share: number; shadow?: number; level: Level; line: string }
 
-export const paneRows = (b: BarInput): PaneRow[] => {
-  const rows: PaneRow[] = []
+// the app's own names, in the block only: the pills keep 5h, 7d and the model
+const rowName = (label: string) => label === '5h' ? 'Session limit' : label === '7d' ? 'Weekly · all models' : `Weekly · ${label}`
+
+export const usageRows = (b: BarInput): UsageRow[] => {
+  const rows: UsageRow[] = []
   if (b.ctx) {
-    const hot = ctxHot(b.ctx)
+    // the scale runs to the ideal ceiling, as the pill's does; the window is a fact, not the scale
+    const hot = ctxHot(b.ctx), level = ctxBand(b.ctx)
     rows.push({
-      kind: 'ctx', name: 'Context', value: tokensText(b.ctx.tokens), share: clamp((b.ctx.tokens / hot) * 100),
-      tick: (CTX_WARN / hot) * 100, level: ctxBand(b.ctx),
-      detail: `of ${tokensText(b.ctx.window)} · warn ${tokensText(CTX_WARN)} · hot ${tokensText(hot)}`,
+      kind: 'ctx', name: 'Context', value: tokensText(b.ctx.tokens), share: clamp((b.ctx.tokens / hot) * 100), level,
+      line: (level === 'hot' ? `Past ${tokensText(hot)}, quality drops` : level ? 'Past the ideal range' : `Ideal under ${tokensText(CTX_WARN)}`)
+        + ` · window ${tokensText(b.ctx.window)}`,
     })
   }
   for (const w of b.windows) {
-    const level = pace(w, b.now)
-    const timed = w.resetsAt && w.windowMs
-    const left = w.resetsAt ? Date.parse(w.resetsAt) - b.now : 0
-    rows.push({
-      kind: w.label === '5h' || w.label === '7d' ? w.label : 'model',
-      name: WINDOW_NAMES[w.label] ?? `Weekly, ${w.label}`, value: `${Math.round(w.pct)}%`, share: clamp(w.pct),
-      tick: timed ? elapsed(w.resetsAt!, w.windowMs!, b.now) * 100 : undefined, level,
-      detail: [
-        left > 0 && `resets in ${countdown(left)}`, w.resetsAt && resetTime(w.resetsAt, b.now),
-        w.resetsAt && (level ? 'ahead of pace' : 'on pace'),
-      ].filter(Boolean).join(' · '),
-    })
+    const row = { kind: w.label === '5h' || w.label === '7d' ? w.label : 'model', name: rowName(w.label), value: `${Math.round(w.pct)}%`, share: clamp(w.pct), level: pace(w, b.now) } as const
+    if (!w.resetsAt || !w.windowMs) {
+      rows.push({ ...row, line: '' })
+      continue
+    }
+    const gone = elapsed(w.resetsAt, w.windowMs, b.now), left = Date.parse(w.resetsAt) - b.now
+    // paceBand's 15-point warn rule; the cap time only once a tenth has gone, as earlier the rate is noise
+    const ahead = w.pct - gone * 100
+    let line: string
+    if (ahead > 15) {
+      const cap = gone >= 0.1 && w.pct > 0 ? ((100 - w.pct) / w.pct) * gone * w.windowMs : undefined
+      line = `Ahead of pace${cap === undefined ? '' : ` · hits the cap in about ${countdown(Math.round(cap / 60_000) * 60_000)}`}`
+    } else {
+      line = `${ahead < -15 ? 'Room to use more' : 'On pace'} · resets ${left < 24 * HOUR ? `in ${countdown(left)}` : resetTime(w.resetsAt, b.now)}`
+    }
+    rows.push({ ...row, shadow: gone * 100, line })
   }
   return rows
 }
 
-// One Svg per pill, a meter: shape says which segment, color says severity only. An Svg cannot read CSS variables, so
+// One Svg per pill, a meter: shape says which segment. A calm quota has a hue of its own (Okabe-Ito, none near amber or
+// red), the calm context stays gray, and attention replaces either with amber or red. An Svg cannot read CSS variables, so
 // ink comes from a prefers-color-scheme style, and the status colors are translucent so the app's own surface shows
 // through on light and dark. shortcut: width is estimated from the character count (an Svg has no font metrics); the
 // OS scheme stands in for the app's, which differ only when the app is not on auto
 const STATUS = { warn: '#fab219', hot: '#d03b3b' } as const
 const GRAY = 'rgb(127,127,127)'
+const HUE: Record<Kind, string> = { ctx: GRAY, '5h': '#0072B2', '7d': '#009E73', model: '#CC79A7' }
 const FILL = { calm: 0.3, warn: 0.8, hot: 0.8 } as const // meter fill opacity; the track is a white chip when calm, .3 of the status color otherwise
 const PILL_H = 28, ICON = 18, ICON_STROKE = 1.5
 const xml = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;')
@@ -251,43 +260,86 @@ const GLYPH: Record<Kind, string> = {
   model: '<path d="M16 18a2 2 0 0 1 2 2a2 2 0 0 1 2-2a2 2 0 0 1-2-2a2 2 0 0 1-2 2zM16 6a2 2 0 0 1 2 2a2 2 0 0 1 2-2a2 2 0 0 1-2-2a2 2 0 0 1-2 2zM9 18a6 6 0 0 1 6-6a6 6 0 0 1-6-6a6 6 0 0 1-6 6a6 6 0 0 1 6 6z"/>',
 }
 
-export const pill = (b: Badge) => {
-  const color = b.level ? STATUS[b.level] : GRAY
-  const text = (b.label ? b.label.length * 6.4 + 5 : 0) + b.value.length * 7.4 // measured live: 6.4 left the 5h pill ~7px short on the right
-  const width = Math.ceil(12 + ICON + 7 + text + 12)
+// Desktop may place the markup in its own page, where a <style> and an id would reach every element: so every class
+// is sb- prefixed and each Svg has its own clip id
+const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-')
+
+// what a pill keeps at a desktop tier: its dim label (5h, 7d, the model) and its icon
+export type PillParts = { label: boolean; icon: boolean }
+const FULL: PillParts = { label: true, icon: true }
+
+export const pill = (b: Badge, parts: PillParts = FULL) => {
+  const color = b.level ? STATUS[b.level] : HUE[b.kind]
+  const clip = `sb-c-pill-${b.kind}-${slug(b.label ?? '')}`
+  const label = parts.label ? b.label : undefined
+  const x = parts.icon ? 12 + ICON + 7 : 12
+  const text = (label ? label.length * 6.4 + 5 : 0) + b.value.length * 7.4 // measured live: 6.4 left the 5h pill ~7px short on the right
+  const width = Math.ceil(x + text + 12)
   const scale = ICON / 24
   const shape = `x=".5" y=".5" width="${width - 1}" height="${PILL_H - 1}" rx="${PILL_H / 2 - .5}"`
   return {
     width,
     source: `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${PILL_H}" viewBox="0 0 ${width} ${PILL_H}">`
       + `<title>${xml(b.tip)}</title>`
-      + '<style>.i{fill:#1f1f1e}.d{fill:#6b6b6b}.p{stroke:#1f1f1e}.s{stroke:#6b6b6b}.t{fill:#fff;fill-opacity:.75}'
-      + '@media (prefers-color-scheme:dark){.i{fill:#f0efe9}.d{fill:#a8a79f}.p{stroke:#f0efe9}.s{stroke:#a8a79f}.t{fill-opacity:.07}}</style>'
-      + `<clipPath id="c"><rect ${shape}/></clipPath>`
+      + '<style>.sb-i{fill:#1f1f1e}.sb-d{fill:#6b6b6b}.sb-p{stroke:#1f1f1e}.sb-s{stroke:#6b6b6b}.sb-t{fill:#fff;fill-opacity:.75}'
+      + '@media (prefers-color-scheme:dark){.sb-i{fill:#f0efe9}.sb-d{fill:#a8a79f}.sb-p{stroke:#f0efe9}.sb-s{stroke:#a8a79f}.sb-t{fill-opacity:.07}}</style>'
+      + `<clipPath id="${clip}"><rect ${shape}/></clipPath>`
       // a calm track is a white chip on the app's gray strip; a translucent gray one all but vanished there
-      + `<rect ${shape} ${b.level ? `fill="${color}" fill-opacity=".3"` : 'class="t"'} stroke="${color}" stroke-opacity="${b.level ? '.7' : '.3'}"/>`
-      + `<rect width="${+((width * b.share) / 100).toFixed(2)}" height="${PILL_H}" clip-path="url(#c)" fill="${color}" fill-opacity="${FILL[b.level ?? 'calm']}"/>`
-      + `<g transform="translate(12 ${(PILL_H - ICON) / 2}) scale(${scale})" fill="none" stroke-width="${+(ICON_STROKE / scale).toFixed(2)}" `
-      + `stroke-linecap="round" stroke-linejoin="round" class="${b.level ? 'p' : 's'}">${GLYPH[b.kind]}</g>`
-      + `<text x="${12 + ICON + 7}" y="18.5" font-size="13" font-family="system-ui,-apple-system,sans-serif">`
-      + (b.label ? `<tspan font-size="12" class="d">${xml(b.label)} </tspan>` : '')
-      + `<tspan font-weight="500" class="i">${xml(b.value)}</tspan>`
+      + `<rect ${shape} ${b.level ? `fill="${color}" fill-opacity=".3"` : 'class="sb-t"'} stroke="${color}" stroke-opacity="${b.level ? '.7' : '.3'}"/>`
+      + `<rect width="${+((width * b.share) / 100).toFixed(2)}" height="${PILL_H}" clip-path="url(#${clip})" fill="${color}" fill-opacity="${FILL[b.level ?? 'calm']}"/>`
+      + (parts.icon ? `<g transform="translate(12 ${(PILL_H - ICON) / 2}) scale(${scale})" fill="none" stroke-width="${+(ICON_STROKE / scale).toFixed(2)}" `
+        + `stroke-linecap="round" stroke-linejoin="round" class="${b.level ? 'sb-p' : 'sb-s'}">${GLYPH[b.kind]}</g>` : '')
+      + `<text x="${x}" y="18.5" font-size="13" font-family="system-ui,-apple-system,sans-serif">`
+      + (label ? `<tspan font-size="12" class="sb-d">${xml(label)} </tspan>` : '')
+      // regular weight, as the label: a heavier value (500 or 700) drew wider once the usage block opened, the label never did;
+      // the primary ink against the label's dim one keeps it the stronger part
+      + `<tspan font-size="13" class="sb-i">${xml(b.value)}</tspan>`
       + '</text></svg>',
   }
 }
 
-// A pane row's meter: the pill's colors and track, a thin tick where the window's elapsed share (or the ctx warn level)
-// falls. Not interactive, like every Svg here.
-const METER_H = 12, METER_W = 280
-export const meter = (r: PaneRow, width: number) => {
-  const color = r.level ? STATUS[r.level] : GRAY
-  const shape = `y="2" width="${width}" height="8" rx="4"`
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${METER_H}" viewBox="0 0 ${width} ${METER_H}">`
-    + '<style>.k{fill:#1f1f1e}.t{fill:#fff;fill-opacity:.75}@media (prefers-color-scheme:dark){.k{fill:#f0efe9}.t{fill-opacity:.07}}</style>'
-    + `<clipPath id="c"><rect ${shape}/></clipPath>`
-    + `<rect ${shape} ${r.level ? `fill="${color}" fill-opacity=".3"` : 'class="t"'} stroke="${color}" stroke-opacity="${r.level ? '.7' : '.3'}"/>`
-    + `<rect y="2" width="${+((width * r.share) / 100).toFixed(2)}" height="8" clip-path="url(#c)" fill="${color}" fill-opacity="${FILL[r.level ?? 'calm']}"/>`
-    + (r.tick === undefined ? '' : `<rect class="k" x="${+((width * r.tick) / 100 - 1).toFixed(2)}" y="0" width="2" height="${METER_H}" rx="1"/>`)
+// The desktop bar is one row that never wraps: like the terminal's tiers, it sheds pill parts until the pills and the
+// button fit: labels first (the icons still tell the pills apart), then the button's name down to arrows
+// (`compact`), and the icons last: a warning swaps a pill's own hue for amber or red, so without its icon two warning
+// pills would look alike. Only the narrowest window (33 cells, ~264px) drops them.
+// px per bodyColumns cell: 8, measured live against the pills' own widths at 55 cells (~441px) and 161 (~1292px)
+const PX_PER_COL = 8, GAP_PX = 8 // gap={1}: one cell
+export type DesktopTier = PillParts & { compact: boolean }
+export const DESKTOP_TIERS: DesktopTier[] = [
+  { label: true, icon: true, compact: false },
+  { label: false, icon: true, compact: false },
+  { label: false, icon: true, compact: true },
+  { label: false, icon: false, compact: true },
+]
+// a compact button is one glyph, the same open or not: a Button holds only text, and Unicode has an arrows-out
+// character but no arrows-in one (an Svg laid over the button drew a second icon, not one)
+export const buttonText = (t: DesktopTier) => t.compact ? '⤢' : 'Usage details'
+const buttonPx = (t: DesktopTier) => buttonText(t).length * 6.5 + 16
+
+// the richest tier that fits the band; each pill and the button carry a gap, which also holds the two groups apart
+export const desktopTier = (badges: Badge[], columns?: number): DesktopTier => {
+  const room = columns ? columns * PX_PER_COL : Infinity
+  return DESKTOP_TIERS.find(t => badges.reduce((n, b) => n + pill(b, t).width + GAP_PX, buttonPx(t) + GAP_PX) <= room)
+    ?? DESKTOP_TIERS[DESKTOP_TIERS.length - 1]!
+}
+
+// A usage row's meter: the pill's colors and track, and behind the fill a pale shadow as wide as the window's share
+// gone. No tick, no legend. Not interactive, like every Svg here. No viewBox: the Svg takes its cell's width from the
+// flex layout and the rects are percentages of it, so nothing is stretched and the round ends keep their pixel radius.
+// The border is a 2px stroke clipped to the track, so 1px shows inside it at any width
+const METER_H = 8
+export const meter = (r: UsageRow) => {
+  const color = r.level ? STATUS[r.level] : HUE[r.kind]
+  const shape = `width="100%" height="${METER_H}" rx="${METER_H / 2}"`
+  const clip = `sb-c-meter-${slug(r.name)}`
+  const part = (share: number, attrs: string) => `<rect width="${+share.toFixed(2)}%" height="${METER_H}" clip-path="url(#${clip})" ${attrs}/>`
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="${METER_H}">`
+    + '<style>.sb-k{fill:#1f1f1e;fill-opacity:.14}.sb-t{fill:#fff;fill-opacity:.75}@media (prefers-color-scheme:dark){.sb-k{fill:#f0efe9;fill-opacity:.16}.sb-t{fill-opacity:.07}}</style>'
+    + `<clipPath id="${clip}"><rect ${shape}/></clipPath>`
+    + `<rect ${shape} clip-path="url(#${clip})" ${r.level ? `fill="${color}" fill-opacity=".3"` : 'class="sb-t"'} stroke="${color}" stroke-width="2" stroke-opacity="${r.level ? '.7' : '.3'}"/>`
+    + (r.shadow === undefined ? '' : part(clamp(r.shadow), 'class="sb-k"'))
+    // a calm fill firmer than the pill's, so its edge stands out from the gray shadow behind it
+    + part(r.share, `fill="${color}" fill-opacity="${r.level ? FILL[r.level] : 0.55}"`)
     + '</svg>'
 }
 
@@ -338,14 +390,6 @@ const refreshUsage = async ($: EngineInterface, force = false) => {
   } catch {} // keep the last good rows
 }
 
-// press the button: close the pane if it is open, else open it. A Desktop that places no panes answers isPlaced false;
-// the button then goes away
-const toggleUsagePane = async ($: EngineInterface) => {
-  if ((await $.ui.panes()).some(p => p.id === PANE)) return $.ui.close({ id: PANE })
-  const { isPlaced } = await $.ui.open({ id: PANE, title: 'Usage' })
-  if (!isPlaced) await update($, noPanes, () => true)
-}
-
 export const register: Register = on => {
   // drawing is pure, so usage is fetched at launch rather than on first render
   on('session.start', async ($, e, next) => {
@@ -359,14 +403,22 @@ export const register: Register = on => {
     // or pace band moved since the last one
     let seen = ''
     $.clock.every(60_000, () => void (async () => {
-      const [ls, ws, now, surfaces, panes] = await Promise.all([read($, limits), read($, weekly), $.clock.now(), $.session.surfaces().catch(() => ['terminal'] as const), $.ui.panes().catch(() => [])]) // unknown surfaces: keep the countdown redraw
-      // the usage pane draws countdowns too, so while it is open they count
-      const key = minuteKey(toWindows(ls, ws, now), now, surfaces.includes('terminal') || panes.some(p => p.id === PANE))
+      const [ls, ws, now, surfaces, open] = await Promise.all([read($, limits), read($, weekly), $.clock.now(), $.session.surfaces().catch(() => ['terminal'] as const), read($, usageOpen)]) // unknown surfaces: keep the countdown redraw
+      const windows = toWindows(ls, ws, now)
+      // the open usage block draws countdowns and cap times too, so while it is open its lines count
+      const key = minuteKey(windows, now, surfaces.includes('terminal')) + (open ? JSON.stringify(usageRows({ dir: '', windows, now }).map(r => r.line)) : '')
       if (key !== seen) {
         seen = key
         await update($, tick, n => n + 1)
       }
     })())
+    return next(e)
+  })
+
+  // sending a prompt collapses the usage block, so it does not hold the composer down through the turn; no
+  // outside-click event exists. Read first: a write redraws even when the value is the same
+  on('prompt.submit', async ($, e, next) => {
+    if (await read($, usageOpen)) await update($, usageOpen, () => false)
     return next(e)
   })
 
@@ -409,26 +461,6 @@ export const register: Register = on => {
     return next(e)
   })
 
-  // the Usage button's pane: a meter row per reading, drawn only while open
-  on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e, next) => {
-    if (e.surface !== 'desktop') return next(e) // only the Desktop button opens it
-    const [c, ls, ws, now] = await Promise.all([read($, ctx), read($, limits), read($, weekly), $.clock.now(), read($, tick)])
-    const rows = paneRows({ dir: '', ctx: c, windows: toWindows(ls, ws, now), now })
-    const { Box, Text, Svg } = $.ui.resolve(e)
-    return (
-      <Box flexDirection="column" gap={1}>
-        {rows.map(r => (
-          <Box flexDirection="column">
-            <Box justifyContent="space-between"><Text>{r.name}</Text><Text bold>{r.value}</Text></Box>
-            <Svg source={meter(r, METER_W)} alt={`${r.name}: ${r.value}`} width={METER_W} height={METER_H} />
-            {r.detail && <Text dimColor>{r.detail}</Text>}
-          </Box>
-        ))}
-        {!rows.length && <Text dimColor>Nothing to show yet.</Text>}
-      </Box>
-    )
-  })
-
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const [root, home, model, c, ls, ws, now] = await Promise.all([
       $.session.root(), $.env.get('HOME'), $.session.model(), read($, ctx), read($, limits), read($, weekly),
@@ -447,23 +479,64 @@ export const register: Register = on => {
     if (e.surface === 'desktop') {
       const badges = desktopSegments({ dir: '', ...shown, windows, now })
       if (!badges.length) return next(e)
-      const { Box, Svg, Button } = $.ui.resolve(e)
-      const [below, gone] = await Promise.all([next(e), read($, noPanes)])
+      const { Box, Text, Svg, Button } = $.ui.resolve(e)
+      const [below, open] = await Promise.all([next(e), read($, usageOpen)])
+      const tier = desktopTier(badges, e.props.bodyColumns)
+      const rows = open ? usageRows({ dir: '', ...shown, windows, now }) : []
+      // two rows per line, one where two would break every line (under ~520px)
+      const perLine = (e.props.bodyColumns ?? Infinity) * PX_PER_COL < 520 ? 1 : 2
+      const pairs = rows.flatMap((r, i) => i % perLine ? [] : [rows.slice(i, i + perLine)])
       return (
         <Box flexDirection="column">
-          <Box justifyContent="space-between">
-            {[badges.filter(x => x.label), badges.filter(x => !x.label)].map((group, i) => (
-              <Box gap={1}>
-                {group.map(badge => {
-                  const { source, width } = pill(badge)
-                  // never isInteractive: the engine rebuilds an interactive Svg on every redraw, which flickered the bar on
-                  // send and turn complete, even for one pill. A native Button did not (usage-pane spike), so the click is one
-                  // Button beside the pills, not on them
-                  return <Svg source={source} alt={badge.tip} width={width} height={PILL_H} />
-                })}
-                {i === 0 && !gone && <Button key="usage" onPress={() => void toggleUsagePane($)}>Usage</Button>}
+          {/* the room above the pills is a gap: Desktop drew no marginBottom. Compact rows space tighter, as the band's
+              height is what runs out there */}
+          <Box flexDirection="column" gap={perLine === 2 ? 3 : 1}>
+            {open && (
+              <Box flexDirection="column" gap={perLine === 2 ? 2 : 1}>
+                {pairs.map(pair => (
+                  <Box gap={3}>
+                    {pair.map(r => {
+                      const bar = <Svg source={meter(r)} alt={`${r.name}: ${r.value}`} height={METER_H} />
+                      // one per line: name, meter and value share a line, 2 lines a row instead of 3, so the block fits
+                      // the band's height and the pills never scroll out of view
+                      return perLine === 2 ? (
+                        <Box flexDirection="column" width="50%" flexShrink={1}>
+                          <Box justifyContent="space-between"><Text>{r.name}</Text><Text bold>{r.value}</Text></Box>
+                          {bar}
+                          {r.line && <Text dimColor>{r.line}</Text>}
+                        </Box>
+                      ) : (
+                        <Box flexDirection="column" width="100%">
+                          <Box gap={1} alignItems="center">
+                            <Box width="34%" flexShrink={0}><Text wrap="truncate-end">{r.name}</Text></Box>
+                            <Box flexGrow={1} flexDirection="column">{bar}</Box>
+                            <Box width={6} flexShrink={0} justifyContent="flex-end"><Text bold>{r.value}</Text></Box>
+                          </Box>
+                          {r.line && <Text dimColor>{r.line}</Text>}
+                        </Box>
+                      )
+                    })}
+                  </Box>
+                ))}
               </Box>
-            ))}
+            )}
+            {/* one row, never wrapped: the tier sheds parts to fit instead */}
+            <Box justifyContent="space-between">
+              {[badges.filter(x => x.label), badges.filter(x => !x.label)].map((group, i) => (
+                <Box gap={1}>
+                  {group.map(badge => {
+                    const { source, width } = pill(badge, tier)
+                    // never isInteractive: the engine rebuilds an interactive Svg on every redraw, which flickered the bar on
+                    // send and turn complete, even for one pill. A native Button did not (usage-pane spike), so the click is one
+                    // Button beside the pills, not on them
+                    return <Svg source={source} alt={badge.tip} width={width} height={PILL_H} />
+                  })}
+                  {i === 0 && (
+                    <Button key="usage" plain onPress={() => void update($, usageOpen, o => !o)}>{buttonText(tier)}</Button>
+                  )}
+                </Box>
+              ))}
+            </Box>
           </Box>
           {below}
         </Box>

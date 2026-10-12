@@ -1,7 +1,7 @@
 import { test, expect, mock } from 'claude-code/testing'
 import {
   band, paceBand, ctxBand, tokensText, shortDir, limitText, parseUsage, fresh, modelLabel, withModel,
-  elapsed, countdown, bar, segments, desktopSegments, resetTime, paneRows, meter, pill as desktopPill, layout, width, same, minuteKey, WINDOW_MS, WEEK,
+  elapsed, countdown, bar, segments, desktopSegments, resetTime, usageRows, meter, desktopTier, DESKTOP_TIERS, buttonText, pill as desktopPill, layout, width, same, minuteKey, WINDOW_MS, WEEK,
 } from './register'
 import type { BarInput, Badge, Run } from './register'
 
@@ -387,9 +387,9 @@ test('pill: fill is the share used, icon per kind, tint by level, neutral when c
   expect(src({ level: 'hot' })).toContain('stroke-opacity=".7"') // a firm border
   const calm = src({ level: undefined })
   expect(calm).toContain('fill="rgb(127,127,127)" fill-opacity="0.3"')
-  expect(calm).toContain('class="t"') // calm track: a white chip, fainter in dark
-  expect(calm).toContain('.t{fill-opacity:.07}')
-  expect(src()).not.toContain('class="t"') // an attention track is the status color
+  expect(calm).toContain('class="sb-t"') // calm track: a white chip, fainter in dark
+  expect(calm).toContain('.sb-t{fill-opacity:.07}')
+  expect(src()).not.toContain('class="sb-t"') // an attention track is the status color
   expect(calm).not.toContain('#fab219')
   expect(calm).toContain('prefers-color-scheme:dark') // ink follows the scheme
   expect(src()).toContain('<title>a &amp; b &lt;c></title>') // escaped
@@ -398,9 +398,10 @@ test('pill: fill is the share used, icon per kind, tint by level, neutral when c
   expect(new Set(paths).size).toBe(4) // four different icons
   expect(calm).toContain('stroke-width="2"') // 1.5px on screen at 18/24 scale
   const colors = (s: string) => s.match(/#[0-9a-f]{6}/gi)!.filter(c => !['#1f1f1e', '#6b6b6b', '#f0efe9', '#a8a79f'].includes(c))
-  expect(new Set(kinds.map(kind => colors(src({ kind, level: undefined })).join())).size).toBe(1) // no color per kind
-  expect(calm).toContain('class="s"') // a calm icon is secondary ink, an attention one primary
-  expect(src()).toContain('class="p"')
+  expect(kinds.map(kind => [...new Set(colors(src({ kind, level: undefined })))])).toEqual([[], ['#0072B2'], ['#009E73'], ['#CC79A7']]) // a calm quota's own hue; calm ctx stays gray
+  expect(kinds.map(kind => [...new Set(colors(src({ kind, level: 'hot' })))])).toEqual(kinds.map(() => ['#d03b3b'])) // attention replaces it
+  expect(calm).toContain('class="sb-s"') // a calm icon is secondary ink, an attention one primary
+  expect(src()).toContain('class="sb-p"')
   const wide = desktopPill({ ...b, label: '5h', value: '15%', share: 15, level: undefined, tip: '' })
   expect(wide.width).toBeGreaterThan(desktopPill({ ...b, value: '15%', share: 15, level: undefined, tip: '' }).width) // the label widens it
   expect(src()).not.toContain('>ctx') // no label text on the context pill
@@ -516,9 +517,7 @@ test('Desktop draws no countdown, so a minute that only moves one is not a redra
   expect(key(NOW, false, 23)).not.toBe(key(NOW, false, 90)) // a pace band moving still counts
 })
 
-test('Usage button: beside the pills on Desktop only, opens then closes the pane, gone once Desktop places none', async ($, on) => {
-  let isOpen = false, canPlace = true
-  const calls: string[] = []
+test('usage button: on Desktop only, expands and collapses the block above the pills', async ($, on) => {
   on('session.root', async () => ({ value: '/home/me/.claude/skills' }))
   on('env.get', async () => ({ value: '/home/me' }))
   on('session.model', async () => ({ value: 'claude-opus-5-5' }))
@@ -527,55 +526,183 @@ test('Usage button: beside the pills on Desktop only, opens then closes the pane
   on('process.run', async () => ({ value: { exitCode: 0, stdout: 'main\n', stderr: '' } }) as never)
   on('ui.render', async () => h('Box', {}) as never)
   on('store.set', async () => ({ value: undefined }))
-  on('ui.panes', async () => ({ value: isOpen ? [{ id: 'usage', title: 'Usage', isShown: true, isFocused: false, isPlaced: true }] : [] }) as never)
-  on('ui.open', async () => { calls.push('open'); isOpen = canPlace; return { value: { isPlaced: canPlace, reason: 'no panes here' } } as never })
-  on('ui.close', async () => { calls.push('close'); isOpen = false; return { value: undefined } as never })
-  await $.session.measure({ context: { tokens: 50_000, window: 1_000_000 }, rateLimits: [{ kind: 'five_hour', percentUsed: 20 }], changed: ['context', 'rateLimits'] } as never)
+  on('prompt.submit', async (_$, e) => ({ text: e.text }) as never)
   const mount = (surface: 'desktop' | 'terminal') => $.ui.mount({
     plugin: 'session-bar', surface, component: 'AbovePrompt',
     props: { hasSurvey: false, isWorking: false, maxRows: 3, bodyColumns: 120, view: {} } as never,
   })
-  const buttons = async (surface: 'desktop' | 'terminal') => {
-    const ui = await mount(surface)
-    const found = (await ui.findAll({ type: 'Button' })).map(b => b.key)
-    await ui.unmount()
-    return found
-  }
+  const seen = async (ui: Awaited<ReturnType<typeof mount>>) => ({
+    buttons: (await ui.findAll({ type: 'Button' })).map(b => [b.key, (b.props as { label?: string }).label]),
+    alts: (await ui.findAll({ type: 'Svg' })).map(s => (s.props as { alt: string }).alt),
+  })
 
-  expect(await buttons('desktop')).toEqual(['usage'])
-  expect(await buttons('terminal')).toEqual([]) // the terminal bar is unchanged
-  const ui = await mount('desktop')
-  await ui.press({ key: 'usage' })
-  await ui.press({ key: 'usage' })
-  expect(calls).toEqual(['open', 'close']) // a second press closes it
-  canPlace = false
-  await ui.press({ key: 'usage' }) // Desktop places no pane: the button is dropped
+  // no reading yet: no pills, so no button
+  let ui = await mount('desktop')
+  expect((await seen(ui)).buttons).toEqual([])
   await ui.unmount()
-  expect(calls).toEqual(['open', 'close', 'open'])
-  expect(await buttons('desktop')).toEqual([])
+
+  await $.session.measure({ context: { tokens: 50_000, window: 1_000_000 }, rateLimits: [{ kind: 'five_hour', percentUsed: 20 }], changed: ['context', 'rateLimits'] } as never)
+  ui = await mount('terminal')
+  expect((await seen(ui)).buttons).toEqual([]) // the terminal bar is unchanged
+  expect(await ui.find({ text: 'Session limit' })).toBeUndefined()
+  await ui.unmount()
+
+  ui = await mount('desktop')
+  const collapsed = { buttons: [['usage', 'Usage details']], alts: [expect.stringMatching(/^Session limit:/), expect.stringMatching(/^Context:/)] }
+  expect(await seen(ui)).toEqual(collapsed) // calm: pills and the button, block collapsed
+  await ui.press({ key: 'usage' })
+  expect(await seen(ui)).toEqual({ ...collapsed, alts: ['Context: 50K', 'Session limit: 20%', ...collapsed.alts] }) // the block's meters, then the pills
+  expect(await ui.find({ text: 'Ideal under 150K · window 1M' })).toBeDefined()
+  expect(await ui.find({ text: '5h' })).toBeUndefined() // the pills' labels are in their Svg, not renamed Text
+  await ui.press({ key: 'usage' })
+  expect(await seen(ui)).toEqual(collapsed)
+  await ui.press({ key: 'usage' })
+  await $.prompt.submit({ text: 'hi', wait: false, origin: { kind: 'person' } } as never)
+  expect(await seen(ui)).toEqual(collapsed) // sending a prompt collapses it
+  await ui.unmount()
 })
 
-test('usage pane: a meter and detail per row, one non-interactive Svg each; nothing yet says so', async ($, on) => {
+test('usage block: two rows a line when wide, one compact row a line when narrow, same content', async ($, on) => {
   on('session.model', async () => ({ value: 'claude-opus-5-5' }))
+  on('session.root', async () => ({ value: '/home/me' }))
+  on('env.get', async () => ({ value: '/home/me' }))
   on('clock.now', async () => ({ value: 1e12 }))
   on('session.measure', async (_$, e) => ({ changed: e.changed }))
+  on('ui.render', async () => h('Box', {}) as never)
   on('store.set', async () => ({ value: undefined }))
-  const draw = async () => {
-    const ui = await $.ui.mount({ plugin: 'session-bar', surface: 'desktop', component: 'Pane', requestId: 'usage', props: {} as never })
-    const out = { svgs: (await ui.findAll({ type: 'Svg' })).map(s => s.props as { alt: string, isInteractive?: boolean }), empty: await ui.find({ text: 'Nothing to show yet.' }) }
+  await $.session.measure({ context: { tokens: 50_000, window: 1_000_000 }, rateLimits: [{ kind: 'five_hour', percentUsed: 20 }, { kind: 'seven_day', percentUsed: 40 }], changed: ['context', 'rateLimits'] } as never)
+  const draw = async (bodyColumns: number) => {
+    const ui = await $.ui.mount({ plugin: 'session-bar', surface: 'desktop', component: 'AbovePrompt', props: { hasSurvey: false, isWorking: false, maxRows: 9, bodyColumns, view: {} } as never })
+    await ui.press({ key: 'usage' })
+    const out = {
+      meters: (await ui.findAll({ type: 'Svg' })).map(s => (s.props as { alt: string }).alt).filter(alt => /^[^:]+: [\d.]+[%K]$/.test(alt)),
+      texts: await Promise.all(['Context', '50K', 'Session limit', '20%', 'Weekly · all models', '40%', 'Ideal under 150K · window 1M'].map(async text => !!(await ui.find({ text })))),
+    }
+    await ui.press({ key: 'usage' }) // the open state is the session's: close it for the next mount
     await ui.unmount()
     return out
   }
-  expect(await draw()).toMatchObject({ svgs: [], empty: expect.anything() })
-  await $.session.measure({ context: { tokens: 50_000, window: 1_000_000 }, rateLimits: [{ kind: 'five_hour', percentUsed: 20 }], changed: ['context', 'rateLimits'] } as never)
-  const { svgs, empty } = await draw()
-  expect(svgs.map(s => [s.alt, !!s.isInteractive])).toEqual([['Context: 50K', false], ['Session limit: 20%', false]])
-  expect(empty).toBeUndefined()
-  const m = meter({ kind: '5h', name: 'x', value: '20%', share: 20, tick: 50, level: 'hot', detail: '' }, 200)
-  expect(m).toContain('width="40"') // the fill is the share of the meter
-  expect(m).toContain('x="99"') // the tick sits at its share, centered
-  expect(m).toContain('fill="#d03b3b"') // the pill's hot color
-  expect(meter({ kind: '5h', name: 'x', value: '1%', share: 1, level: undefined, detail: '' }, 200)).not.toContain('class="k"') // no tick without one
+  const wide = await draw(120), narrow = await draw(55), compact = await draw(44)
+  expect(wide).toEqual({ meters: ['Context: 50K', 'Session limit: 20%', 'Weekly · all models: 40%'], texts: [true, true, true, true, true, true, true] })
+  expect(narrow).toEqual(wide) // the compact rows keep every name, value, meter and line
+  expect(compact).toEqual(wide) // and the icon button still opens it
+})
+
+test('usage meter: fill is the share, a pale shadow behind it for the time gone, no tick, sized by its cell', () => {
+  const r = { kind: '5h', name: 'x', value: '25%', share: 25, shadow: 77, level: undefined, line: '' } as const
+  const m = meter(r)
+  expect(m).toContain('width="25%" height="8" clip-path="url(#sb-c-meter-x)" fill="#0072B2" fill-opacity="0.55"') // fill: a quarter in the 5h hue, firmer than the pill's calm .3
+  expect(m).toContain('width="77%" height="8" clip-path="url(#sb-c-meter-x)" class="sb-k"') // shadow: 77%
+  expect(m.indexOf('class="sb-k"/>')).toBeLessThan(m.indexOf('fill="#0072B2" fill-opacity')) // drawn behind the fill
+  expect(m).not.toContain('viewBox') // no fixed coordinate width to stretch: the flex cell sets it
+  expect(m).toContain('<svg xmlns="http://www.w3.org/2000/svg" width="100%"')
+  expect(meter({ ...r, level: 'hot' })).toContain('fill="#d03b3b"') // the pill's hot color
+  expect(meter({ ...r, shadow: undefined })).not.toContain('class="sb-k"/>') // no shadow without a clock
+})
+
+test('desktop tiers: one row that sheds labels, then the button name, then icons, to fit', () => {
+  const b = (kind: Badge['kind'], value: string, label?: string): Badge => ({ kind, label, value, share: 1, level: undefined, tip: '' })
+  const badges = [b('5h', '1%', '5h'), b('7d', '79%', '7d'), b('model', '65%', 'Fable'), b('ctx', '285K')]
+  const at = (columns?: number) => DESKTOP_TIERS.indexOf(desktopTier(badges, columns))
+  expect(at()).toBe(0) // no width known: everything
+  expect(at(161)).toBe(0) // Desktop's widest transcript setting, read live
+  expect(at(95)).toBe(0) // its default width
+  expect(at(55)).toBe(1) // the narrow transcript width drops the labels and keeps the icons, as seen live
+  expect(at(44)).toBe(2) // a narrow window: the button down to arrows, and the icons kept, so warnings stay apart
+  expect(at(33)).toBe(3) // the narrowest window read live: values only
+  expect(DESKTOP_TIERS.map(t => t.icon)).toEqual([true, true, true, false]) // icons go last
+  expect(buttonText(DESKTOP_TIERS[2]!)).toBe('⤢') // compact: one arrows-out glyph
+  expect(buttonText(DESKTOP_TIERS[1]!)).toBe('Usage details')
+  expect(at(10)).toBe(DESKTOP_TIERS.length - 1) // nothing fits: the barest
+  const tiers = [95, 80, 70, 60, 55, 45, 33].map(at)
+  expect(tiers).toEqual([...tiers].sort()) // narrower never gets richer
+
+  const full = desktopPill(badges[0]!), bare = desktopPill(badges[0]!, { label: false, icon: false })
+  expect(full.source).toContain('>5h </tspan>')
+  expect(full.source).toContain('<g ')
+  expect(bare.source).not.toContain('>5h </tspan>') // no label
+  expect(bare.source).not.toContain('<g ') // no icon
+  expect(bare.width).toBeLessThan(desktopPill(badges[0]!, { label: false, icon: true }).width)
+  expect(desktopPill(badges[0]!, { label: false, icon: true }).width).toBeLessThan(full.width)
+})
+
+test('every Svg keeps its classes and clip id to itself, so markup placed in the app page clashes with nothing', () => {
+  const badge = (kind: Badge['kind'], label?: string): Badge => ({ kind, label, value: '1%', share: 1, level: undefined, tip: '' })
+  const sources = [
+    ...[badge('ctx'), badge('5h', '5h'), badge('7d', '7d'), badge('model', 'Fable')].map(b => desktopPill(b).source),
+    ...['Context', 'Session limit', 'Weekly · all models', 'Weekly · Fable'].map(name => meter({ kind: 'ctx', name, value: '', share: 1, level: undefined, line: '' })),
+  ]
+  const ids = sources.map(s => /id="([^"]+)"/.exec(s)![1])
+  expect(new Set(ids).size).toBe(sources.length) // one clip id per Svg
+  for (const s of sources) {
+    expect([...s.matchAll(/class="([^"]+)"/g)].every(m => m[1]!.startsWith('sb-'))).toBe(true)
+    expect(s).toContain(`clip-path="url(#${/id="([^"]+)"/.exec(s)![1]})"`) // each fill uses its own clip
+  }
+  expect(desktopPill(badge('5h', '5h')).source).toContain('<tspan font-size="13" class="sb-i">') // the value sets its own size, at the label's regular weight
+})
+
+test('usage rows: app names, pace line, cap time, reset; context against the ideal ceiling', () => {
+  const now = new Date(2026, 9, 12, 15, 26).getTime() // local time, so the test holds in any zone
+  const H = 3_600_000
+  const win = (label: string, pct: number, leftMs: number, windowMs = WINDOW_MS.five_hour!) =>
+    ({ label, pct, resetsAt: new Date(now + leftMs).toISOString(), windowMs })
+  const rows = (windows: BarInput['windows'], ctx?: BarInput['ctx']) => usageRows(input({ now, ctx, windows }))
+
+  expect(rows([win('5h', 20, 4 * H), win('7d', 50, 100 * H, WEEK), win('Fable', 10, 100 * H, WEEK)]).map(r => [r.kind, r.name]))
+    .toEqual([['5h', 'Session limit'], ['7d', 'Weekly · all models'], ['model', 'Weekly · Fable']])
+
+  const room = rows([win('5h', 25, 1 * H)])[0]!
+  expect(room).toMatchObject({ value: '25%', share: 25, shadow: 80, level: undefined, line: 'Room to use more · resets in 1h' })
+  const weekly = rows([{ label: '7d', pct: 78, resetsAt: new Date(2026, 9, 13, 17, 30).toISOString(), windowMs: WEEK }])[0]!
+  expect(weekly.line).toBe('On pace · resets Tue 17:30') // over a day left: weekday and time; 2026-10-13 is a Tuesday
+  const shadowed = rows([win('7d', 25, 0.23 * WEEK, WEEK)])[0]!
+  expect([shadowed.share, Math.round(shadowed.shadow!)]).toEqual([25, 77]) // the shadow shows past the fill
+
+  const ahead = rows([win('5h', 71, 3.5 * H)])[0]!
+  expect(ahead).toMatchObject({ level: 'hot', line: 'Ahead of pace · hits the cap in about 37m' }) // 29/71 of 1h30m
+  expect(rows([win('5h', 25, 0.95 * 5 * H)])[0]!.line).toBe('Ahead of pace') // 5% gone: too early for a cap time
+
+  const bare = rows([{ label: '5h', pct: 55 }])[0]! // no reset time: no shadow, no line
+  expect(bare).toMatchObject({ value: '55%', line: '', level: 'warn' })
+  expect(bare.shadow).toBeUndefined()
+
+  const M = 1_000_000
+  const calm = rows([], { tokens: 120_000, window: M })[0]!
+  expect(calm).toMatchObject({ kind: 'ctx', name: 'Context', value: '120K', line: 'Ideal under 150K · window 1M' })
+  expect(calm.shadow).toBeUndefined() // context has no clock
+  const warm = rows([], { tokens: 187_400, window: M })[0]!
+  expect(warm).toMatchObject({ level: 'warn', line: 'Past the ideal range · window 1M' })
+  expect(Math.round(warm.share)).toBe(75) // nearly three quarters of the scale to 250K
+  expect(rows([], { tokens: 170_000, window: 200_000 })[0]).toMatchObject({ level: 'hot', line: 'Past 160K, quality drops · window 200K' })
+  expect(usageRows(input({ ctx: undefined, windows: [] }))).toEqual([])
+})
+
+test('Desktop: a minute that moves only a countdown redraws while the block is open, not while collapsed', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  mock.store(on, { limits: [{ kind: 'five_hour', percentUsed: 23, resetsAt: new Date(NOW + 2 * 3_600_000 + 40 * 60_000 + 30_000).toISOString() }] })
+  on('session.root', async () => ({ value: '/home/me/skills' }))
+  on('env.get', async () => ({ value: '/home/me' }))
+  on('session.model', async () => ({ value: 'claude-opus-5-5' }))
+  on('session.authorize', async () => ({ deny: 'logged out' }))
+  on('session.surfaces', async () => ({ value: ['desktop'] }) as never)
+  on('session.start', async (_$, e) => e as never)
+  on('ui.render', async () => h('Box', {}) as never)
+  let ticks = 0
+  on('state.set', async (_$, e, next) => { if ((e as { key: string }).key === 'tick') ticks++; return next(e) })
+
+  await $.session.start({ source: 'startup', cwd: '/home/me/skills', surface: 'desktop', isInteractive: true } as never)
+  await clock.advance(60_000) // the first tick records what is on screen
+  const base = ticks
+  await clock.advance(60_000)
+  expect(ticks).toBe(base) // collapsed: Desktop draws no countdown
+  const ui = await $.ui.mount({
+    plugin: 'session-bar', surface: 'desktop', component: 'AbovePrompt',
+    props: { hasSurvey: false, isWorking: false, maxRows: 3, view: {} } as never,
+  })
+  await ui.press({ key: 'usage' })
+  await clock.advance(60_000)
+  expect(ticks).toBe(base + 1) // open: its `resets in` line moved
+  await ui.unmount()
 })
 
 test('reset time: a clock time today, a weekday and clock time on another day', () => {
@@ -584,29 +711,4 @@ test('reset time: a clock time today, a weekday and clock time on another day', 
   expect(resetTime(at(2026, 9, 12, 18, 40), now)).toBe('18:40')
   expect(resetTime(at(2026, 9, 12, 9, 5), now)).toBe('09:05') // zero-padded
   expect(resetTime(at(2026, 9, 13, 17, 30), now)).toBe('Tue 17:30') // 2026-10-13 is a Tuesday
-})
-
-test('usage pane rows: percent, elapsed tick, countdown, reset time, pace; context against its thresholds', () => {
-  const now = new Date(2026, 9, 12, 15, 26).getTime()
-  const iso = (ms: number) => new Date(now + ms).toISOString()
-  const reset = new Date(2026, 9, 12, 18, 40).toISOString()
-  const rows = (windows: BarInput['windows'], ctx?: BarInput['ctx']) => paneRows(input({ now, ctx, windows }))
-  const on = rows([{ label: '5h', pct: 24, resetsAt: reset, windowMs: WINDOW_MS.five_hour }])[0]!
-  expect(on).toMatchObject({ kind: '5h', name: 'Session limit', value: '24%', share: 24, level: undefined })
-  expect(on.detail).toBe('resets in 3h14m · 18:40 · on pace')
-  expect(Math.round(on.tick! * 100) / 100).toBe(35.33) // 1h46m of the 5h gone
-  const ahead = rows([{ label: '5h', pct: 71, resetsAt: iso(3.5 * 3_600_000), windowMs: WINDOW_MS.five_hour }])[0]!
-  expect(ahead.level).toBe('hot')
-  expect(ahead.detail).toContain('ahead of pace')
-  const fable = rows([{ label: 'Fable', pct: 65, resetsAt: iso(31 * 3_600_000), windowMs: WEEK }])[0]!
-  expect(fable).toMatchObject({ kind: 'model', name: 'Weekly, Fable', value: '65%' })
-  const bare = rows([{ label: '5h', pct: 55 }])[0]! // no reset time: no tick, countdown, clock time or pace note
-  expect(bare).toMatchObject({ value: '55%', tick: undefined, detail: '', level: 'warn' })
-  const c = rows([], { tokens: 187_400, window: 1_000_000 })[0]!
-  expect(c).toMatchObject({ kind: 'ctx', name: 'Context', value: '187K', level: 'warn' })
-  expect(c.detail).toBe('of 1M · warn 150K · hot 250K')
-  expect(Math.round(c.share * 100) / 100).toBe(74.96) // the scale runs to hot
-  expect(c.tick).toBe(60) // warn at 150K of 250K
-  expect(rows([], { tokens: 170_000, window: 200_000 })[0]!.detail).toBe('of 200K · warn 150K · hot 160K') // a 200K window caps hot
-  expect(paneRows(input({ ctx: undefined, windows: [] }))).toEqual([]) // nothing to show
 })

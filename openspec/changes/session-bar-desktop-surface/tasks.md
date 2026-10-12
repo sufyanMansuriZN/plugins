@@ -32,6 +32,8 @@
 - [x] 5.3 Draw each pill in the hook as an interactive `Svg`. Verify: the desktop mount test finds an `Svg` per pill and none when calm, and `tsc --noEmit` and the full test file pass.
 - [ ] 5.4 Bump `plugin.json` to 0.13.0, commit and push after the user's go-ahead, update the plugin, restart Desktop. Verify with a screenshot: the pills are rounded, text is not clipped, hover shows the card, and it reads in light and dark.
 
+- [x] 5.5 Fix the 5h pill's right padding (countdown width estimate raised from 6.4 to 7.6 px per character, measured from a live screenshot) and align the context pill left and the usage pills right. Verify: the full test file and `tsc --noEmit` pass; confirm on screen after release.
+
 ## Workflow follow-up
 
 - Archive the change after the Desktop check passes.

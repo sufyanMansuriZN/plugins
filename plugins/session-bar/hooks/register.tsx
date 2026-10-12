@@ -204,7 +204,7 @@ export const pill = (b: Badge) => {
   const t = b.level && TINT[b.level]
   const c = 2 * Math.PI * RING_R
   const arc = +((c * b.share) / 100).toFixed(2)
-  const text = (b.label ? b.label.length * 6.4 + 5 : 0) + b.value.length * 7.4 + (b.after ? b.after.length * 6.4 + 5 : 0)
+  const text = (b.label ? b.label.length * 6.4 + 5 : 0) + b.value.length * 7.4 + (b.after ? b.after.length * 7.6 + 5 : 0) // measured live: 6.4 left the 5h pill ~7px short on the right
   const width = Math.ceil(10 + 18 + 7 + text + 12)
   const ink = t ? ` fill="${t.ink}"` : ' class="i"'
   const dim = t ? ` fill="${t.ink}" fill-opacity=".7"` : ' class="d"'
@@ -327,7 +327,7 @@ export const register: Register = on => {
       const a = agents.find(a => a.id === agentId), m = ms[agentId]
       shown = { agent: a?.type ?? a?.name, model: m ? modelLabel(m) : undefined }
     }
-    // desktop: nothing the app doesn't already show, so no git call and, when calm, no band of ours
+    // desktop: context on the left, limits on the right; nothing the app doesn't already show, so no git call and, when calm, no band of ours
     if (e.surface === 'desktop') {
       const badges = desktopSegments({ dir: '', ...shown, windows, now })
       if (!badges.length) return next(e)
@@ -335,11 +335,15 @@ export const register: Register = on => {
       const below = await next(e)
       return (
         <Box flexDirection="column">
-          <Box gap={1}>
-            {badges.map(badge => {
-              const { source, width } = pill(badge)
-              return <Svg source={source} alt={badge.tip} width={width} height={PILL_H} isInteractive />
-            })}
+          <Box justifyContent="space-between">
+            {[badges.filter(x => !x.label), badges.filter(x => x.label)].map(group => (
+              <Box gap={1}>
+                {group.map(badge => {
+                  const { source, width } = pill(badge)
+                  return <Svg source={source} alt={badge.tip} width={width} height={PILL_H} isInteractive />
+                })}
+              </Box>
+            ))}
           </Box>
           {below}
         </Box>

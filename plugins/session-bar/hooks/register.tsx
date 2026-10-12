@@ -327,7 +327,7 @@ export const register: Register = on => {
       const a = agents.find(a => a.id === agentId), m = ms[agentId]
       shown = { agent: a?.type ?? a?.name, model: m ? modelLabel(m) : undefined }
     }
-    // desktop: context on the left, limits on the right; nothing the app doesn't already show, so no git call and, when calm, no band of ours
+    // desktop: limits on the left, context on the right; nothing the app doesn't already show, so no git call and, when calm, no band of ours
     if (e.surface === 'desktop') {
       const badges = desktopSegments({ dir: '', ...shown, windows, now })
       if (!badges.length) return next(e)
@@ -336,7 +336,7 @@ export const register: Register = on => {
       return (
         <Box flexDirection="column">
           <Box justifyContent="space-between">
-            {[badges.filter(x => !x.label), badges.filter(x => x.label)].map(group => (
+            {[badges.filter(x => x.label), badges.filter(x => !x.label)].map(group => (
               <Box gap={1}>
                 {group.map(badge => {
                   const { source, width } = pill(badge)

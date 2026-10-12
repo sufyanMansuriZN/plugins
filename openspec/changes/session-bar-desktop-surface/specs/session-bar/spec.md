@@ -43,13 +43,13 @@ On the desktop surface each segment SHALL be a rounded pill holding a ring whose
 - **WHEN** the 5h window is 15% used with 4h13m left and the 7d window is 76% used
 - **THEN** the 5h pill shows `5h 15% 4h13m` and the 7d pill shows `7d 76%` with no countdown
 
-#### Scenario: Context left, limits right
+#### Scenario: Limits left, context right
 - **WHEN** the desktop surface draws the context pill and the 5h and 7d pills
-- **THEN** the context pill sits at the left edge of the row and the usage pills at the right edge
+- **THEN** the usage pills sit at the left edge of the row and the context pill at the right edge
 
 #### Scenario: Limits without context
 - **WHEN** a subagent's transcript is in view and only usage pills show
-- **THEN** they sit at the right edge, as when the context pill is present
+- **THEN** they sit at the left edge, as when the context pill is present
 
 #### Scenario: Calm pills are neutral
 - **WHEN** a pill's segment does not need attention but another does

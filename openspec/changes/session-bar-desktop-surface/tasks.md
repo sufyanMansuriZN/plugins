@@ -30,8 +30,7 @@
 - [x] 5.1 Rework `desktopSegments` to build all candidate badges (ctx without label, windows with dim label and bold value, countdown on 5h only), return none while all are calm and all once one needs attention, each carrying its level, share and hover text. Verify: unit tests cover calm, one attention, ctx label absent, 5h-only countdown, and hover text for ctx and a window.
 - [x] 5.2 Replace `ring` with a `pill(badge)` helper returning the SVG source and width: rounded rect, ring, text, `<title>`, and a `prefers-color-scheme` style. Verify: unit tests find the ring arc share, the tint per level, the neutral fill when calm, the title, and both color schemes.
 - [x] 5.3 Draw each pill in the hook as an interactive `Svg`. Verify: the desktop mount test finds an `Svg` per pill and none when calm, and `tsc --noEmit` and the full test file pass.
-- [ ] 5.4 Bump `plugin.json` to 0.13.0, commit and push after the user's go-ahead, update the plugin, restart Desktop. Verify with a screenshot: the pills are rounded, text is not clipped, hover shows the card, and it reads in light and dark.
-
+- [x] 5.4 Bump `plugin.json` to 0.13.0, commit and push after the user's go-ahead, update the plugin, restart Desktop. Verified on screen (0.13.2): pills are rounded and unclipped, hover shows the card, and the pills read in light and dark.
 - [x] 5.5 Fix the 5h pill's right padding (countdown width estimate raised from 6.4 to 7.6 px per character, measured from a live screenshot) and align the usage pills left and the context pill right. Verify: the full test file and `tsc --noEmit` pass; confirm on screen after release.
 
 ## Workflow follow-up

@@ -159,6 +159,21 @@ export const segments = (b: BarInput, tier: Tier): Run[] => {
   return groups.flatMap((g, i) => i ? [{ text: '   ' }, ...g] : g)
 }
 
+// Desktop already shows dir, branch, model, context and usage (header, changes band, footer, ring popover), so only
+// what needs attention is drawn: a text pill each, with no bars or Powerline caps (no cell grid, no Nerd Font there)
+export const desktopSegments = (b: BarInput): Run[] => {
+  const pills: Run[][] = []
+  const add = (level: Level, text: string) => {
+    if (level) pills.push([{ text: ` ${text} `, color: ON_ATTN, backgroundColor: ATTN[level] }])
+  }
+  if (b.ctx) add(ctxBand(b.ctx), `ctx ${tokensText(b.ctx.tokens)}`)
+  for (const w of b.windows) {
+    const left = w.resetsAt ? Date.parse(w.resetsAt) - b.now : 0
+    add(pace(w, b.now), `${w.label} ${Math.round(w.pct)}%${left > 0 ? ` ${countdown(left)}` : ''}`)
+  }
+  return pills.flatMap((p, i) => i ? [{ text: ' ' }, ...p] : p)
+}
+
 export const width = (runs: Run[]) => runs.reduce((n, r) => n + [...r.text].length, 0)
 
 // the richest tier that fits one row
@@ -259,10 +274,17 @@ export const register: Register = on => {
       const a = agents.find(a => a.id === agentId), m = ms[agentId]
       shown = { agent: a?.type ?? a?.name, model: m ? modelLabel(m) : undefined }
     }
-    // shortcut: one git spawn per redraw, no cache; detached HEAD reads "HEAD". Cache on turn.complete if it shows
-    const git = await $.process.run(['git', 'rev-parse', '--abbrev-ref', 'HEAD']).catch(() => undefined)
-    const branch = git?.exitCode === 0 ? git.stdout.trim() || undefined : undefined
-    const runs = layout({ dir: shortDir(root, home), branch, ...shown, windows, now }, e.props.bodyColumns)
+    // desktop: nothing the app doesn't already show, so no git call and, when calm, no band of ours
+    let runs: Run[]
+    if (e.surface === 'desktop') {
+      runs = desktopSegments({ dir: '', ...shown, windows, now })
+      if (!runs.length) return next(e)
+    } else {
+      // shortcut: one git spawn per redraw, no cache; detached HEAD reads "HEAD". Cache on turn.complete if it shows
+      const git = await $.process.run(['git', 'rev-parse', '--abbrev-ref', 'HEAD']).catch(() => undefined)
+      const branch = git?.exitCode === 0 ? git.stdout.trim() || undefined : undefined
+      runs = layout({ dir: shortDir(root, home), branch, ...shown, windows, now }, e.props.bodyColumns)
+    }
     const { Box, Text } = $.ui.resolve(e)
     const below = await next(e)
 

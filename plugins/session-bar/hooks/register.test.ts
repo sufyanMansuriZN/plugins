@@ -1,7 +1,7 @@
 import { test, expect, mock } from 'claude-code/testing'
 import {
   band, paceBand, ctxBand, tokensText, shortDir, limitText, parseUsage, fresh, modelLabel, withModel,
-  elapsed, countdown, bar, segments, layout, width, WINDOW_MS, WEEK,
+  elapsed, countdown, bar, segments, desktopSegments, layout, width, WINDOW_MS, WEEK,
 } from './register'
 import type { BarInput, Run } from './register'
 
@@ -60,8 +60,10 @@ test('row is always visible and fills in after a turn', async ($, on) => {
         plugin: 'session-bar', surface, component: 'AbovePrompt',
         props: { hasSurvey, isWorking: false, maxRows: 3 } as never,
       })
-      expect(await ui.find({ type: 'Text', text: 'skills' })).toBeDefined()
-      expect(await ui.find({ type: 'Text', text: 'Opus 5.5' })).toBeDefined()
+      // desktop shows the dir and model itself, so the mod leaves them out there
+      const found = surface === 'terminal' ? 'toBeDefined' : 'toBeUndefined'
+      expect(await ui.find({ type: 'Text', text: 'skills' }))[found]()
+      expect(await ui.find({ type: 'Text', text: 'Opus 5.5' }))[found]()
       await ui.unmount()
     }
   }
@@ -334,4 +336,48 @@ test('countdown moves while idle', async ($, on) => {
 test('branch shows after the dir, only when given', () => {
   expect(texts(segments(input({ branch: 'main' }), 0)).slice(0, 3)).toEqual(['skills', ' (main)', ' · Opus 5.5'])
   expect(texts(segments(input(), 0))).not.toContain(' (main)')
+})
+
+test('desktop: only attention shows, as text pills with no bar or cap', () => {
+  expect(desktopSegments(input())).toEqual([]) // calm: dir, branch, model, ctx, 5h, 7d all left to the app
+  const hot = desktopSegments(input({ windows: [
+    { label: '5h', pct: 71, resetsAt: new Date(NOW + 3.5 * 3_600_000).toISOString(), windowMs: WINDOW_MS.five_hour },
+    { label: '7d', pct: 61, resetsAt: new Date(NOW + 31 * 3_600_000).toISOString(), windowMs: WEEK },
+  ] }))
+  expect(hot).toEqual([{ text: ' 5h 71% 3h30m ', color: '#191919', backgroundColor: '#D55E00' }])
+  const ctx = (tokens: number) => desktopSegments(input({ ctx: { tokens, window: 1_000_000 } }))
+  expect(ctx(187_400)).toEqual([{ text: ' ctx 187K ', color: '#191919', backgroundColor: '#E69F00' }])
+  expect(ctx(260_000)[0]?.backgroundColor).toBe('#D55E00')
+  const both = desktopSegments(input({ ctx: { tokens: 187_400, window: 1_000_000 }, windows: [{ label: '5h', pct: 55 }] }))
+  expect(texts(both)).toEqual([' ctx 187K ', ' ', ' 5h 55% ']) // no reset time: raw share, no countdown
+  expect(texts(both).join('')).not.toMatch(/[━─╾┿┽┼]/)
+})
+
+test('desktop mount: calm draws nothing of ours and spawns no git; attention is a pill; a subagent drops ctx', async ($, on) => {
+  let spawns = 0
+  on('session.root', async () => ({ value: '/home/me/.claude/skills' }))
+  on('env.get', async () => ({ value: '/home/me' }))
+  on('session.model', async () => ({ value: 'claude-opus-5-5' }))
+  on('clock.now', async () => ({ value: 1e12 }))
+  on('session.measure', async (_$, e) => ({ changed: e.changed }))
+  on('process.run', async () => { spawns++; return { value: { exitCode: 0, stdout: 'main\n', stderr: '' } } as never })
+  on('ui.render', async () => h('Box', {}) as never)
+  on('agent.list', async () => ({ value: [{ id: 'a1', type: 'Explore', status: 'running' }] as never }))
+  on('store.set', async () => ({ value: undefined }))
+  const sees = async (agentId: string | undefined, has: string[], hasNot: string[] = []) => {
+    const ui = await $.ui.mount({
+      plugin: 'session-bar', surface: 'desktop', component: 'AbovePrompt',
+      props: { hasSurvey: false, isWorking: false, maxRows: 3, view: agentId ? { agentId } : {} } as never,
+    })
+    for (const text of has) expect(await ui.find({ type: 'Text', text })).toBeDefined()
+    for (const text of hasNot) expect(await ui.find({ type: 'Text', text })).toBeUndefined()
+    await ui.unmount()
+  }
+
+  await $.session.measure({ context: { tokens: 50_000, window: 1_000_000 }, rateLimits: [{ kind: 'five_hour', percentUsed: 20 }], changed: ['context', 'rateLimits'] } as never)
+  await sees(undefined, [], ['skills', 'main', ' · Opus 5.5 1M', ' ctx 50K ', ' 5h 20% '])
+  await $.session.measure({ context: { tokens: 187_400, window: 1_000_000 }, rateLimits: [{ kind: 'five_hour', percentUsed: 71 }], changed: ['context', 'rateLimits'] } as never)
+  await sees(undefined, [' ctx 187K ', ' 5h 71% '], ['skills', 'main'])
+  await sees('a1', [' 5h 71% '], [' ctx 187K ', 'skills'])
+  expect(spawns).toBe(0)
 })

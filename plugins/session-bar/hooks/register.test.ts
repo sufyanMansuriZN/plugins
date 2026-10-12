@@ -379,8 +379,9 @@ test('pill: fill is the share used, icon per kind, tint by level, neutral when c
   expect(fillW({ share: 100 }).w).toBe(fillW({ share: 100 }).total)
   expect(fillW({ share: 0 }).w).toBe(0)
   // color means severity only: a translucent track and meter fill in the status color, gray when calm
-  expect(src()).toContain('fill="#fab219" fill-opacity="0.55"') // warn: amber fill
-  expect(src({ level: 'hot' })).toContain('fill="#d03b3b" fill-opacity="0.5"')
+  expect(src()).toContain('fill="#fab219" fill-opacity="0.8"') // warn: amber fill
+  expect(src({ level: 'hot' })).toContain('fill="#d03b3b" fill-opacity="0.8"')
+  expect(src({ level: 'hot' })).toContain('stroke-opacity=".7"') // a firm border
   const calm = src({ level: undefined })
   expect(calm).toContain('fill="rgb(127,127,127)" fill-opacity="0.3"')
   expect(calm).toContain('class="t"') // calm track: a white chip, fainter in dark

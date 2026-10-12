@@ -27,6 +27,11 @@
 - [x] 5.1 Make the calm track a white chip (0.75, dark 0.07) and the calm fill gray at 0.30, per design decision 3. Verify: tests find the `t` track class and its dark value, and no `t` class on an attention pill; the full test file and `tsc --noEmit` pass.
 - [ ] 5.2 Bump to 0.14.2, commit and push, update the plugin, restart Desktop. Verify on screen in light and dark: the share reads clearly on the app's gray strip. Tune the dark value if it looks washed out.
 
+## 6. Stronger attention pills (0.14.3)
+
+- [x] 6.1 Raise the warn and hot pills to a 0.30 track, 0.80 fill and 0.70 border, per design decision 3. Verify: tests find the 0.8 fill for both and the firmer border; the full test file and `tsc --noEmit` pass.
+- [ ] 6.2 Bump to 0.14.3, commit and push, update the plugin, restart Desktop. Verify on screen: a hot context reads red, not pink, and amber reads clearly, in light and dark.
+
 ## Workflow follow-up
 
 - Archive this change after tasks 3.2 and 5.2 pass. `session-bar-desktop-surface` is already archived.

@@ -197,7 +197,7 @@ export const desktopSegments = (b: BarInput): Badge[] => {
 // OS scheme stands in for the app's, which differ only when the app is not on auto
 const STATUS = { warn: '#fab219', hot: '#d03b3b' } as const
 const GRAY = 'rgb(127,127,127)'
-const FILL = { calm: 0.3, warn: 0.55, hot: 0.5 } as const // meter fill opacity; the track is a white chip when calm, .2 of the status color otherwise
+const FILL = { calm: 0.3, warn: 0.8, hot: 0.8 } as const // meter fill opacity; the track is a white chip when calm, .3 of the status color otherwise
 const PILL_H = 28, ICON = 18, ICON_STROKE = 1.5
 const xml = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;')
 
@@ -223,7 +223,7 @@ export const pill = (b: Badge) => {
       + '@media (prefers-color-scheme:dark){.i{fill:#f0efe9}.d{fill:#a8a79f}.p{stroke:#f0efe9}.s{stroke:#a8a79f}.t{fill-opacity:.07}}</style>'
       + `<clipPath id="c"><rect ${shape}/></clipPath>`
       // a calm track is a white chip on the app's gray strip; a translucent gray one all but vanished there
-      + `<rect ${shape} ${b.level ? `fill="${color}" fill-opacity=".2"` : 'class="t"'} stroke="${color}" stroke-opacity="${b.level ? '.45' : '.3'}"/>`
+      + `<rect ${shape} ${b.level ? `fill="${color}" fill-opacity=".3"` : 'class="t"'} stroke="${color}" stroke-opacity="${b.level ? '.7' : '.3'}"/>`
       + `<rect width="${+((width * b.share) / 100).toFixed(2)}" height="${PILL_H}" clip-path="url(#c)" fill="${color}" fill-opacity="${FILL[b.level ?? 'calm']}"/>`
       + `<g transform="translate(12 ${(PILL_H - ICON) / 2}) scale(${scale})" fill="none" stroke-width="${+(ICON_STROKE / scale).toFixed(2)}" `
       + `stroke-linecap="round" stroke-linejoin="round" class="${b.level ? 'p' : 's'}">${GLYPH[b.kind]}</g>`

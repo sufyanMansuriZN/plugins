@@ -31,8 +31,10 @@
    | State | Track | Fill | Border |
    |---|---|---|---|
    | calm | white at 0.75 (dark 0.07) | gray at 0.30 | gray at 0.30 |
-   | warn | `#fab219` at 0.20 | `#fab219` at 0.55 | `#fab219` at 0.45 |
-   | hot | `#d03b3b` at 0.20 | `#d03b3b` at 0.50 | `#d03b3b` at 0.45 |
+   | warn | `#fab219` at 0.30 | `#fab219` at 0.80 | `#fab219` at 0.70 |
+   | hot | `#d03b3b` at 0.30 | `#d03b3b` at 0.80 | `#d03b3b` at 0.70 |
+
+   The first values (0.20 track, 0.55 and 0.50 fill, 0.45 border) read muted on the app strip and a hot context looked pink, so 0.14.3 raised them.
 
    The app draws its own gray strip behind the bar, so a translucent gray calm track all but vanished on it (0.14.1 screenshot). The calm track is a white chip instead (0.14.2); the dark-mode value was tuned against a guessed strip color, so check it live.
 

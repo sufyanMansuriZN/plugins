@@ -23,7 +23,7 @@
 - [x] 4.1 Add a `ring(pct, level)` helper that returns the SVG source: an 18px ring, neutral track, arc in `ATTN[level]`, stroke-dasharray from the share (clamped 0-100). Verify: unit tests cover 0, 50, 100, over 100, and both attention colors.
 - [x] 4.2 Change `desktopSegments` to return a model of badges (label text, ring share, level) and draw each in the hook as a `Box` row with an `Svg` (explicit `width`, `height`, `alt`) and a `Text` in the app's own color. Verify: unit tests find the arc share (ctx against the hot threshold, windows by percent) and no filled background; the desktop mount test finds the badge text and still finds no dir, branch or model.
 - [x] 4.3 Update the earlier desktop tests (2.1, 2.2, 2.4) from text pills to ring badges. Verify: the full test file and `tsc --noEmit` pass.
-- [ ] 4.4 Bump `plugin.json` to 0.12.0, commit and push, run `claude plugin marketplace update plugins && claude plugin update session-bar`, and restart Desktop. Verify: with ctx past 150K, a ring badge shows beside `ctx` text, the ring and text sit on one baseline, and it reads in light and dark.
+- [x] 4.4 Bump `plugin.json` to 0.12.0, commit and push, run `claude plugin marketplace update plugins && claude plugin update session-bar`, and restart Desktop. Verify: with ctx past 150K, a ring badge shows beside `ctx` text, the ring and text sit on one baseline, and it reads in light and dark.
 
 ## Workflow follow-up
 

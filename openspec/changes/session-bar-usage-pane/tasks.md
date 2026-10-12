@@ -23,7 +23,7 @@ Develop in a copy under `~/.claude/dev-mods/<session>/session-bar/` with the ins
 ## 4. Live check and release
 
 - [x] 4.1 In the hot-reloaded copy, verify on Desktop that the chevron renders and is easy to hit, the block expands and collapses on press, does not flicker on send and turn complete, does not redraw while idle within a minute, and fits at a narrow window
-- [ ] 4.2 Sync the spec delta into `openspec/specs/session-bar`, bump the version in `plugin.json` to 0.16.0, release (commit, push, `claude plugin update session-bar`), remove the dev-mods copy, re-enable the installed plugin (`claude plugin enable session-bar@plugins`, disabled at user scope for the live check), and verify `claude plugin test` passes and a new session shows the bar
+- [x] 4.2 Sync the spec delta into `openspec/specs/session-bar`, bump the version in `plugin.json` to 0.16.0, release (commit, push, `claude plugin update session-bar`), remove the dev-mods copy, re-enable the installed plugin (`claude plugin enable session-bar@plugins`, disabled at user scope for the live check), and verify `claude plugin test` passes and a new session shows the bar
 
 ## Workflow follow-up
 

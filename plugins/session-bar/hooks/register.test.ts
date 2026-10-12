@@ -1,7 +1,7 @@
 import { test, expect, mock } from 'claude-code/testing'
 import {
   band, paceBand, ctxBand, tokensText, shortDir, limitText, parseUsage, fresh, modelLabel, withModel,
-  elapsed, countdown, bar, segments, desktopSegments, layout, width, WINDOW_MS, WEEK,
+  elapsed, countdown, bar, segments, desktopSegments, ring, layout, width, WINDOW_MS, WEEK,
 } from './register'
 import type { BarInput, Run } from './register'
 
@@ -338,22 +338,34 @@ test('branch shows after the dir, only when given', () => {
   expect(texts(segments(input(), 0))).not.toContain(' (main)')
 })
 
-test('desktop: only attention shows, as text pills with no bar or cap', () => {
+test('desktop: only attention shows, as ring badges with the share used', () => {
   expect(desktopSegments(input())).toEqual([]) // calm: dir, branch, model, ctx, 5h, 7d all left to the app
   const hot = desktopSegments(input({ windows: [
     { label: '5h', pct: 71, resetsAt: new Date(NOW + 3.5 * 3_600_000).toISOString(), windowMs: WINDOW_MS.five_hour },
     { label: '7d', pct: 61, resetsAt: new Date(NOW + 31 * 3_600_000).toISOString(), windowMs: WEEK },
   ] }))
-  expect(hot).toEqual([{ text: ' 5h 71% 3h30m ', color: '#191919', backgroundColor: '#D55E00' }])
+  expect(hot).toEqual([{ text: '5h 71% 3h30m', share: 71, level: 'hot' }])
   const ctx = (tokens: number) => desktopSegments(input({ ctx: { tokens, window: 1_000_000 } }))
-  expect(ctx(187_400)).toEqual([{ text: ' ctx 187K ', color: '#191919', backgroundColor: '#E69F00' }])
-  expect(ctx(260_000)[0]?.backgroundColor).toBe('#D55E00')
+  expect(ctx(187_400)).toEqual([{ text: 'ctx 187K', share: (187_400 / 250_000) * 100, level: 'warn' }]) // ring runs to the hot threshold
+  expect(ctx(260_000)).toEqual([{ text: 'ctx 260K', share: 100, level: 'hot' }]) // clamped at full
   const both = desktopSegments(input({ ctx: { tokens: 187_400, window: 1_000_000 }, windows: [{ label: '5h', pct: 55 }] }))
-  expect(texts(both)).toEqual([' ctx 187K ', ' ', ' 5h 55% ']) // no reset time: raw share, no countdown
-  expect(texts(both).join('')).not.toMatch(/[━─╾┿┽┼]/)
+  expect(both.map(b => b.text)).toEqual(['ctx 187K', '5h 55%']) // context first; no reset time: raw share, no countdown
 })
 
-test('desktop mount: calm draws nothing of ours and spawns no git; attention is a pill; a subagent drops ctx', async ($, on) => {
+test('ring: arc is the share used, colored by level, clamped', () => {
+  const arc = (share: number) => /stroke-dasharray="([\d.]+) /.exec(ring(share, 'warn'))?.[1]
+  const full = +(2 * Math.PI * 7).toFixed(2)
+  expect(arc(100)).toBe(String(full))
+  expect(arc(150)).toBe(String(full)) // over 100 clamps
+  expect(arc(50)).toBe(String(+(full / 2).toFixed(2)))
+  expect(arc(0)).toBeUndefined() // no arc, only the track
+  expect(arc(-5)).toBeUndefined()
+  expect(ring(40, 'warn')).toContain('stroke="#E69F00"')
+  expect(ring(40, 'hot')).toContain('stroke="#D55E00"')
+  expect(ring(40, 'warn')).toContain('rgba(127,127,127,.25)') // the neutral track, readable on light and dark
+})
+
+test('desktop mount: calm draws nothing of ours and spawns no git; attention is a ring badge; a subagent drops ctx', async ($, on) => {
   let spawns = 0
   on('session.root', async () => ({ value: '/home/me/.claude/skills' }))
   on('env.get', async () => ({ value: '/home/me' }))
@@ -375,9 +387,15 @@ test('desktop mount: calm draws nothing of ours and spawns no git; attention is 
   }
 
   await $.session.measure({ context: { tokens: 50_000, window: 1_000_000 }, rateLimits: [{ kind: 'five_hour', percentUsed: 20 }], changed: ['context', 'rateLimits'] } as never)
-  await sees(undefined, [], ['skills', 'main', ' · Opus 5.5 1M', ' ctx 50K ', ' 5h 20% '])
+  await sees(undefined, [], ['skills', 'main', ' · Opus 5.5 1M', 'ctx 50K', '5h 20%'])
   await $.session.measure({ context: { tokens: 187_400, window: 1_000_000 }, rateLimits: [{ kind: 'five_hour', percentUsed: 71 }], changed: ['context', 'rateLimits'] } as never)
-  await sees(undefined, [' ctx 187K ', ' 5h 71% '], ['skills', 'main'])
-  await sees('a1', [' 5h 71% '], [' ctx 187K ', 'skills'])
+  await sees(undefined, ['ctx 187K', '5h 71%'], ['skills', 'main'])
+  await sees('a1', ['5h 71%'], ['ctx 187K', 'skills'])
+  const ui = await $.ui.mount({
+    plugin: 'session-bar', surface: 'desktop', component: 'AbovePrompt',
+    props: { hasSurvey: false, isWorking: false, maxRows: 3, view: {} } as never,
+  })
+  expect(await ui.find({ type: 'Svg' })).toBeDefined() // the ring drawn beside the text
+  await ui.unmount()
   expect(spawns).toBe(0)
 })

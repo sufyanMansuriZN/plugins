@@ -160,18 +160,30 @@ export const segments = (b: BarInput, tier: Tier): Run[] => {
 }
 
 // Desktop already shows dir, branch, model, context and usage (header, changes band, footer, ring popover), so only
-// what needs attention is drawn: a text pill each, with no bars or Powerline caps (no cell grid, no Nerd Font there)
-export const desktopSegments = (b: BarInput): Run[] => {
-  const pills: Run[][] = []
-  const add = (level: Level, text: string) => {
-    if (level) pills.push([{ text: ` ${text} `, color: ON_ATTN, backgroundColor: ATTN[level] }])
+// what needs attention is drawn: a ring badge each (a ring filled to the share used, then the text), no cell-grid bar
+// share: 0-100. For ctx it runs to the hot threshold like the terminal bar, so a full ring means hot.
+export type Badge = { text: string; share: number; level: NonNullable<Level> }
+export const desktopSegments = (b: BarInput): Badge[] => {
+  const badges: Badge[] = []
+  const add = (level: Level, text: string, share: number) => {
+    if (level) badges.push({ text, level, share: Math.min(100, Math.max(0, share)) })
   }
-  if (b.ctx) add(ctxBand(b.ctx), `ctx ${tokensText(b.ctx.tokens)}`)
+  if (b.ctx) add(ctxBand(b.ctx), `ctx ${tokensText(b.ctx.tokens)}`, (b.ctx.tokens / ctxHot(b.ctx)) * 100)
   for (const w of b.windows) {
     const left = w.resetsAt ? Date.parse(w.resetsAt) - b.now : 0
-    add(pace(w, b.now), `${w.label} ${Math.round(w.pct)}%${left > 0 ? ` ${countdown(left)}` : ''}`)
+    add(pace(w, b.now), `${w.label} ${Math.round(w.pct)}%${left > 0 ? ` ${countdown(left)}` : ''}`, w.pct)
   }
-  return pills.flatMap((p, i) => i ? [{ text: ' ' }, ...p] : p)
+  return badges
+}
+
+// An Svg cannot read CSS variables, so the track is a neutral translucent gray that reads on light and dark
+const RING_R = 7
+export const ring = (share: number, level: NonNullable<Level>) => {
+  const c = 2 * Math.PI * RING_R
+  const arc = +((c * Math.min(100, Math.max(0, share))) / 100).toFixed(2)
+  const circle = (stroke: string, dash = '') =>
+    `<circle cx="9" cy="9" r="${RING_R}" fill="none" stroke="${stroke}" stroke-width="2.5"${dash} stroke-linecap="round"${dash && ' transform="rotate(-90 9 9)"'}/>`
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 18 18">${circle('rgba(127,127,127,.25)')}${arc ? circle(ATTN[level], ` stroke-dasharray="${arc} ${+c.toFixed(2)}"`) : ''}</svg>`
 }
 
 export const width = (runs: Run[]) => runs.reduce((n, r) => n + [...r.text].length, 0)
@@ -275,16 +287,29 @@ export const register: Register = on => {
       shown = { agent: a?.type ?? a?.name, model: m ? modelLabel(m) : undefined }
     }
     // desktop: nothing the app doesn't already show, so no git call and, when calm, no band of ours
-    let runs: Run[]
     if (e.surface === 'desktop') {
-      runs = desktopSegments({ dir: '', ...shown, windows, now })
-      if (!runs.length) return next(e)
-    } else {
-      // shortcut: one git spawn per redraw, no cache; detached HEAD reads "HEAD". Cache on turn.complete if it shows
-      const git = await $.process.run(['git', 'rev-parse', '--abbrev-ref', 'HEAD']).catch(() => undefined)
-      const branch = git?.exitCode === 0 ? git.stdout.trim() || undefined : undefined
-      runs = layout({ dir: shortDir(root, home), branch, ...shown, windows, now }, e.props.bodyColumns)
+      const badges = desktopSegments({ dir: '', ...shown, windows, now })
+      if (!badges.length) return next(e)
+      const { Box, Text, Svg } = $.ui.resolve(e)
+      const below = await next(e)
+      return (
+        <Box flexDirection="column">
+          <Box gap={3}>
+            {badges.map(({ text, share, level }) => (
+              <Box alignItems="center" gap={1}>
+                <Svg source={ring(share, level)} alt={`${text}, ${level === 'hot' ? 'high' : 'rising'}`} width={18} height={18} />
+                <Text>{text}</Text>
+              </Box>
+            ))}
+          </Box>
+          {below}
+        </Box>
+      )
     }
+    // shortcut: one git spawn per redraw, no cache; detached HEAD reads "HEAD". Cache on turn.complete if it shows
+    const git = await $.process.run(['git', 'rev-parse', '--abbrev-ref', 'HEAD']).catch(() => undefined)
+    const branch = git?.exitCode === 0 ? git.stdout.trim() || undefined : undefined
+    const runs = layout({ dir: shortDir(root, home), branch, ...shown, windows, now }, e.props.bodyColumns)
     const { Box, Text } = $.ui.resolve(e)
     const below = await next(e)
 

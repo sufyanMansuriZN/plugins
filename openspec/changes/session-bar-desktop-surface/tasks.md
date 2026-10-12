@@ -3,7 +3,7 @@
 ## 1. Confirm the Desktop assumptions
 
 - [x] 1.1 Check the `Box` and `Text` props the desktop table accepts (`backgroundColor`, `borderRadius`, padding) in `.claude-plugin/types/claude-code/index.d.ts`, and record the choice in design.md decision 4. Verify: decision 4 names the props used.
-- [ ] 1.2 Print `e.surface` and `e.props.bodyColumns` from a Desktop session (temporary log, removed after). Verify: the value is `desktop` and the column count is noted in design.md.
+- [x] 1.2 Confirm the desktop path runs in the live app. Verified: with 0.11.0 installed, Desktop showed only a `ctx 161K` pill and the old bar was gone, so `e.surface` is `desktop`. The `bodyColumns` value is not needed: the desktop path skips the tiers.
 
 ## 2. Desktop segments
 
@@ -16,7 +16,14 @@
 
 - [x] 3.1 Run the full session-bar test file and the type check. Verify: all tests pass with no type errors, and terminal tests are unchanged.
 - [x] 3.2 Bump the version in `plugins/session-bar/.claude-plugin/plugin.json` (and the marketplace entry if it carries one) and sync the spec on archive. Verify: version reads 0.11.0 where it is declared.
-- [ ] 3.3 Open a Desktop session with the dev plugin and view the bar in a calm state and an attention state. Verify: no band from the mod shows when calm, and a pill shows when a window is ahead of pace.
+- [x] 3.3 Open a Desktop session with the installed plugin and view the bar. Verified for 0.11.0: a `ctx 161K` pill shows at 161K tokens and the old bar is gone.
+
+## 4. Ring badges (0.12.0)
+
+- [x] 4.1 Add a `ring(pct, level)` helper that returns the SVG source: an 18px ring, neutral track, arc in `ATTN[level]`, stroke-dasharray from the share (clamped 0-100). Verify: unit tests cover 0, 50, 100, over 100, and both attention colors.
+- [x] 4.2 Change `desktopSegments` to return a model of badges (label text, ring share, level) and draw each in the hook as a `Box` row with an `Svg` (explicit `width`, `height`, `alt`) and a `Text` in the app's own color. Verify: unit tests find the arc share (ctx against the hot threshold, windows by percent) and no filled background; the desktop mount test finds the badge text and still finds no dir, branch or model.
+- [x] 4.3 Update the earlier desktop tests (2.1, 2.2, 2.4) from text pills to ring badges. Verify: the full test file and `tsc --noEmit` pass.
+- [ ] 4.4 Bump `plugin.json` to 0.12.0, commit and push, run `claude plugin marketplace update plugins && claude plugin update session-bar`, and restart Desktop. Verify: with ctx past 150K, a ring badge shows beside `ctx` text, the ring and text sit on one baseline, and it reads in light and dark.
 
 ## Workflow follow-up
 

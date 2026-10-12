@@ -8,8 +8,8 @@ The session bar is drawn for a terminal. Claude Desktop also raises `AbovePrompt
 
 - The `ui.render` hook reads `e.surface`. The terminal path is unchanged.
 - On the desktop surface the directory, branch and model segments are left out.
-- On the desktop surface the context and usage segments show only when they need attention, as a pill. A calm session draws nothing.
-- The desktop pill is drawn without Powerline caps and without bars, so it does not depend on a Nerd Font or on the cell width.
+- On the desktop surface the context and usage segments show only when they need attention, as a ring badge. A calm session draws nothing.
+- The desktop attention segment is a ring badge (a small SVG ring filled to the share used, then the text), with no filled background, no Powerline caps and no cell-grid bar, so it needs no Nerd Font and fits the app's look.
 - With nothing needing attention, the desktop hook draws no band of its own.
 - The `session-bar` spec gains the branch segment, which 0.10.0 shipped without a requirement.
 

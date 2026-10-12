@@ -1,7 +1,7 @@
 import { test, expect, mock } from 'claude-code/testing'
 import {
   band, paceBand, ctxBand, tokensText, shortDir, limitText, parseUsage, fresh, modelLabel, withModel,
-  elapsed, countdown, bar, segments, desktopSegments, ring, layout, width, WINDOW_MS, WEEK,
+  elapsed, countdown, bar, segments, desktopSegments, pill as desktopPill, layout, width, WINDOW_MS, WEEK,
 } from './register'
 import type { BarInput, Run } from './register'
 
@@ -338,31 +338,50 @@ test('branch shows after the dir, only when given', () => {
   expect(texts(segments(input(), 0))).not.toContain(' (main)')
 })
 
-test('desktop: only attention shows, as ring badges with the share used', () => {
+test('desktop: nothing while calm; once one needs attention, every pill shows', () => {
   expect(desktopSegments(input())).toEqual([]) // calm: dir, branch, model, ctx, 5h, 7d all left to the app
-  const hot = desktopSegments(input({ windows: [
-    { label: '5h', pct: 71, resetsAt: new Date(NOW + 3.5 * 3_600_000).toISOString(), windowMs: WINDOW_MS.five_hour },
-    { label: '7d', pct: 61, resetsAt: new Date(NOW + 31 * 3_600_000).toISOString(), windowMs: WEEK },
-  ] }))
-  expect(hot).toEqual([{ text: '5h 71% 3h30m', share: 71, level: 'hot' }])
-  const ctx = (tokens: number) => desktopSegments(input({ ctx: { tokens, window: 1_000_000 } }))
-  expect(ctx(187_400)).toEqual([{ text: 'ctx 187K', share: (187_400 / 250_000) * 100, level: 'warn' }]) // ring runs to the hot threshold
-  expect(ctx(260_000)).toEqual([{ text: 'ctx 260K', share: 100, level: 'hot' }]) // clamped at full
-  const both = desktopSegments(input({ ctx: { tokens: 187_400, window: 1_000_000 }, windows: [{ label: '5h', pct: 55 }] }))
-  expect(both.map(b => b.text)).toEqual(['ctx 187K', '5h 55%']) // context first; no reset time: raw share, no countdown
+  const win = (label: string, pct: number, hours: number, windowMs: number) =>
+    ({ label, pct, resetsAt: new Date(NOW + hours * 3_600_000).toISOString(), windowMs })
+  const hot = desktopSegments(input({ windows: [win('5h', 71, 3.5, WINDOW_MS.five_hour!), win('7d', 61, 31, WEEK)] }))
+  expect(hot.map(b => [b.label, b.value, b.after, b.level])).toEqual([
+    [undefined, '120K', undefined, undefined], // ctx: no label, calm but shown
+    ['5h', '71%', '3h30m', 'hot'], // the 5h countdown only
+    ['7d', '61%', undefined, undefined],
+  ])
+  const ctx = (tokens: number) => desktopSegments(input({ ctx: { tokens, window: 1_000_000 } }))[0]!
+  expect(ctx(187_400)).toMatchObject({ value: '187K', share: (187_400 / 250_000) * 100, level: 'warn' }) // ring runs to the hot threshold
+  expect(ctx(260_000)).toMatchObject({ value: '260K', share: 100, level: 'hot' }) // clamped at full
+  expect(desktopSegments(input({ ctx: undefined, windows: [{ label: '5h', pct: 55 }] })).map(b => b.value)).toEqual(['55%']) // no ctx reading, no ctx pill
 })
 
-test('ring: arc is the share used, colored by level, clamped', () => {
-  const arc = (share: number) => /stroke-dasharray="([\d.]+) /.exec(ring(share, 'warn'))?.[1]
+test('desktop hover text names the segment, its value, reset and pace', () => {
+  const at = (pct: number, hours: number) => desktopSegments(input({ ctx: { tokens: 260_000, window: 1_000_000 }, windows: [ // a hot ctx so the pills show at all
+    { label: '5h', pct, resetsAt: new Date(NOW + hours * 3_600_000).toISOString(), windowMs: WINDOW_MS.five_hour },
+    { label: 'Fable', pct: 65, resetsAt: new Date(NOW + 31 * 3_600_000).toISOString(), windowMs: WEEK },
+  ] }))
+  expect(at(15, 4.2)[1]!.tip).toBe('Session limit: 15% used · resets in 4h12m · on pace')
+  expect(at(71, 3.5)[1]!.tip).toBe('Session limit: 71% used · resets in 3h30m · ahead of pace')
+  expect(at(71, 3.5)[2]!.tip).toBe('Weekly, Fable: 65% used · resets in 1d7h · on pace')
+  expect(desktopSegments(input({ windows: [], ctx: { tokens: 213_000, window: 1_000_000 } }))[0]!.tip).toBe('Context: 213K of 1M tokens')
+})
+
+test('pill: ring arc is the share used, tint by level, neutral when calm, title for hover', () => {
+  const b = { value: '85%', share: 100, level: 'warn' as const, tip: 'a & b <c>' }
+  const arc = (share: number) => /stroke-dasharray="([\d.]+) /.exec(desktopPill({ ...b, share }).source)?.[1]
   const full = +(2 * Math.PI * 7).toFixed(2)
   expect(arc(100)).toBe(String(full))
-  expect(arc(150)).toBe(String(full)) // over 100 clamps
   expect(arc(50)).toBe(String(+(full / 2).toFixed(2)))
-  expect(arc(0)).toBeUndefined() // no arc, only the track
-  expect(arc(-5)).toBeUndefined()
-  expect(ring(40, 'warn')).toContain('stroke="#E69F00"')
-  expect(ring(40, 'hot')).toContain('stroke="#D55E00"')
-  expect(ring(40, 'warn')).toContain('rgba(127,127,127,.25)') // the neutral track, readable on light and dark
+  expect(arc(0)).toBeUndefined() // only the track
+  expect(desktopPill(b).source).toContain('fill="#FBE3B0"') // warn tint, dark ink
+  expect(desktopPill({ ...b, level: 'hot' }).source).toContain('stroke="#D55E00"')
+  const calm = desktopPill({ ...b, level: undefined }).source
+  expect(calm).toContain('class="n"') // neutral fill, light and dark by scheme
+  expect(calm).toContain('prefers-color-scheme:dark')
+  expect(calm).not.toContain('#FBE3B0')
+  expect(desktopPill(b).source).toContain('<title>a &amp; b &lt;c></title>') // escaped
+  const wide = desktopPill({ label: '5h', value: '15%', after: '4h13m', share: 15, level: undefined, tip: '' })
+  expect(wide.width).toBeGreaterThan(desktopPill({ value: '15%', share: 15, level: undefined, tip: '' }).width) // label and countdown widen it
+  expect(desktopPill(b).source).not.toContain('ctx') // no label text on the context pill
 })
 
 test('desktop mount: calm draws nothing of ours and spawns no git; attention is a ring badge; a subagent drops ctx', async ($, on) => {
@@ -376,26 +395,21 @@ test('desktop mount: calm draws nothing of ours and spawns no git; attention is 
   on('ui.render', async () => h('Box', {}) as never)
   on('agent.list', async () => ({ value: [{ id: 'a1', type: 'Explore', status: 'running' }] as never }))
   on('store.set', async () => ({ value: undefined }))
-  const sees = async (agentId: string | undefined, has: string[], hasNot: string[] = []) => {
+  const pills = async (agentId?: string) => {
     const ui = await $.ui.mount({
       plugin: 'session-bar', surface: 'desktop', component: 'AbovePrompt',
       props: { hasSurvey: false, isWorking: false, maxRows: 3, view: agentId ? { agentId } : {} } as never,
     })
-    for (const text of has) expect(await ui.find({ type: 'Text', text })).toBeDefined()
-    for (const text of hasNot) expect(await ui.find({ type: 'Text', text })).toBeUndefined()
+    const n = (await ui.findAll({ type: 'Svg' })).length
+    const text = await ui.find({ type: 'Text' }) // dir, branch and model are Text on the terminal
     await ui.unmount()
+    return { n, text }
   }
 
   await $.session.measure({ context: { tokens: 50_000, window: 1_000_000 }, rateLimits: [{ kind: 'five_hour', percentUsed: 20 }], changed: ['context', 'rateLimits'] } as never)
-  await sees(undefined, [], ['skills', 'main', ' · Opus 5.5 1M', 'ctx 50K', '5h 20%'])
+  expect((await pills()).n).toBe(0) // calm: nothing of ours
   await $.session.measure({ context: { tokens: 187_400, window: 1_000_000 }, rateLimits: [{ kind: 'five_hour', percentUsed: 71 }], changed: ['context', 'rateLimits'] } as never)
-  await sees(undefined, ['ctx 187K', '5h 71%'], ['skills', 'main'])
-  await sees('a1', ['5h 71%'], ['ctx 187K', 'skills'])
-  const ui = await $.ui.mount({
-    plugin: 'session-bar', surface: 'desktop', component: 'AbovePrompt',
-    props: { hasSurvey: false, isWorking: false, maxRows: 3, view: {} } as never,
-  })
-  expect(await ui.find({ type: 'Svg' })).toBeDefined() // the ring drawn beside the text
-  await ui.unmount()
+  expect(await pills()).toEqual({ n: 2, text: undefined }) // ctx and 5h pills, no dir, branch or model text
+  expect((await pills('a1')).n).toBe(1) // a subagent in view: the 5h pill only, no ctx
   expect(spawns).toBe(0)
 })

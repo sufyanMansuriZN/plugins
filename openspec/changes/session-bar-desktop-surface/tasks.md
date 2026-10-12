@@ -25,6 +25,13 @@
 - [x] 4.3 Update the earlier desktop tests (2.1, 2.2, 2.4) from text pills to ring badges. Verify: the full test file and `tsc --noEmit` pass.
 - [x] 4.4 Bump `plugin.json` to 0.12.0, commit and push, run `claude plugin marketplace update plugins && claude plugin update session-bar`, and restart Desktop. Verify: with ctx past 150K, a ring badge shows beside `ctx` text, the ring and text sit on one baseline, and it reads in light and dark.
 
+## 5. Pills with hover (0.13.0)
+
+- [x] 5.1 Rework `desktopSegments` to build all candidate badges (ctx without label, windows with dim label and bold value, countdown on 5h only), return none while all are calm and all once one needs attention, each carrying its level, share and hover text. Verify: unit tests cover calm, one attention, ctx label absent, 5h-only countdown, and hover text for ctx and a window.
+- [x] 5.2 Replace `ring` with a `pill(badge)` helper returning the SVG source and width: rounded rect, ring, text, `<title>`, and a `prefers-color-scheme` style. Verify: unit tests find the ring arc share, the tint per level, the neutral fill when calm, the title, and both color schemes.
+- [x] 5.3 Draw each pill in the hook as an interactive `Svg`. Verify: the desktop mount test finds an `Svg` per pill and none when calm, and `tsc --noEmit` and the full test file pass.
+- [ ] 5.4 Bump `plugin.json` to 0.13.0, commit and push after the user's go-ahead, update the plugin, restart Desktop. Verify with a screenshot: the pills are rounded, text is not clipped, hover shows the card, and it reads in light and dark.
+
 ## Workflow follow-up
 
 - Archive the change after the Desktop check passes.

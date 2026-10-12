@@ -14,11 +14,15 @@ Inside a git repository the bar SHALL show the current branch, dimmed, after the
 - **THEN** the bar shows no branch segment
 
 ### Requirement: Desktop shows only what the app hides
-On the desktop surface the bar SHALL NOT show the directory or the branch, which the app shows in its changes band once a file is edited, nor the model, which the composer footer shows. It SHALL show a context or usage segment only while that segment needs attention, and nothing else.
+On the desktop surface the bar SHALL NOT show the directory or the branch, which the app shows in its changes band once a file is edited, nor the model, which the composer footer shows. It SHALL show the context and usage segments only while at least one of them needs attention, and then all of them.
 
 #### Scenario: Calm session on Desktop
 - **WHEN** the desktop surface draws the bar and no segment needs attention
 - **THEN** the hook adds no band of its own, and no directory, branch, model, context or usage segment shows
+
+#### Scenario: One segment needs attention
+- **WHEN** the desktop surface draws the bar and only the context needs attention
+- **THEN** the context pill and the 5h, 7d and per-model pills all show, and only the context pill is tinted
 
 #### Scenario: Terminal unchanged
 - **WHEN** the terminal surface draws the same session
@@ -26,19 +30,30 @@ On the desktop surface the bar SHALL NOT show the directory or the branch, which
 
 #### Scenario: Subagent in view on Desktop
 - **WHEN** the desktop surface draws the bar with a subagent's transcript in view and the 5h window needs attention
-- **THEN** the bar shows only the 5h ring badge, and no context segment
+- **THEN** the usage pills show and no context pill does
 
-### Requirement: Desktop attention badge
-On the desktop surface a segment that needs attention SHALL be a ring badge: a small ring whose filled arc is the share used, in orange or vermillion, followed by its label, value and countdown in the app's own text color. It SHALL NOT use a filled background or Powerline glyphs.
+### Requirement: Desktop pills
+On the desktop surface each segment SHALL be a rounded pill holding a ring whose filled arc is the share used, then its text. The context pill SHALL show only its token count, with no `ctx` label. A usage pill SHALL show a dim label then a bold percentage, and only the 5h pill SHALL add its countdown. A segment needing attention SHALL be tinted orange or vermillion; a calm one SHALL be neutral.
 
-#### Scenario: A window ahead of pace on Desktop
-- **WHEN** the desktop surface draws the bar and the 5h window is 71% used with 30% of its time elapsed
-- **THEN** the bar shows only a ring badge with a vermillion arc filled 71%, followed by `5h 71%` and its countdown
+#### Scenario: Context needing attention
+- **WHEN** the context holds 213,000 tokens of a 1,000,000-token window
+- **THEN** its pill is orange, shows `213K` with no `ctx` text, and its ring fills 85% of the way to the vermillion threshold
 
-#### Scenario: Context past the warn point on Desktop
-- **WHEN** the desktop surface draws the bar and the context holds 187,400 tokens of a 1,000,000-token window
-- **THEN** the bar shows only a ring badge with an orange arc followed by `ctx 187K`, the arc filled by tokens against the vermillion threshold
+#### Scenario: Usage pills
+- **WHEN** the 5h window is 15% used with 4h13m left and the 7d window is 76% used
+- **THEN** the 5h pill shows `5h 15% 4h13m` and the 7d pill shows `7d 76%` with no countdown
 
-#### Scenario: Two segments need attention
-- **WHEN** the desktop surface draws the bar and both context and the 5h window need attention
-- **THEN** two ring badges show side by side, context first
+#### Scenario: Calm pills are neutral
+- **WHEN** a pill's segment does not need attention but another does
+- **THEN** that pill has a neutral fill and a gray arc
+
+### Requirement: Desktop pill hover
+On the desktop surface each pill SHALL show on hover the segment's full name, its value, its reset time where it has one, and for a usage window whether it is on pace.
+
+#### Scenario: Usage window hover
+- **WHEN** the pointer is over the 5h pill and the window is 15% used with 4h13m left and on pace
+- **THEN** the hover text names the session limit, 15% used, resets in 4h13m, and on pace
+
+#### Scenario: Context hover
+- **WHEN** the pointer is over the context pill holding 213,000 tokens of a 1,000,000-token window
+- **THEN** the hover text names the context and reads 213K of 1M tokens

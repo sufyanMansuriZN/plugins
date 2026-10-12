@@ -159,31 +159,72 @@ export const segments = (b: BarInput, tier: Tier): Run[] => {
   return groups.flatMap((g, i) => i ? [{ text: '   ' }, ...g] : g)
 }
 
-// Desktop already shows dir, branch, model, context and usage (header, changes band, footer, ring popover), so only
-// what needs attention is drawn: a ring badge each (a ring filled to the share used, then the text), no cell-grid bar
+// Desktop already shows dir, branch, model, context and usage (header, changes band, footer, ring popover), so the
+// mod draws nothing while all is calm; once one segment needs attention, all show as pills (a lone one looks empty).
 // share: 0-100. For ctx it runs to the hot threshold like the terminal bar, so a full ring means hot.
-export type Badge = { text: string; share: number; level: NonNullable<Level> }
+export type Badge = { label?: string; value: string; after?: string; share: number; level: Level; tip: string }
+const clamp = (n: number) => Math.min(100, Math.max(0, n))
+const WINDOW_NAMES: Record<string, string> = { '5h': 'Session limit', '7d': 'Weekly, all models' }
+
 export const desktopSegments = (b: BarInput): Badge[] => {
-  const badges: Badge[] = []
-  const add = (level: Level, text: string, share: number) => {
-    if (level) badges.push({ text, level, share: Math.min(100, Math.max(0, share)) })
+  const all: Badge[] = []
+  if (b.ctx) {
+    all.push({
+      value: tokensText(b.ctx.tokens), share: clamp((b.ctx.tokens / ctxHot(b.ctx)) * 100), level: ctxBand(b.ctx),
+      tip: `Context: ${tokensText(b.ctx.tokens)} of ${tokensText(b.ctx.window)} tokens`,
+    })
   }
-  if (b.ctx) add(ctxBand(b.ctx), `ctx ${tokensText(b.ctx.tokens)}`, (b.ctx.tokens / ctxHot(b.ctx)) * 100)
   for (const w of b.windows) {
     const left = w.resetsAt ? Date.parse(w.resetsAt) - b.now : 0
-    add(pace(w, b.now), `${w.label} ${Math.round(w.pct)}%${left > 0 ? ` ${countdown(left)}` : ''}`, w.pct)
+    const level = pace(w, b.now)
+    all.push({
+      label: w.label, value: `${Math.round(w.pct)}%`, share: clamp(w.pct), level,
+      after: w.windowMs === WINDOW_MS.five_hour && left > 0 ? countdown(left) : undefined, // the 5h reset is the one watched
+      tip: [
+        `${WINDOW_NAMES[w.label] ?? `Weekly, ${w.label}`}: ${Math.round(w.pct)}% used`,
+        left > 0 && `resets in ${countdown(left)}`,
+        w.resetsAt && (level ? 'ahead of pace' : 'on pace'),
+      ].filter(Boolean).join(' · '),
+    })
   }
-  return badges
+  return all.some(x => x.level) ? all : []
 }
 
-// An Svg cannot read CSS variables, so the track is a neutral translucent gray that reads on light and dark
-const RING_R = 7
-export const ring = (share: number, level: NonNullable<Level>) => {
+// One Svg per pill: an Svg cannot read CSS variables, so the neutral pill carries a prefers-color-scheme style, and a
+// tinted pill sets dark ink on a light tint, which reads on both. shortcut: width is estimated from the character
+// count (an Svg has no font metrics); the OS scheme stands in for the app's, which differ only when the app is not on auto
+const TINT = {
+  warn: { fill: '#FBE3B0', ink: '#3a2a00', arc: '#B26A00' },
+  hot: { fill: '#F8CDB8', ink: '#4a1700', arc: '#D55E00' },
+} as const
+const RING_R = 7, PILL_H = 28
+const xml = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;')
+
+export const pill = (b: Badge) => {
+  const t = b.level && TINT[b.level]
   const c = 2 * Math.PI * RING_R
-  const arc = +((c * Math.min(100, Math.max(0, share))) / 100).toFixed(2)
-  const circle = (stroke: string, dash = '') =>
-    `<circle cx="9" cy="9" r="${RING_R}" fill="none" stroke="${stroke}" stroke-width="2.5"${dash} stroke-linecap="round"${dash && ' transform="rotate(-90 9 9)"'}/>`
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 18 18">${circle('rgba(127,127,127,.25)')}${arc ? circle(ATTN[level], ` stroke-dasharray="${arc} ${+c.toFixed(2)}"`) : ''}</svg>`
+  const arc = +((c * b.share) / 100).toFixed(2)
+  const text = (b.label ? b.label.length * 6.4 + 5 : 0) + b.value.length * 7.4 + (b.after ? b.after.length * 6.4 + 5 : 0)
+  const width = Math.ceil(10 + 18 + 7 + text + 12)
+  const ink = t ? ` fill="${t.ink}"` : ' class="i"'
+  const dim = t ? ` fill="${t.ink}" fill-opacity=".7"` : ' class="d"'
+  const ring = (stroke: string, extra = '') =>
+    `<circle cx="19" cy="14" r="${RING_R}" fill="none" ${stroke} stroke-width="2.5" stroke-linecap="round"${extra}/>`
+  return {
+    width,
+    source: `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${PILL_H}" viewBox="0 0 ${width} ${PILL_H}">`
+      + `<title>${xml(b.tip)}</title>`
+      + '<style>.i{fill:#1f1f1e}.d{fill:#6b6b6b}.n{fill:rgba(127,127,127,.14);stroke:rgba(127,127,127,.3)}.g{stroke:rgba(127,127,127,.75)}'
+      + '@media (prefers-color-scheme:dark){.i{fill:#f0efe9}.d{fill:#a8a79f}}</style>'
+      + `<rect x=".5" y=".5" width="${width - 1}" height="${PILL_H - 1}" rx="${PILL_H / 2 - .5}" ${t ? `fill="${t.fill}"` : 'class="n"'}/>`
+      + ring(t ? 'stroke="rgba(0,0,0,.15)"' : 'stroke="rgba(127,127,127,.25)"')
+      + (arc ? ring(t ? `stroke="${t.arc}"` : 'class="g"', ` stroke-dasharray="${arc} ${+c.toFixed(2)}" transform="rotate(-90 19 14)"`) : '')
+      + `<text x="35" y="18.5" font-size="13" font-family="system-ui,-apple-system,sans-serif">`
+      + (b.label ? `<tspan font-size="12"${dim}>${xml(b.label)} </tspan>` : '')
+      + `<tspan font-weight="500"${ink}>${xml(b.value)}</tspan>`
+      + (b.after ? `<tspan font-size="12" dx="5"${dim}>${xml(b.after)}</tspan>` : '')
+      + '</text></svg>',
+  }
 }
 
 export const width = (runs: Run[]) => runs.reduce((n, r) => n + [...r.text].length, 0)
@@ -290,17 +331,15 @@ export const register: Register = on => {
     if (e.surface === 'desktop') {
       const badges = desktopSegments({ dir: '', ...shown, windows, now })
       if (!badges.length) return next(e)
-      const { Box, Text, Svg } = $.ui.resolve(e)
+      const { Box, Svg } = $.ui.resolve(e)
       const below = await next(e)
       return (
         <Box flexDirection="column">
-          <Box gap={3}>
-            {badges.map(({ text, share, level }) => (
-              <Box alignItems="center" gap={1}>
-                <Svg source={ring(share, level)} alt={`${text}, ${level === 'hot' ? 'high' : 'rising'}`} width={18} height={18} />
-                <Text>{text}</Text>
-              </Box>
-            ))}
+          <Box gap={1}>
+            {badges.map(badge => {
+              const { source, width } = pill(badge)
+              return <Svg source={source} alt={badge.tip} width={width} height={PILL_H} isInteractive />
+            })}
           </Box>
           {below}
         </Box>

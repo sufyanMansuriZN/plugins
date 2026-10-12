@@ -36,9 +36,16 @@ The hook in `plugins/session-bar/hooks/register.tsx` builds `Run[]` (`segments`,
 
 9. **No tooltip or press in this change.** `Svg` `isInteractive` would allow a `<title>` tooltip, and a `Button` could open `/usage`. Both add a sandboxed frame or an unconfirmed press target, so they are left for a later change.
 
+10. **Pills replace the 0.12.0 badges (decisions 8 and 9 superseded).** A 28px-high rounded pill is one `Svg` per segment, with `isInteractive` so a `<title>` tooltip shows on hover. Text lives inside the image, so its color cannot follow the app's theme directly. The SVG carries its own `prefers-color-scheme` style: dark text on a light neutral fill, light text on a dark one; tinted pills use a fixed light tint with dark text, which reads on both. This follows the OS scheme, which matches the app only when the app is on `auto`. Width is estimated from the character count (no font metrics in an SVG).
+
+11. **Show all pills once any needs attention.** A lone pill in the strip looked empty. `desktopSegments` builds every candidate (ctx if there is a reading, each window) and returns none while all are calm, otherwise all. Tint follows the segment's own level.
+
+12. **Hover text is built from the segment, not stored.** Name (`Context`, `Session limit`, `Weekly, all models`, `Weekly, <model>`), value, reset time where there is one, and pace (`on pace` or `ahead of pace`) for windows from the same `paceBand` the color uses.
+
 ## Risks / Trade-offs
 
-- [The `Svg` ring may draw at the wrong size or baseline next to the text] → set `width` and `height` explicitly (18) and check live; fall back to the 0.11.0 text pill.
+- [Estimated pill width may clip or pad the text] → 6.6px per character plus padding; check live and adjust.
+- [`isInteractive` draws a sandboxed frame, so hover or sizing may differ from an image] → check live; without hover the pills still show their value.
 - [A Svg is an image, so it cannot follow a theme change] → the arc uses mid-tone attention colors and a neutral translucent track, which read on light and dark.
 - [A calm Desktop shows nothing, so the user may think the mod is off] → accepted: a pill appearing is the signal. The terminal bar is unchanged. Say so in the README if it confuses.
 - [`e.surface` value for Desktop may differ at runtime from the types] → the mount test names `desktop`; check once live.

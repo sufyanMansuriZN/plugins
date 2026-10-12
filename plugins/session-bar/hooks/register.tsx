@@ -11,7 +11,6 @@ const ON_ATTN = '#191919'
 
 const limits = atom({ plugin: 'session-bar', key: 'limits' } as const, [] as Limits)
 const weekly = atom({ plugin: 'session-bar', key: 'weekly' } as const, [] as Weekly)
-const fetchedAt = atom({ plugin: 'session-bar', key: 'fetchedAt' } as const, 0)
 const ctx = atom({ plugin: 'session-bar', key: 'ctx' } as const, undefined as Ctx | undefined)
 const agentModels = atom({ plugin: 'session-bar', key: 'agentModels' } as const, {} as AgentModels)
 const tick = atom({ plugin: 'session-bar', key: 'tick' } as const, 0) // bumped each minute so countdowns move while idle
@@ -261,9 +260,8 @@ export const minuteKey = (windows: Win[], now: number, countdowns = true) =>
 const refreshUsage = async ($: EngineInterface, force = false) => {
   try {
     const now = await $.clock.now()
-    if (!force && now - (await read($, fetchedAt)) < 300_000) return
-    await update($, fetchedAt, () => now)
-    await $.store.set('fetchedAt', now) // claim the window so overlapping refreshes don't all fetch
+    if (!force && now - (((await $.store.get('fetchedAt')) as number | undefined) ?? 0) < 300_000) return
+    await $.store.set('fetchedAt', now) // claim the window so overlapping refreshes don't all fetch; store only, a state write redraws
     const auth = (await $.session.authorize())?.handle
     if (!auth) return
     const r = await $.http.fetch('https://api.anthropic.com/api/oauth/usage', {
@@ -371,7 +369,7 @@ export const register: Register = on => {
               <Box gap={1}>
                 {group.map(badge => {
                   const { source, width } = pill(badge)
-                  return <Svg source={source} alt={badge.tip} width={width} height={PILL_H} isInteractive />
+                  return <Svg source={source} alt={badge.tip} width={width} height={PILL_H} />
                 })}
               </Box>
             ))}

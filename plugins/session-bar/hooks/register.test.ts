@@ -52,6 +52,7 @@ test('row is always visible and fills in after a turn', async ($, on) => {
   on('session.start', async (_$, e) => e as never)
   on('session.measure', async (_$, e) => ({ changed: e.changed }))
   on('turn.complete', async () => ({ text: '' }))
+  on('store.get', async () => ({ value: undefined })) // the 5-minute gate reads the store
   on('store.set', async () => ({ value: undefined }))
 
   for (const surface of ['terminal', 'desktop'] as const) {
@@ -452,6 +453,36 @@ test('an unchanged reading is not written, so it does not redraw', async ($, on)
   writes.length = 0
   await measure(100_001, 21) // only the window moved
   expect(writes).toEqual(['limits'])
+})
+
+test('a usage fetch writes no state when nothing changed, and the 5-minute gate holds', async ($, on) => {
+  let fetches = 0, now = 1e12
+  const kept: Record<string, unknown> = {}
+  const writes: string[] = []
+  on('session.authorize', async () => ({ value: { handle: 'h', kind: 'bearer' } }))
+  on('http.fetch', async () => { fetches++; return { value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ limits: [
+    { kind: 'session', percent: 49, resets_at: '2099-01-01T00:00:00Z', scope: null },
+  ] }) } } })
+  on('clock.now', async () => ({ value: now }))
+  on('session.start', async (_$, e) => e as never)
+  on('clock.every', async () => ({ value: undefined }) as never)
+  on('turn.complete', async () => ({ text: '' }))
+  on('store.get', async (_$, e) => ({ value: kept[(e as { key: string }).key] }))
+  on('store.set', async (_$, e) => { kept[(e as { key: string }).key] = (e as { value: unknown }).value; return { value: undefined } })
+  on('state.set', async (_$, e, next) => { writes.push((e as { key: string }).key); return next(e) })
+  const turn = () => $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 't', reason: 'answer' })
+
+  await turn() // nothing stored: fetches, and the new limits are a real change
+  expect(fetches).toBe(1)
+  expect(writes).toEqual(['limits'])
+  writes.length = 0
+  now += 60_000
+  await turn() // inside the window: no fetch
+  expect(fetches).toBe(1)
+  now += 300_000
+  await turn() // window passed: fetches, same limits, so no write at all
+  expect(fetches).toBe(2)
+  expect(writes).toEqual([])
 })
 
 test('a minute tick is only worth a redraw when something on screen moved', () => {

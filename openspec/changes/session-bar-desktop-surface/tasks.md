@@ -33,6 +33,11 @@
 - [x] 5.4 Bump `plugin.json` to 0.13.0, commit and push after the user's go-ahead, update the plugin, restart Desktop. Verified on screen (0.13.2): pills are rounded and unclipped, hover shows the card, and the pills read in light and dark.
 - [x] 5.5 Fix the 5h pill's right padding (countdown width estimate raised from 6.4 to 7.6 px per character, measured from a live screenshot) and align the usage pills left and the context pill right. Verify: the full test file and `tsc --noEmit` pass; confirm on screen after release.
 
+## 6. Fewer redraws (0.13.3)
+
+- [x] 6.1 Skip state writes when a reading is unchanged (`session.measure` for limits and context, the usage fetch, `agent.spawn`) and tick each minute only when a countdown or pace band moved. Verified by tests: a repeated measurement writes nothing, a moved context writes only context, a moved window writes only limits, and the minute key changes only when a countdown or pace band does.
+- [ ] 6.2 Release 0.13.3 after the user's go-ahead, update the plugin, restart Desktop. Verify: the user reports how often the bar still flickers. If it still flickers, the interactive `Svg` frames rebuild on each redraw and hover must be traded for a steady bar.
+
 ## Workflow follow-up
 
 - Archive the change after the Desktop check passes.

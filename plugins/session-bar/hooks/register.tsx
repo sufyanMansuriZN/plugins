@@ -161,8 +161,9 @@ export const segments = (b: BarInput, tier: Tier): Run[] => {
 
 // Desktop already shows dir, branch, model, context and usage (header, changes band, footer, ring popover), so the
 // mod draws nothing while all is calm; once one segment needs attention, all show as pills (a lone one looks empty).
-// share: 0-100. For ctx it runs to the hot threshold like the terminal bar, so a full ring means hot.
-export type Badge = { label?: string; value: string; after?: string; share: number; level: Level; tip: string }
+// share: 0-100. For ctx it runs to the hot threshold like the terminal bar, so a full pill means hot.
+export type Kind = 'ctx' | '5h' | '7d' | 'model'
+export type Badge = { kind: Kind; label?: string; value: string; share: number; level: Level; tip: string }
 const clamp = (n: number) => Math.min(100, Math.max(0, n))
 const WINDOW_NAMES: Record<string, string> = { '5h': 'Session limit', '7d': 'Weekly, all models' }
 
@@ -170,7 +171,7 @@ export const desktopSegments = (b: BarInput): Badge[] => {
   const all: Badge[] = []
   if (b.ctx) {
     all.push({
-      value: tokensText(b.ctx.tokens), share: clamp((b.ctx.tokens / ctxHot(b.ctx)) * 100), level: ctxBand(b.ctx),
+      kind: 'ctx', value: tokensText(b.ctx.tokens), share: clamp((b.ctx.tokens / ctxHot(b.ctx)) * 100), level: ctxBand(b.ctx),
       tip: `Context: ${tokensText(b.ctx.tokens)} of ${tokensText(b.ctx.window)} tokens`,
     })
   }
@@ -178,8 +179,8 @@ export const desktopSegments = (b: BarInput): Badge[] => {
     const left = w.resetsAt ? Date.parse(w.resetsAt) - b.now : 0
     const level = pace(w, b.now)
     all.push({
+      kind: w.label === '5h' || w.label === '7d' ? w.label : 'model',
       label: w.label, value: `${Math.round(w.pct)}%`, share: clamp(w.pct), level,
-      after: w.windowMs === WINDOW_MS.five_hour && left > 0 ? countdown(left) : undefined, // the 5h reset is the one watched
       tip: [
         `${WINDOW_NAMES[w.label] ?? `Weekly, ${w.label}`}: ${Math.round(w.pct)}% used`,
         left > 0 && `resets in ${countdown(left)}`,
@@ -194,35 +195,46 @@ export const desktopSegments = (b: BarInput): Badge[] => {
 // tinted pill sets dark ink on a light tint, which reads on both. shortcut: width is estimated from the character
 // count (an Svg has no font metrics); the OS scheme stands in for the app's, which differ only when the app is not on auto
 const TINT = {
-  warn: { fill: '#FBE3B0', ink: '#3a2a00', arc: '#B26A00' },
-  hot: { fill: '#F8CDB8', ink: '#4a1700', arc: '#D55E00' },
+  warn: { fill: '#FBE3B0', ink: '#3a2a00', bar: '#B26A00' },
+  hot: { fill: '#F8CDB8', ink: '#4a1700', bar: '#D55E00' },
 } as const
-const RING_R = 7, PILL_H = 28
+const PILL_H = 28, ICON = 18, ICON_STROKE = 1.5
 const xml = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;')
+
+// Tabler-style outline paths in a 24x24 box; color per kind: light, dark, and the darker one used on a tint
+const GLYPH: Record<Kind, { d: string; color: [string, string, string] }> = {
+  ctx: { d: '<path d="M12 4l-8 4l8 4l8-4z"/><path d="M4 12l8 4l8-4"/><path d="M4 16l8 4l8-4"/>', color: ['#993C1D', '#F0997B', '#712B13'] },
+  '5h': { d: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/>', color: ['#185FA5', '#85B7EB', '#0C447C'] },
+  '7d': { d: '<path d="M4 7a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><path d="M16 3v4M8 3v4M4 11h16"/>', color: ['#534AB7', '#AFA9EC', '#3C3489'] },
+  model: { d: '<path d="M16 18a2 2 0 0 1 2 2a2 2 0 0 1 2-2a2 2 0 0 1-2-2a2 2 0 0 1-2 2zM16 6a2 2 0 0 1 2 2a2 2 0 0 1 2-2a2 2 0 0 1-2-2a2 2 0 0 1-2 2zM9 18a6 6 0 0 1 6-6a6 6 0 0 1-6-6a6 6 0 0 1-6 6a6 6 0 0 1 6 6z"/>', color: ['#0F6E56', '#5DCAA5', '#085041'] },
+}
 
 export const pill = (b: Badge) => {
   const t = b.level && TINT[b.level]
-  const c = 2 * Math.PI * RING_R
-  const arc = +((c * b.share) / 100).toFixed(2)
-  const text = (b.label ? b.label.length * 6.4 + 5 : 0) + b.value.length * 7.4 + (b.after ? b.after.length * 7.6 + 5 : 0) // measured live: 6.4 left the 5h pill ~7px short on the right
-  const width = Math.ceil(10 + 18 + 7 + text + 12)
+  const g = GLYPH[b.kind]
+  const text = (b.label ? b.label.length * 6.4 + 5 : 0) + b.value.length * 7.4 // measured live: 6.4 left the 5h pill ~7px short on the right
+  const width = Math.ceil(12 + ICON + 7 + text + 12)
   const ink = t ? ` fill="${t.ink}"` : ' class="i"'
   const dim = t ? ` fill="${t.ink}" fill-opacity=".7"` : ' class="d"'
-  const ring = (stroke: string, extra = '') =>
-    `<circle cx="19" cy="14" r="${RING_R}" fill="none" ${stroke} stroke-width="2.5" stroke-linecap="round"${extra}/>`
+  const scale = ICON / 24
+  const kinds = (Object.keys(GLYPH) as Kind[])
   return {
     width,
     source: `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${PILL_H}" viewBox="0 0 ${width} ${PILL_H}">`
       + `<title>${xml(b.tip)}</title>`
-      + '<style>.i{fill:#1f1f1e}.d{fill:#6b6b6b}.n{fill:rgba(127,127,127,.14);stroke:rgba(127,127,127,.3)}.g{stroke:rgba(127,127,127,.75)}'
-      + '@media (prefers-color-scheme:dark){.i{fill:#f0efe9}.d{fill:#a8a79f}}</style>'
+      + '<style>.i{fill:#1f1f1e}.d{fill:#6b6b6b}.n{fill:rgba(127,127,127,.14);stroke:rgba(127,127,127,.3)}'
+      + kinds.map(k => `.k-${k}{stroke:${GLYPH[k].color[0]}}`).join('')
+      + '@media (prefers-color-scheme:dark){.i{fill:#f0efe9}.d{fill:#a8a79f}'
+      + kinds.map(k => `.k-${k}{stroke:${GLYPH[k].color[1]}}`).join('') + '}</style>'
+      + `<clipPath id="c"><rect x=".5" y=".5" width="${width - 1}" height="${PILL_H - 1}" rx="${PILL_H / 2 - .5}"/></clipPath>`
       + `<rect x=".5" y=".5" width="${width - 1}" height="${PILL_H - 1}" rx="${PILL_H / 2 - .5}" ${t ? `fill="${t.fill}"` : 'class="n"'}/>`
-      + ring(t ? 'stroke="rgba(0,0,0,.15)"' : 'stroke="rgba(127,127,127,.25)"')
-      + (arc ? ring(t ? `stroke="${t.arc}"` : 'class="g"', ` stroke-dasharray="${arc} ${+c.toFixed(2)}" transform="rotate(-90 19 14)"`) : '')
-      + `<text x="35" y="18.5" font-size="13" font-family="system-ui,-apple-system,sans-serif">`
+      + `<rect width="${+((width * b.share) / 100).toFixed(2)}" height="${PILL_H}" clip-path="url(#c)" `
+      + (t ? `fill="${t.bar}" fill-opacity=".35"` : 'fill="rgb(127,127,127)" fill-opacity=".2"') + '/>'
+      + `<g transform="translate(12 ${(PILL_H - ICON) / 2}) scale(${scale})" fill="none" stroke-width="${+(ICON_STROKE / scale).toFixed(2)}" `
+      + `stroke-linecap="round" stroke-linejoin="round" ${t ? `stroke="${g.color[2]}"` : `class="k-${b.kind}"`}>${g.d}</g>`
+      + `<text x="${12 + ICON + 7}" y="18.5" font-size="13" font-family="system-ui,-apple-system,sans-serif">`
       + (b.label ? `<tspan font-size="12"${dim}>${xml(b.label)} </tspan>` : '')
       + `<tspan font-weight="500"${ink}>${xml(b.value)}</tspan>`
-      + (b.after ? `<tspan font-size="12" dx="5"${dim}>${xml(b.after)}</tspan>` : '')
       + '</text></svg>',
   }
 }
@@ -238,6 +250,19 @@ export const layout = (b: BarInput, columns = Infinity): Run[] => {
   return segments(b, 4)
 }
 
+// update() always writes and every write redraws, so a reading that has not changed must not reach it
+export const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
+
+export const toWindows = (ls: Limits, ws: Weekly, now: number): Win[] => [
+  ...fresh(ls, now).map(l => ({ label: limitText(l), pct: l.percentUsed, resetsAt: l.resetsAt, windowMs: WINDOW_MS[l.kind] })),
+  ...fresh(ws, now).map(w => ({ label: w.name, pct: w.percent, resetsAt: w.resetsAt, windowMs: WEEK })),
+]
+
+// what a passing minute can change on screen: each window's pace band, and its countdown text where one is drawn
+// (the terminal draws it, Desktop does not)
+export const minuteKey = (windows: Win[], now: number, countdowns = true) =>
+  JSON.stringify(windows.map(w => [w.label, countdowns && w.resetsAt && countdown(Date.parse(w.resetsAt) - now), pace(w, now)]))
+
 const refreshUsage = async ($: EngineInterface, force = false) => {
   try {
     const now = await $.clock.now()
@@ -251,11 +276,11 @@ const refreshUsage = async ($: EngineInterface, force = false) => {
     })
     if (!r.ok) return
     const u = parseUsage(r.text)
-    if (u.limits.length) {
+    if (u.limits.length && !same(u.limits, await read($, limits))) {
       await update($, limits, () => u.limits)
       await $.store.set('limits', u.limits)
     }
-    if (u.weekly.length) {
+    if (u.weekly.length && !same(u.weekly, await read($, weekly))) {
       await update($, weekly, () => u.weekly)
       await $.store.set('weekly', u.weekly)
     }
@@ -271,8 +296,17 @@ export const register: Register = on => {
     if (ls) await update($, limits, () => fresh(ls as Limits, now))
     if (ws) await update($, weekly, () => fresh(ws as Weekly, now))
     void refreshUsage($, true)
-    // a reload drops this module's timers, so no cancel is kept
-    $.clock.every(60_000, () => void update($, tick, n => n + 1))
+    // a reload drops this module's timers, so no cancel is kept. A tick redraws, so it fires only when a countdown
+    // or pace band moved since the last one
+    let seen = ''
+    $.clock.every(60_000, () => void (async () => {
+      const [ls, ws, now, surfaces] = await Promise.all([read($, limits), read($, weekly), $.clock.now(), $.session.surfaces().catch(() => ['terminal'] as const)]) // unknown surfaces: keep the countdown redraw
+      const key = minuteKey(toWindows(ls, ws, now), now, surfaces.includes('terminal'))
+      if (key !== seen) {
+        seen = key
+        await update($, tick, n => n + 1)
+      }
+    })())
     return next(e)
   })
 
@@ -294,19 +328,24 @@ export const register: Register = on => {
   // an early reading, so the model shows before the subagent's first request; its steps stay the source
   on('agent.spawn', async ($, e, next) => {
     const r = await next(e)
-    if (!r.deny && r.agentId) await update($, agentModels, ms => withModel(ms, r.agentId, r.model))
+    if (!r.deny && r.agentId && (await read($, agentModels))[r.agentId] !== r.model) {
+      await update($, agentModels, ms => withModel(ms, r.agentId, r.model))
+    }
     return r
   })
 
   // pushed after each turn and whenever a window moves a point, so the band redraws live
   on('session.measure', async ($, e, next) => {
     // absent until a request lands: keep the last seen reading so 5h/7d don't blink out
-    if (e.rateLimits.length) {
+    if (e.rateLimits.length && !same(e.rateLimits, await read($, limits))) {
       await update($, limits, () => e.rateLimits)
       await $.store.set('limits', e.rateLimits)
     }
     const { tokens, window } = e.context
-    if (tokens !== undefined && window) await update($, ctx, () => ({ tokens, window }))
+    const c = await read($, ctx)
+    if (tokens !== undefined && window && (c?.tokens !== tokens || c.window !== window)) {
+      await update($, ctx, () => ({ tokens, window }))
+    }
     return next(e)
   })
 
@@ -315,10 +354,7 @@ export const register: Register = on => {
       $.session.root(), $.env.get('HOME'), $.session.model(), read($, ctx), read($, limits), read($, weekly),
       $.clock.now(), read($, tick),
     ])
-    const windows: Win[] = [
-      ...fresh(ls, now).map(l => ({ label: limitText(l), pct: l.percentUsed, resetsAt: l.resetsAt, windowMs: WINDOW_MS[l.kind] })),
-      ...fresh(ws, now).map(w => ({ label: w.name, pct: w.percent, resetsAt: w.resetsAt, windowMs: WEEK })),
-    ]
+    const windows = toWindows(ls, ws, now)
     // a subagent's transcript in view: its type and model; main's ctx and window say nothing about it
     const agentId = e.props.view?.agentId
     let shown: Pick<BarInput, 'agent' | 'model' | 'ctx'> = { model: model ? modelLabel(model, c?.window) : undefined, ctx: c }

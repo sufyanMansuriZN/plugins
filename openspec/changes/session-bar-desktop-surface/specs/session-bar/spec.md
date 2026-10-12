@@ -65,3 +65,22 @@ On the desktop surface each pill SHALL show on hover the segment's full name, it
 #### Scenario: Context hover
 - **WHEN** the pointer is over the context pill holding 213,000 tokens of a 1,000,000-token window
 - **THEN** the hover text names the context and reads 213K of 1M tokens
+
+### Requirement: Redraw only when something on screen changed
+The bar SHALL be redrawn only when a reading differs from the last one, or a countdown or pace band that is on screen has moved. A reading identical to the last SHALL NOT cause a redraw, and a passing minute SHALL NOT cause one when no countdown text or pace band changed.
+
+#### Scenario: Same reading again
+- **WHEN** a measurement arrives with the same context tokens and usage percentages as the last
+- **THEN** the bar is not redrawn
+
+#### Scenario: One value moved
+- **WHEN** a measurement arrives where only the context tokens differ
+- **THEN** only the context reading is updated, and the usage readings are left as they were
+
+#### Scenario: A minute with nothing to show
+- **WHEN** a minute passes and no window's countdown text or pace band changed
+- **THEN** the bar is not redrawn
+
+#### Scenario: A countdown moved
+- **WHEN** a minute passes and the 5h countdown changed from 2h40m to 2h39m
+- **THEN** the bar is redrawn

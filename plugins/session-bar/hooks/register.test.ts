@@ -1,9 +1,9 @@
 import { test, expect, mock } from 'claude-code/testing'
 import {
   band, paceBand, ctxBand, tokensText, shortDir, limitText, parseUsage, fresh, modelLabel, withModel,
-  elapsed, countdown, bar, segments, desktopSegments, pill as desktopPill, layout, width, WINDOW_MS, WEEK,
+  elapsed, countdown, bar, segments, desktopSegments, pill as desktopPill, layout, width, same, minuteKey, WINDOW_MS, WEEK,
 } from './register'
-import type { BarInput, Run } from './register'
+import type { BarInput, Badge, Run } from './register'
 
 test('bands, dir, labels, weekly parse', async () => {
   expect([49, 50, 79, 80].map(band)).toEqual([undefined, 'warn', 'warn', 'hot'])
@@ -343,11 +343,13 @@ test('desktop: nothing while calm; once one needs attention, every pill shows', 
   const win = (label: string, pct: number, hours: number, windowMs: number) =>
     ({ label, pct, resetsAt: new Date(NOW + hours * 3_600_000).toISOString(), windowMs })
   const hot = desktopSegments(input({ windows: [win('5h', 71, 3.5, WINDOW_MS.five_hour!), win('7d', 61, 31, WEEK)] }))
-  expect(hot.map(b => [b.label, b.value, b.after, b.level])).toEqual([
-    [undefined, '120K', undefined, undefined], // ctx: no label, calm but shown
-    ['5h', '71%', '3h30m', 'hot'], // the 5h countdown only
-    ['7d', '61%', undefined, undefined],
+  expect(hot.map(b => [b.kind, b.label, b.value, b.level])).toEqual([
+    ['ctx', undefined, '120K', undefined], // ctx: no label, calm but shown
+    ['5h', '5h', '71%', 'hot'], // no countdown on any pill
+    ['7d', '7d', '61%', undefined],
   ])
+  const kinds = desktopSegments(input({ windows: [win('5h', 71, 3.5, WINDOW_MS.five_hour!), win('Sonnet', 10, 31, WEEK)] }))
+  expect(kinds.map(b => b.kind)).toEqual(['ctx', '5h', 'model'])
   const ctx = (tokens: number) => desktopSegments(input({ ctx: { tokens, window: 1_000_000 } }))[0]!
   expect(ctx(187_400)).toMatchObject({ value: '187K', share: (187_400 / 250_000) * 100, level: 'warn' }) // ring runs to the hot threshold
   expect(ctx(260_000)).toMatchObject({ value: '260K', share: 100, level: 'hot' }) // clamped at full
@@ -365,23 +367,36 @@ test('desktop hover text names the segment, its value, reset and pace', () => {
   expect(desktopSegments(input({ windows: [], ctx: { tokens: 213_000, window: 1_000_000 } }))[0]!.tip).toBe('Context: 213K of 1M tokens')
 })
 
-test('pill: ring arc is the share used, tint by level, neutral when calm, title for hover', () => {
-  const b = { value: '85%', share: 100, level: 'warn' as const, tip: 'a & b <c>' }
-  const arc = (share: number) => /stroke-dasharray="([\d.]+) /.exec(desktopPill({ ...b, share }).source)?.[1]
-  const full = +(2 * Math.PI * 7).toFixed(2)
-  expect(arc(100)).toBe(String(full))
-  expect(arc(50)).toBe(String(+(full / 2).toFixed(2)))
-  expect(arc(0)).toBeUndefined() // only the track
-  expect(desktopPill(b).source).toContain('fill="#FBE3B0"') // warn tint, dark ink
-  expect(desktopPill({ ...b, level: 'hot' }).source).toContain('stroke="#D55E00"')
-  const calm = desktopPill({ ...b, level: undefined }).source
+test('pill: fill is the share used, icon per kind, tint by level, neutral when calm, title for hover', () => {
+  const b: Badge = { kind: 'ctx', value: '85%', share: 100, level: 'warn', tip: 'a & b <c>' }
+  const src = (o: Partial<Badge> = {}) => desktopPill({ ...b, ...o }).source
+  const fillW = (o: Partial<Badge>) => {
+    const p = desktopPill({ ...b, ...o })
+    return { w: +/<rect width="([\d.]+)"/.exec(p.source)![1]!, total: p.width }
+  }
+  const half = fillW({ share: 50 })
+  expect(Math.abs(half.w - half.total / 2)).toBeLessThan(0.01) // the left half of the pill is filled
+  expect(fillW({ share: 100 }).w).toBe(fillW({ share: 100 }).total)
+  expect(fillW({ share: 0 }).w).toBe(0)
+  expect(src()).toContain('fill="#FBE3B0"') // warn tint, dark ink
+  expect(src({ level: 'hot' })).toContain('fill="#D55E00" fill-opacity=".35"')
+  const calm = src({ level: undefined })
   expect(calm).toContain('class="n"') // neutral fill, light and dark by scheme
   expect(calm).toContain('prefers-color-scheme:dark')
   expect(calm).not.toContain('#FBE3B0')
-  expect(desktopPill(b).source).toContain('<title>a &amp; b &lt;c></title>') // escaped
-  const wide = desktopPill({ label: '5h', value: '15%', after: '4h13m', share: 15, level: undefined, tip: '' })
-  expect(wide.width).toBeGreaterThan(desktopPill({ value: '15%', share: 15, level: undefined, tip: '' }).width) // label and countdown widen it
-  expect(desktopPill(b).source).not.toContain('ctx') // no label text on the context pill
+  expect(calm).toContain('fill="rgb(127,127,127)" fill-opacity=".2"')
+  expect(src()).toContain('<title>a &amp; b &lt;c></title>') // escaped
+  const kinds = ['ctx', '5h', '7d', 'model'] as const
+  const paths = kinds.map(kind => /<g [^>]*>(.*?)<\/g>/.exec(src({ kind }))![1])
+  expect(new Set(paths).size).toBe(4) // four different icons
+  expect(calm).toContain('stroke-width="2"') // 1.5px on screen at 18/24 scale
+  expect(src({ kind: '5h' })).toContain('stroke="#0C447C"') // darker shade on a tint
+  expect(src({ kind: '5h', level: undefined })).toContain('class="k-5h"')
+  expect(src({ kind: '5h', level: undefined })).toContain('.k-5h{stroke:#185FA5}') // light; dark is in the media block
+  expect(src({ kind: '5h', level: undefined })).toContain('.k-5h{stroke:#85B7EB}')
+  const wide = desktopPill({ ...b, label: '5h', value: '15%', share: 15, level: undefined, tip: '' })
+  expect(wide.width).toBeGreaterThan(desktopPill({ ...b, value: '15%', share: 15, level: undefined, tip: '' }).width) // the label widens it
+  expect(src()).not.toContain('>ctx') // no label text on the context pill
 })
 
 test('desktop mount: calm draws nothing of ours and spawns no git; attention is a ring badge; a subagent drops ctx', async ($, on) => {
@@ -412,4 +427,45 @@ test('desktop mount: calm draws nothing of ours and spawns no git; attention is 
   expect(await pills()).toEqual({ n: 2, text: undefined }) // ctx and 5h pills, no dir, branch or model text
   expect((await pills('a1')).n).toBe(1) // a subagent in view: the 5h pill only, no ctx
   expect(spawns).toBe(0)
+})
+
+test('an unchanged reading is not written, so it does not redraw', async ($, on) => {
+  on('session.measure', async (_$, e) => ({ changed: e.changed }))
+  on('store.set', async () => ({ value: undefined }))
+  const writes: string[] = []
+  on('state.set', async (_$, e, next) => { writes.push((e as { key: string }).key); return next(e) })
+  const measure = (tokens: number, pct: number) => $.session.measure({
+    context: { tokens, window: 1_000_000 }, rateLimits: [{ kind: 'five_hour', percentUsed: pct }], changed: ['context', 'rateLimits'],
+  } as never)
+
+  await measure(100_000, 20)
+  expect(writes.sort()).toEqual(['ctx', 'limits']) // the first reading writes both
+  writes.length = 0
+  await measure(100_000, 20) // the same again
+  expect(writes).toEqual([])
+  await measure(100_001, 20) // only the context moved
+  expect(writes).toEqual(['ctx'])
+  writes.length = 0
+  await measure(100_001, 21) // only the window moved
+  expect(writes).toEqual(['limits'])
+})
+
+test('a minute tick is only worth a redraw when something on screen moved', () => {
+  expect(same({ a: [1] }, { a: [1] })).toBe(true)
+  expect(same([{ k: 1 }], [{ k: 2 }])).toBe(false)
+  const win = (pct: number, ms: number) => [{ label: '5h', pct, resetsAt: new Date(NOW + ms).toISOString(), windowMs: WINDOW_MS.five_hour! }]
+  const left = 2 * 3_600_000 + 40 * 60_000 + 30_000 // 2h40m30s: countdown() floors to minutes
+  const key = (ms: number, at = NOW) => minuteKey(win(23, ms), at)
+  expect(key(left)).toBe(key(left, NOW + 20_000)) // 20s later: still 2h40m, nothing to redraw
+  expect(key(left)).not.toBe(key(left, NOW + 60_000)) // a minute later: the countdown moved
+  expect(minuteKey([], NOW)).toBe(minuteKey([], NOW + 60_000)) // no windows: nothing ever moves
+})
+
+test('Desktop draws no countdown, so a minute that only moves one is not a redraw', () => {
+  const win = (pct: number, ms: number) => [{ label: '5h', pct, resetsAt: new Date(NOW + ms).toISOString(), windowMs: WINDOW_MS.five_hour! }]
+  const left = 2 * 3_600_000 + 40 * 60_000 + 30_000
+  const key = (at: number, countdowns: boolean, pct = 23) => minuteKey(win(pct, left), at, countdowns)
+  expect(key(NOW, false)).toBe(key(NOW + 60_000, false)) // countdown moved, nothing drawn changed
+  expect(key(NOW, true)).not.toBe(key(NOW + 60_000, true)) // the terminal draws it
+  expect(key(NOW, false, 23)).not.toBe(key(NOW, false, 90)) // a pace band moving still counts
 })

@@ -7,7 +7,7 @@ declare module 'claude-code' {
   interface PluginState {
     'session-bar': {
       limits: Limits; weekly: Weekly; fetchedAt: number; ctx?: Ctx
-      tick: number; agentModels: AgentModels
+      tick: number; agentModels: AgentModels; noPanes: boolean
     }
   }
 }

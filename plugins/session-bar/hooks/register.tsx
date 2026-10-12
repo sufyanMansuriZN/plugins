@@ -14,6 +14,8 @@ const weekly = atom({ plugin: 'session-bar', key: 'weekly' } as const, [] as Wee
 const ctx = atom({ plugin: 'session-bar', key: 'ctx' } as const, undefined as Ctx | undefined)
 const agentModels = atom({ plugin: 'session-bar', key: 'agentModels' } as const, {} as AgentModels)
 const tick = atom({ plugin: 'session-bar', key: 'tick' } as const, 0) // bumped each minute so countdowns move while idle
+const noPanes = atom({ plugin: 'session-bar', key: 'noPanes' } as const, false) // set once Desktop answers a pane open with isPlaced false
+const PANE = 'usage'
 
 // a subagent's model into the map; the same map when main's step or a repeat leaves it as it was
 export const withModel = (ms: AgentModels, agentId: string | undefined, model: string): AgentModels =>
@@ -190,6 +192,47 @@ export const desktopSegments = (b: BarInput): Badge[] => {
   return all
 }
 
+const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+const two = (n: number) => String(n).padStart(2, '0')
+
+// 18:40, or Tue 17:30 when the reset is on another day; the mod's clock follows the machine's zone
+export const resetTime = (resetsAt: string, now: number) => {
+  const d = new Date(Date.parse(resetsAt))
+  const clock = `${two(d.getHours())}:${two(d.getMinutes())}`
+  return d.toDateString() === new Date(now).toDateString() ? clock : `${DAYS[d.getDay()]} ${clock}`
+}
+
+// A row of the usage pane. share and tick are 0-100; tick marks the share of the window already elapsed (or, for the
+// context, the warn threshold on the scale that runs to hot); detail is one dim line
+export type PaneRow = { kind: Kind; name: string; value: string; share: number; tick?: number; level: Level; detail: string }
+
+export const paneRows = (b: BarInput): PaneRow[] => {
+  const rows: PaneRow[] = []
+  if (b.ctx) {
+    const hot = ctxHot(b.ctx)
+    rows.push({
+      kind: 'ctx', name: 'Context', value: tokensText(b.ctx.tokens), share: clamp((b.ctx.tokens / hot) * 100),
+      tick: (CTX_WARN / hot) * 100, level: ctxBand(b.ctx),
+      detail: `of ${tokensText(b.ctx.window)} · warn ${tokensText(CTX_WARN)} · hot ${tokensText(hot)}`,
+    })
+  }
+  for (const w of b.windows) {
+    const level = pace(w, b.now)
+    const timed = w.resetsAt && w.windowMs
+    const left = w.resetsAt ? Date.parse(w.resetsAt) - b.now : 0
+    rows.push({
+      kind: w.label === '5h' || w.label === '7d' ? w.label : 'model',
+      name: WINDOW_NAMES[w.label] ?? `Weekly, ${w.label}`, value: `${Math.round(w.pct)}%`, share: clamp(w.pct),
+      tick: timed ? elapsed(w.resetsAt!, w.windowMs!, b.now) * 100 : undefined, level,
+      detail: [
+        left > 0 && `resets in ${countdown(left)}`, w.resetsAt && resetTime(w.resetsAt, b.now),
+        w.resetsAt && (level ? 'ahead of pace' : 'on pace'),
+      ].filter(Boolean).join(' · '),
+    })
+  }
+  return rows
+}
+
 // One Svg per pill, a meter: shape says which segment, color says severity only. An Svg cannot read CSS variables, so
 // ink comes from a prefers-color-scheme style, and the status colors are translucent so the app's own surface shows
 // through on light and dark. shortcut: width is estimated from the character count (an Svg has no font metrics); the
@@ -231,6 +274,21 @@ export const pill = (b: Badge) => {
       + `<tspan font-weight="500" class="i">${xml(b.value)}</tspan>`
       + '</text></svg>',
   }
+}
+
+// A pane row's meter: the pill's colors and track, a thin tick where the window's elapsed share (or the ctx warn level)
+// falls. Not interactive, like every Svg here.
+const METER_H = 12, METER_W = 280
+export const meter = (r: PaneRow, width: number) => {
+  const color = r.level ? STATUS[r.level] : GRAY
+  const shape = `y="2" width="${width}" height="8" rx="4"`
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${METER_H}" viewBox="0 0 ${width} ${METER_H}">`
+    + '<style>.k{fill:#1f1f1e}.t{fill:#fff;fill-opacity:.75}@media (prefers-color-scheme:dark){.k{fill:#f0efe9}.t{fill-opacity:.07}}</style>'
+    + `<clipPath id="c"><rect ${shape}/></clipPath>`
+    + `<rect ${shape} ${r.level ? `fill="${color}" fill-opacity=".3"` : 'class="t"'} stroke="${color}" stroke-opacity="${r.level ? '.7' : '.3'}"/>`
+    + `<rect y="2" width="${+((width * r.share) / 100).toFixed(2)}" height="8" clip-path="url(#c)" fill="${color}" fill-opacity="${FILL[r.level ?? 'calm']}"/>`
+    + (r.tick === undefined ? '' : `<rect class="k" x="${+((width * r.tick) / 100 - 1).toFixed(2)}" y="0" width="2" height="${METER_H}" rx="1"/>`)
+    + '</svg>'
 }
 
 export const width = (runs: Run[]) => runs.reduce((n, r) => n + [...r.text].length, 0)
@@ -280,6 +338,14 @@ const refreshUsage = async ($: EngineInterface, force = false) => {
   } catch {} // keep the last good rows
 }
 
+// press the button: close the pane if it is open, else open it. A Desktop that places no panes answers isPlaced false;
+// the button then goes away
+const toggleUsagePane = async ($: EngineInterface) => {
+  if ((await $.ui.panes()).some(p => p.id === PANE)) return $.ui.close({ id: PANE })
+  const { isPlaced } = await $.ui.open({ id: PANE, title: 'Usage' })
+  if (!isPlaced) await update($, noPanes, () => true)
+}
+
 export const register: Register = on => {
   // drawing is pure, so usage is fetched at launch rather than on first render
   on('session.start', async ($, e, next) => {
@@ -293,8 +359,9 @@ export const register: Register = on => {
     // or pace band moved since the last one
     let seen = ''
     $.clock.every(60_000, () => void (async () => {
-      const [ls, ws, now, surfaces] = await Promise.all([read($, limits), read($, weekly), $.clock.now(), $.session.surfaces().catch(() => ['terminal'] as const)]) // unknown surfaces: keep the countdown redraw
-      const key = minuteKey(toWindows(ls, ws, now), now, surfaces.includes('terminal'))
+      const [ls, ws, now, surfaces, panes] = await Promise.all([read($, limits), read($, weekly), $.clock.now(), $.session.surfaces().catch(() => ['terminal'] as const), $.ui.panes().catch(() => [])]) // unknown surfaces: keep the countdown redraw
+      // the usage pane draws countdowns too, so while it is open they count
+      const key = minuteKey(toWindows(ls, ws, now), now, surfaces.includes('terminal') || panes.some(p => p.id === PANE))
       if (key !== seen) {
         seen = key
         await update($, tick, n => n + 1)
@@ -342,6 +409,26 @@ export const register: Register = on => {
     return next(e)
   })
 
+  // the Usage button's pane: a meter row per reading, drawn only while open
+  on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e, next) => {
+    if (e.surface !== 'desktop') return next(e) // only the Desktop button opens it
+    const [c, ls, ws, now] = await Promise.all([read($, ctx), read($, limits), read($, weekly), $.clock.now(), read($, tick)])
+    const rows = paneRows({ dir: '', ctx: c, windows: toWindows(ls, ws, now), now })
+    const { Box, Text, Svg } = $.ui.resolve(e)
+    return (
+      <Box flexDirection="column" gap={1}>
+        {rows.map(r => (
+          <Box flexDirection="column">
+            <Box justifyContent="space-between"><Text>{r.name}</Text><Text bold>{r.value}</Text></Box>
+            <Svg source={meter(r, METER_W)} alt={`${r.name}: ${r.value}`} width={METER_W} height={METER_H} />
+            {r.detail && <Text dimColor>{r.detail}</Text>}
+          </Box>
+        ))}
+        {!rows.length && <Text dimColor>Nothing to show yet.</Text>}
+      </Box>
+    )
+  })
+
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const [root, home, model, c, ls, ws, now] = await Promise.all([
       $.session.root(), $.env.get('HOME'), $.session.model(), read($, ctx), read($, limits), read($, weekly),
@@ -360,19 +447,21 @@ export const register: Register = on => {
     if (e.surface === 'desktop') {
       const badges = desktopSegments({ dir: '', ...shown, windows, now })
       if (!badges.length) return next(e)
-      const { Box, Svg } = $.ui.resolve(e)
-      const below = await next(e)
+      const { Box, Svg, Button } = $.ui.resolve(e)
+      const [below, gone] = await Promise.all([next(e), read($, noPanes)])
       return (
         <Box flexDirection="column">
           <Box justifyContent="space-between">
-            {[badges.filter(x => x.label), badges.filter(x => !x.label)].map(group => (
+            {[badges.filter(x => x.label), badges.filter(x => !x.label)].map((group, i) => (
               <Box gap={1}>
                 {group.map(badge => {
                   const { source, width } = pill(badge)
                   // never isInteractive: the engine rebuilds an interactive Svg on every redraw, which flickered the bar on
-                  // send and turn complete, even for one pill
+                  // send and turn complete, even for one pill. A native Button did not (usage-pane spike), so the click is one
+                  // Button beside the pills, not on them
                   return <Svg source={source} alt={badge.tip} width={width} height={PILL_H} />
                 })}
+                {i === 0 && !gone && <Button key="usage" onPress={() => void toggleUsagePane($)}>Usage</Button>}
               </Box>
             ))}
           </Box>

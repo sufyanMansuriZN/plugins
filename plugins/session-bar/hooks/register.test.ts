@@ -1,7 +1,7 @@
 import { test, expect, mock } from 'claude-code/testing'
 import {
   band, paceBand, ctxBand, tokensText, shortDir, limitText, parseUsage, fresh, modelLabel, withModel,
-  elapsed, countdown, bar, segments, desktopSegments, pill as desktopPill, layout, width, same, minuteKey, WINDOW_MS, WEEK,
+  elapsed, countdown, bar, segments, desktopSegments, resetTime, paneRows, meter, pill as desktopPill, layout, width, same, minuteKey, WINDOW_MS, WEEK,
 } from './register'
 import type { BarInput, Badge, Run } from './register'
 
@@ -514,4 +514,99 @@ test('Desktop draws no countdown, so a minute that only moves one is not a redra
   expect(key(NOW, false)).toBe(key(NOW + 60_000, false)) // countdown moved, nothing drawn changed
   expect(key(NOW, true)).not.toBe(key(NOW + 60_000, true)) // the terminal draws it
   expect(key(NOW, false, 23)).not.toBe(key(NOW, false, 90)) // a pace band moving still counts
+})
+
+test('Usage button: beside the pills on Desktop only, opens then closes the pane, gone once Desktop places none', async ($, on) => {
+  let isOpen = false, canPlace = true
+  const calls: string[] = []
+  on('session.root', async () => ({ value: '/home/me/.claude/skills' }))
+  on('env.get', async () => ({ value: '/home/me' }))
+  on('session.model', async () => ({ value: 'claude-opus-5-5' }))
+  on('clock.now', async () => ({ value: 1e12 }))
+  on('session.measure', async (_$, e) => ({ changed: e.changed }))
+  on('process.run', async () => ({ value: { exitCode: 0, stdout: 'main\n', stderr: '' } }) as never)
+  on('ui.render', async () => h('Box', {}) as never)
+  on('store.set', async () => ({ value: undefined }))
+  on('ui.panes', async () => ({ value: isOpen ? [{ id: 'usage', title: 'Usage', isShown: true, isFocused: false, isPlaced: true }] : [] }) as never)
+  on('ui.open', async () => { calls.push('open'); isOpen = canPlace; return { value: { isPlaced: canPlace, reason: 'no panes here' } } as never })
+  on('ui.close', async () => { calls.push('close'); isOpen = false; return { value: undefined } as never })
+  await $.session.measure({ context: { tokens: 50_000, window: 1_000_000 }, rateLimits: [{ kind: 'five_hour', percentUsed: 20 }], changed: ['context', 'rateLimits'] } as never)
+  const mount = (surface: 'desktop' | 'terminal') => $.ui.mount({
+    plugin: 'session-bar', surface, component: 'AbovePrompt',
+    props: { hasSurvey: false, isWorking: false, maxRows: 3, bodyColumns: 120, view: {} } as never,
+  })
+  const buttons = async (surface: 'desktop' | 'terminal') => {
+    const ui = await mount(surface)
+    const found = (await ui.findAll({ type: 'Button' })).map(b => b.key)
+    await ui.unmount()
+    return found
+  }
+
+  expect(await buttons('desktop')).toEqual(['usage'])
+  expect(await buttons('terminal')).toEqual([]) // the terminal bar is unchanged
+  const ui = await mount('desktop')
+  await ui.press({ key: 'usage' })
+  await ui.press({ key: 'usage' })
+  expect(calls).toEqual(['open', 'close']) // a second press closes it
+  canPlace = false
+  await ui.press({ key: 'usage' }) // Desktop places no pane: the button is dropped
+  await ui.unmount()
+  expect(calls).toEqual(['open', 'close', 'open'])
+  expect(await buttons('desktop')).toEqual([])
+})
+
+test('usage pane: a meter and detail per row, one non-interactive Svg each; nothing yet says so', async ($, on) => {
+  on('session.model', async () => ({ value: 'claude-opus-5-5' }))
+  on('clock.now', async () => ({ value: 1e12 }))
+  on('session.measure', async (_$, e) => ({ changed: e.changed }))
+  on('store.set', async () => ({ value: undefined }))
+  const draw = async () => {
+    const ui = await $.ui.mount({ plugin: 'session-bar', surface: 'desktop', component: 'Pane', requestId: 'usage', props: {} as never })
+    const out = { svgs: (await ui.findAll({ type: 'Svg' })).map(s => s.props as { alt: string, isInteractive?: boolean }), empty: await ui.find({ text: 'Nothing to show yet.' }) }
+    await ui.unmount()
+    return out
+  }
+  expect(await draw()).toMatchObject({ svgs: [], empty: expect.anything() })
+  await $.session.measure({ context: { tokens: 50_000, window: 1_000_000 }, rateLimits: [{ kind: 'five_hour', percentUsed: 20 }], changed: ['context', 'rateLimits'] } as never)
+  const { svgs, empty } = await draw()
+  expect(svgs.map(s => [s.alt, !!s.isInteractive])).toEqual([['Context: 50K', false], ['Session limit: 20%', false]])
+  expect(empty).toBeUndefined()
+  const m = meter({ kind: '5h', name: 'x', value: '20%', share: 20, tick: 50, level: 'hot', detail: '' }, 200)
+  expect(m).toContain('width="40"') // the fill is the share of the meter
+  expect(m).toContain('x="99"') // the tick sits at its share, centered
+  expect(m).toContain('fill="#d03b3b"') // the pill's hot color
+  expect(meter({ kind: '5h', name: 'x', value: '1%', share: 1, level: undefined, detail: '' }, 200)).not.toContain('class="k"') // no tick without one
+})
+
+test('reset time: a clock time today, a weekday and clock time on another day', () => {
+  const now = new Date(2026, 9, 12, 15, 26).getTime() // local time, so the test holds in any zone
+  const at = (...t: [number, number, number, number, number]) => new Date(...t).toISOString()
+  expect(resetTime(at(2026, 9, 12, 18, 40), now)).toBe('18:40')
+  expect(resetTime(at(2026, 9, 12, 9, 5), now)).toBe('09:05') // zero-padded
+  expect(resetTime(at(2026, 9, 13, 17, 30), now)).toBe('Tue 17:30') // 2026-10-13 is a Tuesday
+})
+
+test('usage pane rows: percent, elapsed tick, countdown, reset time, pace; context against its thresholds', () => {
+  const now = new Date(2026, 9, 12, 15, 26).getTime()
+  const iso = (ms: number) => new Date(now + ms).toISOString()
+  const reset = new Date(2026, 9, 12, 18, 40).toISOString()
+  const rows = (windows: BarInput['windows'], ctx?: BarInput['ctx']) => paneRows(input({ now, ctx, windows }))
+  const on = rows([{ label: '5h', pct: 24, resetsAt: reset, windowMs: WINDOW_MS.five_hour }])[0]!
+  expect(on).toMatchObject({ kind: '5h', name: 'Session limit', value: '24%', share: 24, level: undefined })
+  expect(on.detail).toBe('resets in 3h14m · 18:40 · on pace')
+  expect(Math.round(on.tick! * 100) / 100).toBe(35.33) // 1h46m of the 5h gone
+  const ahead = rows([{ label: '5h', pct: 71, resetsAt: iso(3.5 * 3_600_000), windowMs: WINDOW_MS.five_hour }])[0]!
+  expect(ahead.level).toBe('hot')
+  expect(ahead.detail).toContain('ahead of pace')
+  const fable = rows([{ label: 'Fable', pct: 65, resetsAt: iso(31 * 3_600_000), windowMs: WEEK }])[0]!
+  expect(fable).toMatchObject({ kind: 'model', name: 'Weekly, Fable', value: '65%' })
+  const bare = rows([{ label: '5h', pct: 55 }])[0]! // no reset time: no tick, countdown, clock time or pace note
+  expect(bare).toMatchObject({ value: '55%', tick: undefined, detail: '', level: 'warn' })
+  const c = rows([], { tokens: 187_400, window: 1_000_000 })[0]!
+  expect(c).toMatchObject({ kind: 'ctx', name: 'Context', value: '187K', level: 'warn' })
+  expect(c.detail).toBe('of 1M · warn 150K · hot 250K')
+  expect(Math.round(c.share * 100) / 100).toBe(74.96) // the scale runs to hot
+  expect(c.tick).toBe(60) // warn at 150K of 250K
+  expect(rows([], { tokens: 170_000, window: 200_000 })[0]!.detail).toBe('of 200K · warn 150K · hot 160K') // a 200K window caps hot
+  expect(paneRows(input({ ctx: undefined, windows: [] }))).toEqual([]) // nothing to show
 })

@@ -36,7 +36,7 @@
 ## 6. Fewer redraws (0.13.3)
 
 - [x] 6.1 Skip state writes when a reading is unchanged (`session.measure` for limits and context, the usage fetch, `agent.spawn`) and tick each minute only when a countdown or pace band moved. Verified by tests: a repeated measurement writes nothing, a moved context writes only context, a moved window writes only limits, and the minute key changes only when a countdown or pace band does.
-- [ ] 6.2 Release 0.13.3 after the user's go-ahead, update the plugin, restart Desktop. Verify: the user reports how often the bar still flickers. If it still flickers, the interactive `Svg` frames rebuild on each redraw and hover must be traded for a steady bar.
+- [x] 6.2 Released inside 0.14.0 (`3956d7b`) with the icons change, updated the plugin. The flicker check moves to `session-bar-desktop-icons` task 3.2. Verify: the user reports how often the bar still flickers. If it still flickers, the interactive `Svg` frames rebuild on each redraw and hover must be traded for a steady bar.
 
 ## Workflow follow-up
 

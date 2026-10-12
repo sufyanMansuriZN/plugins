@@ -9,7 +9,7 @@ On the desktop surface each segment SHALL be a rounded pill holding an icon that
 - **WHEN** the context holds 213,000 tokens of a 1,000,000-token window
 - **THEN** its pill is red, shows `213K` with no `ctx` text, shows the context icon, and its fill reaches 85% of the pill, the share of the vermillion threshold
 
-#### Scenario: Usage pills have no countdown
+#### Scenario: Usage pills
 - **WHEN** the 5h window is 15% used with 4h13m left and the 7d window is 76% used
 - **THEN** the 5h pill shows `5h 15%` and the 7d pill shows `7d 76%`, and neither shows `4h13m`
 
@@ -40,9 +40,19 @@ On the desktop surface each segment SHALL be a rounded pill holding an icon that
 ### Requirement: Desktop pill hover
 On the desktop surface each pill SHALL show on hover the segment's full name, its value, its time until reset where it has one, and for a usage window whether it is on pace. The countdown SHALL appear only here.
 
+#### Scenario: Usage window hover
+- **WHEN** the pointer is over the 5h pill and the window is 15% used with 4h13m left and on pace
+- **THEN** the hover text names the session limit, 15% used, resets in 4h13m, and on pace
+
+#### Scenario: Context hover
+- **WHEN** the pointer is over the context pill holding 213,000 tokens of a 1,000,000-token window
+- **THEN** the hover text names the context and reads 213K of 1M tokens
+
 #### Scenario: Countdown on hover
 - **WHEN** the user hovers the 5h pill with 4h13m left
 - **THEN** the card reads `Session limit: 15% used · resets in 4h13m · on pace`
+
+## ADDED Requirements
 
 ### Requirement: Desktop redraws only on a visible change
 When Desktop is the only surface on the session, the minute tick SHALL redraw the bar only when a pill's pace band moved, because no countdown is drawn on Desktop. When the terminal surface is also on the session, the tick SHALL also redraw for a countdown change, as before.

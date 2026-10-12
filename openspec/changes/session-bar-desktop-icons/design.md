@@ -30,9 +30,11 @@
 
    | State | Track | Fill | Border |
    |---|---|---|---|
-   | calm | gray at 0.12 | gray at 0.26 | gray at 0.30 |
+   | calm | white at 0.75 (dark 0.07) | gray at 0.30 | gray at 0.30 |
    | warn | `#fab219` at 0.20 | `#fab219` at 0.55 | `#fab219` at 0.45 |
    | hot | `#d03b3b` at 0.20 | `#d03b3b` at 0.50 | `#d03b3b` at 0.45 |
+
+   The app draws its own gray strip behind the bar, so a translucent gray calm track all but vanished on it (0.14.1 screenshot). The calm track is a white chip instead (0.14.2); the dark-mode value was tuned against a guessed strip color, so check it live.
 
    The status hues are the dataviz reference palette's warning and critical. They are translucent, so the same values read on light and dark surfaces; ink comes from the scheme (see decision 7). Severity is never color alone: the value is in the text and the hover card names it.
 

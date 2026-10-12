@@ -197,7 +197,7 @@ export const desktopSegments = (b: BarInput): Badge[] => {
 // OS scheme stands in for the app's, which differ only when the app is not on auto
 const STATUS = { warn: '#fab219', hot: '#d03b3b' } as const
 const GRAY = 'rgb(127,127,127)'
-const FILL = { calm: 0.26, warn: 0.55, hot: 0.5 } as const // meter fill opacity; the track is .12 calm, .2 otherwise
+const FILL = { calm: 0.3, warn: 0.55, hot: 0.5 } as const // meter fill opacity; the track is a white chip when calm, .2 of the status color otherwise
 const PILL_H = 28, ICON = 18, ICON_STROKE = 1.5
 const xml = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;')
 
@@ -219,10 +219,11 @@ export const pill = (b: Badge) => {
     width,
     source: `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${PILL_H}" viewBox="0 0 ${width} ${PILL_H}">`
       + `<title>${xml(b.tip)}</title>`
-      + '<style>.i{fill:#1f1f1e}.d{fill:#6b6b6b}.p{stroke:#1f1f1e}.s{stroke:#6b6b6b}'
-      + '@media (prefers-color-scheme:dark){.i{fill:#f0efe9}.d{fill:#a8a79f}.p{stroke:#f0efe9}.s{stroke:#a8a79f}}</style>'
+      + '<style>.i{fill:#1f1f1e}.d{fill:#6b6b6b}.p{stroke:#1f1f1e}.s{stroke:#6b6b6b}.t{fill:#fff;fill-opacity:.75}'
+      + '@media (prefers-color-scheme:dark){.i{fill:#f0efe9}.d{fill:#a8a79f}.p{stroke:#f0efe9}.s{stroke:#a8a79f}.t{fill-opacity:.07}}</style>'
       + `<clipPath id="c"><rect ${shape}/></clipPath>`
-      + `<rect ${shape} fill="${color}" fill-opacity="${b.level ? '.2' : '.12'}" stroke="${color}" stroke-opacity="${b.level ? '.45' : '.3'}"/>`
+      // a calm track is a white chip on the app's gray strip; a translucent gray one all but vanished there
+      + `<rect ${shape} ${b.level ? `fill="${color}" fill-opacity=".2"` : 'class="t"'} stroke="${color}" stroke-opacity="${b.level ? '.45' : '.3'}"/>`
       + `<rect width="${+((width * b.share) / 100).toFixed(2)}" height="${PILL_H}" clip-path="url(#c)" fill="${color}" fill-opacity="${FILL[b.level ?? 'calm']}"/>`
       + `<g transform="translate(12 ${(PILL_H - ICON) / 2}) scale(${scale})" fill="none" stroke-width="${+(ICON_STROKE / scale).toFixed(2)}" `
       + `stroke-linecap="round" stroke-linejoin="round" class="${b.level ? 'p' : 's'}">${GLYPH[b.kind]}</g>`

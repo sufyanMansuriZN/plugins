@@ -20,8 +20,13 @@
 
 - [x] 4.1 Rework `pill` colors per design decision 3: drop the `GLYPH` colors and `TINT`; icon and text use scheme ink classes; the meter is gray, amber `#fab219` or red `#d03b3b` with the alphas in the table. Verify: tests find no per-kind icon color, the three state alphas and colors, and the scheme classes for dark mode.
 - [x] 4.2 Run the full test file and `tsc --noEmit`. Verify: both pass.
-- [ ] 4.3 Bump to 0.14.1, commit and push, update the plugin, restart Desktop. Verify on screen in light and dark: the colors read as one system, the icons are legible in ink, and amber and red show clearly. Adjust any alpha that reads weak or loud.
+- [x] 4.3 Bump to 0.14.1, commit and push, update the plugin, restart Desktop. Verify on screen in light and dark: the colors read as one system, the icons are legible in ink, and amber and red show clearly. Adjust any alpha that reads weak or loud.
+
+## 5. Calm track on the app strip (0.14.2)
+
+- [x] 5.1 Make the calm track a white chip (0.75, dark 0.07) and the calm fill gray at 0.30, per design decision 3. Verify: tests find the `t` track class and its dark value, and no `t` class on an attention pill; the full test file and `tsc --noEmit` pass.
+- [ ] 5.2 Bump to 0.14.2, commit and push, update the plugin, restart Desktop. Verify on screen in light and dark: the share reads clearly on the app's gray strip. Tune the dark value if it looks washed out.
 
 ## Workflow follow-up
 
-- Release and archive `session-bar-desktop-surface` first (its task 6.2 is open), then archive this change.
+- Archive this change after tasks 3.2 and 5.2 pass. `session-bar-desktop-surface` is already archived.

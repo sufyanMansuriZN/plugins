@@ -382,7 +382,10 @@ test('pill: fill is the share used, icon per kind, tint by level, neutral when c
   expect(src()).toContain('fill="#fab219" fill-opacity="0.55"') // warn: amber fill
   expect(src({ level: 'hot' })).toContain('fill="#d03b3b" fill-opacity="0.5"')
   const calm = src({ level: undefined })
-  expect(calm).toContain('fill="rgb(127,127,127)" fill-opacity="0.26"')
+  expect(calm).toContain('fill="rgb(127,127,127)" fill-opacity="0.3"')
+  expect(calm).toContain('class="t"') // calm track: a white chip, fainter in dark
+  expect(calm).toContain('.t{fill-opacity:.07}')
+  expect(src()).not.toContain('class="t"') // an attention track is the status color
   expect(calm).not.toContain('#fab219')
   expect(calm).toContain('prefers-color-scheme:dark') // ink follows the scheme
   expect(src()).toContain('<title>a &amp; b &lt;c></title>') // escaped

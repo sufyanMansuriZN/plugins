@@ -26,7 +26,7 @@ Develop in a copy under `~/.claude/dev-mods/<session>/session-bar/` with the ins
 ## 4. Live check and release
 
 - [x] 4.1 In the hot-reloaded copy, check on the terminal and Desktop: the state appears after a turn at 100K or more, hides on send, Desktop redraws only on a state change while idle, and the glyph reads at a narrow window
-- [ ] 4.2 Sync the spec delta into `openspec/specs/session-bar`, bump `plugin.json` to 0.17.0, release (commit, push, `claude plugin update session-bar`), remove the dev-mods copy, re-enable the installed plugin, and verify `claude plugin test` passes and a new session shows the bar
+- [x] 4.2 Sync the spec delta into `openspec/specs/session-bar`, bump `plugin.json` to 0.17.0, release (commit, push, `claude plugin update session-bar`), remove the dev-mods copy, re-enable the installed plugin, and verify `claude plugin test` passes and a new session shows the bar
 
 ## Workflow follow-up
 

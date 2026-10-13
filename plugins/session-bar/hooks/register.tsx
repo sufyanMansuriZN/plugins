@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register } from 'claude-code'
+import type { EngineInterface, Register, TurnUsage } from 'claude-code'
 
 import type { AgentModels, Cache, Ctx, Limits, Weekly } from '../types'
 
@@ -11,7 +11,7 @@ const ON_ATTN = '#191919'
 
 const limits = atom({ plugin: 'session-bar', key: 'limits' } as const, [] as Limits)
 const weekly = atom({ plugin: 'session-bar', key: 'weekly' } as const, [] as Weekly)
-const ctx = atom({ plugin: 'session-bar', key: 'ctx' } as const, undefined as Ctx | undefined)
+const ctx = atom({ plugin: 'session-bar', key: 'ctx' } as const, null as Ctx | null) // null until a reading, and after a compaction; state takes JSON, so not undefined
 const agentModels = atom({ plugin: 'session-bar', key: 'agentModels' } as const, {} as AgentModels)
 const tick = atom({ plugin: 'session-bar', key: 'tick' } as const, 0) // bumped each minute so countdowns move while idle
 const usageOpen = atom({ plugin: 'session-bar', key: 'usageOpen' } as const, false) // the Desktop usage block; collapsed each session
@@ -27,38 +27,58 @@ export type Level = keyof typeof ATTN | undefined
 export const band = (pct: number): Level => pct >= 80 ? 'hot' : pct >= 50 ? 'warn' : undefined
 
 // Context by tokens sent, not window share: quality, latency and cost track tokens. Warn at 150K, the API's
-// default compaction trigger; hot at 250K, past which long-context scores drop, capped at 80% of the window so a
-// 200K window (a 200K model, or an auto-compact window the engine may report instead) still turns hot before it
-// compacts. Warn is never capped: with a ~60K baseline, half of a 200K window would fire after a few reads.
+// default compaction trigger; hot at 250K, past which long-context scores drop, capped at 80% of the compaction point
+// (the window when it is unread) so a smaller window or auto-compact setting still turns hot before it compacts. Warn
+// is never capped: with a ~60K baseline, half of a 200K window would fire after a few reads.
 // Sources: openspec/changes/session-bar-visual-redesign/research-context-size.md
 export const CTX_WARN = 150_000
-export const ctxHot = ({ window }: Ctx) => Math.min(250_000, window * 0.8)
+export const ctxHot = ({ window, compactAt }: Ctx) => Math.min(250_000, (compactAt ?? window) * 0.8)
 export const ctxBand = (c: Ctx): Level =>
   c.tokens >= ctxHot(c) ? 'hot' : c.tokens >= CTX_WARN ? 'warn' : undefined
 
-// The prompt cache keeps the context cheap to resend for its TTL after the last request; past it the next message
-// pays for all of it again. Below 100K a miss costs little, so no state shows there
+// The prompt cache keeps the context cheap to resend for its TTL after the last request was sent; past it the next
+// message pays for all of it again. Below 100K a miss costs little, so no state shows there
 export const CACHE_MIN = 100_000
 const CACHE_SOON = 5 * 60_000
 export type CacheState = { state: 'active' | 'warm' | 'soon' | 'cold'; left: number }
 
-// the TTL the last cache write took, from a transcript's text (a tail whose first line is cut is fine): 1h only when
-// none of it took 5m, as the 5m part goes cold first. A response that wrote nothing says nothing, so look further back
-export const cacheTtl = (text: string): number | undefined => {
+// the TTL one response's cache write took, from a transcript's text (a tail whose first line is cut is fine). The line
+// lands after the step's result and carries no id, so it is the newest whose cache-read and uncached input counts are
+// the step's. 1h only when none of it took 5m, as the 5m part goes cold first. No line yet, or a match that wrote
+// nothing: undefined, and the last TTL stands
+export const cacheTtl = (text: string, read: number, input: number): number | undefined => {
   for (const line of text.split('\n').reverse()) {
-    let c: { ephemeral_1h_input_tokens?: number; ephemeral_5m_input_tokens?: number } | undefined
-    try { c = JSON.parse(line)?.message?.usage?.cache_creation } catch { continue }
-    const h1 = c?.ephemeral_1h_input_tokens ?? 0, m5 = c?.ephemeral_5m_input_tokens ?? 0
-    if (h1 || m5) return m5 ? 5 * 60_000 : HOUR
+    let u: { input_tokens?: number; cache_read_input_tokens?: number; cache_creation?: { ephemeral_1h_input_tokens?: number; ephemeral_5m_input_tokens?: number } } | undefined
+    try { u = JSON.parse(line)?.message?.usage } catch { continue }
+    if (!u || u.cache_read_input_tokens !== read || u.input_tokens !== input) continue
+    const h1 = u.cache_creation?.ephemeral_1h_input_tokens ?? 0, m5 = u.cache_creation?.ephemeral_5m_input_tokens ?? 0
+    return h1 || m5 ? m5 ? 5 * 60_000 : HOUR : undefined
   }
 }
 
+// counted from the last main request's send: a wait after its response, a tool, a dialog or a subagent included, is
+// idle time for the cache. Nothing before the first request or while the TTL is unknown
 export const cacheState = (c: Cache | null | undefined, tokens: number | undefined, now: number): CacheState | undefined => {
-  if (!c || tokens === undefined || tokens < CACHE_MIN) return
-  // each request of a running turn restarts the TTL, so no countdown applies; the pill keeps its glyph and width
-  if (c.active) return { state: 'active', left: c.ttlMs }
-  const left = c.endedAt + c.ttlMs - now
+  if (!c?.ttlMs || tokens === undefined || tokens < CACHE_MIN) return
+  // a streaming request is the cache in use, so no countdown applies; the pill keeps its glyph and width. One that named
+  // another model is cold until its response ends, as the cache is keyed by model
+  if (c.inFlight) return c.cold ? { state: 'cold', left: 0 } : { state: 'active', left: c.ttlMs }
+  const left = c.sentAt + c.ttlMs - now
   return { state: left <= 0 ? 'cold' : left < CACHE_SOON ? 'soon' : 'warm', left: Math.max(0, left) }
+}
+
+// The proof of the values above, one debug line per main request: each prediction beside what was measured, so a mismatch
+// reads as a bug. predicted: the cache state when the request was sent, none when none was shown; prevTotal: the previous
+// request's total input, which a warm cache serves nearly all of (within 2%); shown: the context tokens drawn after this
+// request, total this request's input; endpoint: the usage endpoint's windows, none until one was fetched
+export const accuracyLine = (a: { predicted?: CacheState['state']; read: number; prevTotal?: number; shown?: number; total: number; header: Limits; endpoint?: Limits }) => {
+  const hit = a.prevTotal === undefined ? undefined : Math.abs(a.read - a.prevTotal) <= a.prevTotal * 0.02
+  const cacheOk = a.predicted === undefined || hit === undefined ? 'unscored' : (a.predicted !== 'cold') === hit ? 'confirmed' : 'wrong'
+  return [
+    `cache predicted ${a.predicted ?? 'none'}, read ${a.read} of ${a.prevTotal ?? '?'}: ${cacheOk}`,
+    `ctx shown ${a.shown ?? '?'}, input ${a.total}: ${a.shown === a.total ? 'match' : 'differ'}`,
+    ...a.header.map(l => `${limitText(l)} header ${Math.round(l.percentUsed)}% endpoint ${(e => e ? `${Math.round(e.percentUsed)}%` : 'n/a')(a.endpoint?.find(x => x.kind === l.kind))}`),
+  ].join(' | ')
 }
 
 // 187400 -> 187K, 1000000 -> 1M
@@ -140,8 +160,9 @@ export const fresh = <T extends { resetsAt?: string }>(ls: T[], now: number) =>
 
 export type Run = { text: string; color?: string; backgroundColor?: string; dimColor?: boolean; bold?: boolean }
 export type Win = { label: string; pct: number; resetsAt?: string; windowMs?: number }
-// agent: the type of the subagent whose transcript is in view; absent on main
-export type BarInput = { dir: string; branch?: string; agent?: string; model?: string; ctx?: Ctx; cache?: CacheState; windows: Win[]; now: number }
+// agent: the type of the subagent whose transcript is in view; absent on main. answered: the label of the model that
+// answered the last main request when it is not the configured one (a fallback)
+export type BarInput = { dir: string; branch?: string; agent?: string; model?: string; answered?: string; ctx?: Ctx; cache?: CacheState; windows: Win[]; now: number }
 // 0 full, 1 5h countdown only, 2 short bars, 3 no bars, 4 no countdowns
 export type Tier = 0 | 1 | 2 | 3 | 4
 
@@ -242,7 +263,8 @@ export const resetTime = (resetsAt: string, now: number) => {
 
 // A row of the Desktop usage block. share and shadow are 0-100; shadow is the share of the window already gone, so
 // a quota meant to be used up reads as room (shadow past the fill) or overspend (fill past it); line is one dim line
-export type UsageRow = { kind: Kind; name: string; value: string; share: number; shadow?: number; level: Level; line: string; line2?: string; cache?: CacheState['state'] }
+// more: dim lines after line; line2 comes last and is the cache line, whose glyph cache picks
+export type UsageRow = { kind: Kind; name: string; value: string; share: number; shadow?: number; level: Level; line: string; more?: string[]; line2?: string; cache?: CacheState['state'] }
 
 // the app's own names, in the block only: the pills keep 5h, 7d and the model
 const rowName = (label: string) => label === '5h' ? 'Session limit' : label === '7d' ? 'Weekly · all models' : `Weekly · ${label}`
@@ -256,6 +278,7 @@ export const usageRows = (b: BarInput): UsageRow[] => {
       kind: 'ctx', name: 'Context', value: tokensText(b.ctx.tokens), share: clamp((b.ctx.tokens / hot) * 100), level,
       line: (level === 'hot' ? `Past ${tokensText(hot)}, quality drops` : level ? 'Past the ideal range' : `Ideal under ${tokensText(CTX_WARN)}`)
         + ` · window ${tokensText(b.ctx.window)}`,
+      ...(b.answered && { more: [`Answered by ${b.answered}`] }),
       ...(b.cache && { line2: (s => s[0]!.toUpperCase() + s.slice(1))(cacheText(b.cache, b.ctx.tokens)), cache: b.cache.state }),
     })
   }
@@ -461,6 +484,16 @@ export const minuteKey = (windows: Win[], now: number, countdowns = true, cache?
     cache && [cache.state, cacheCountdown && cache.state !== 'cold' && countdown(cache.left)],
   ])
 
+// the pills show whole numbers, and a header's 23.4 is the endpoint's 23: compare those, so the same reading from the two
+// sources does not redraw
+const whole = (ls: Limits) => ls.map(l => ({ ...l, percentUsed: Math.round(l.percentUsed) }))
+
+// when the usage readings were last fetched, once that is old enough to matter
+export const usageAge = (at: number | undefined, now: number) =>
+  at !== undefined && now - at > 10 * 60_000 ? `Usage as of ${resetTime(new Date(at).toISOString(), now)}` : undefined
+
+// fetchedAt is the claim that stops overlapping fetches, written before the fetch; usageAt is written on success only, so a
+// failed fetch never makes the readings look fresh
 const refreshUsage = async ($: EngineInterface, force = false) => {
   try {
     const now = await $.clock.now()
@@ -472,8 +505,11 @@ const refreshUsage = async ($: EngineInterface, force = false) => {
       auth, headers: { 'anthropic-beta': 'oauth-2025-04-20' },
     })
     if (!r.ok) return
-    const u = parseUsage(r.text)
-    if (u.limits.length && !same(u.limits, await read($, limits))) {
+    const p = parseUsage(r.text)
+    const u = { limits: fresh(p.limits, now), weekly: fresh(p.weekly, now) } // a window the endpoint still answers past its reset says nothing
+    await $.store.set('usageAt', now)
+    await $.store.set('endpoint', u.limits) // what the accuracy line sets the header against
+    if (u.limits.length && !same(whole(u.limits), whole(await read($, limits)))) {
       await update($, limits, () => u.limits)
       await $.store.set('limits', u.limits)
     }
@@ -497,14 +533,28 @@ const findTranscript = async ($: EngineInterface) => {
   }
 }
 
-// tail, not $.fs.read: that refuses files over 4 MiB, which the long sessions this is for pass. Any failure hides the state
-const markCache = async ($: EngineInterface) => {
+// the TTL of the last main request, from its transcript line, which lands about 100 ms after the step's result: read at
+// the next step's entry and at the turn's end (spike 1.1). tail, not $.fs.read: that refuses files over 4 MiB, which the
+// long sessions this is for pass. No match or any failure keeps the last TTL
+const readTtl = async ($: EngineInterface) => {
   try {
+    const c = await read($, cache)
+    if (!c || c.read === undefined || c.input === undefined) return
     const path = await findTranscript($)
     const r = path ? await $.process.run(['tail', '-c', '65536', path]) : undefined
-    const ttlMs = r?.exitCode === 0 ? cacheTtl(r.stdout) : undefined
-    const next = ttlMs ? { endedAt: await $.clock.now(), ttlMs } : null
-    if (next || await read($, cache)) await update($, cache, () => next)
+    const ttlMs = r?.exitCode === 0 ? cacheTtl(r.stdout, c.read, c.input) : undefined
+    if (ttlMs && ttlMs !== c.ttlMs) await update($, cache, p => p && { ...p, ttlMs })
+  } catch {}
+}
+
+// where auto-compaction runs, from the context breakdown: 'summary' estimates locally and sends no request ('full' sends
+// token counts). Once per main turn, never per redraw: it took 691 ms the first time (spike 1.3). Absent with auto-compact off
+const readCompactAt = async ($: EngineInterface) => {
+  try {
+    const c = await read($, ctx)
+    if (!c) return
+    const compactAt = (await $.session.usage({ breakdown: 'summary' })).context.breakdown?.autoCompactThreshold
+    if (c.compactAt !== compactAt) await update($, ctx, p => p && { ...p, compactAt })
   } catch {}
 }
 
@@ -521,42 +571,90 @@ export const register: Register = on => {
     // or pace band moved since the last one
     let seen = ''
     $.clock.every(60_000, () => void (async () => {
-      const [ls, ws, now, surfaces, open, c, cached] = await Promise.all([read($, limits), read($, weekly), $.clock.now(), $.session.surfaces().catch(() => ['terminal'] as const), read($, usageOpen), read($, ctx), read($, cache)]) // unknown surfaces: keep the countdown redraw
+      const [ls, ws, now, surfaces, open, c, cached, usageAt] = await Promise.all([read($, limits), read($, weekly), $.clock.now(), $.session.surfaces().catch(() => ['terminal'] as const), read($, usageOpen), read($, ctx), read($, cache), $.store.get('usageAt') as Promise<number | undefined>]) // unknown surfaces: keep the countdown redraw
       const windows = toWindows(ls, ws, now), terminal = surfaces.includes('terminal')
-      // the open usage block draws countdowns and cap times too, so while it is open its lines count
+      // the open usage block draws countdowns, cap times and the reading's age too, so while it is open its lines count
       const key = minuteKey(windows, now, terminal, cacheState(cached, c?.tokens, now), terminal || open)
-        + (open ? JSON.stringify(usageRows({ dir: '', windows, now }).map(r => r.line)) : '')
+        + (open ? JSON.stringify([usageRows({ dir: '', windows, now }).map(r => r.line), usageAge(usageAt, now)]) : '')
       if (key !== seen) {
         seen = key
         await update($, tick, n => n + 1)
       }
+      // other sessions' spend shows without a turn once the reading is over 5 minutes old. A window past its reset is
+      // fetched at once, past refreshUsage's gate, and dropped from the atoms now: one forced fetch per reset, not one a
+      // minute while the endpoint still answers the old window. A detached session fetches nothing
+      const stale = fresh(ls, now).length < ls.length || fresh(ws, now).length < ws.length
+      if (fresh(ls, now).length < ls.length) await update($, limits, () => fresh(ls, now))
+      if (fresh(ws, now).length < ws.length) await update($, weekly, () => fresh(ws, now))
+      if (surfaces.length && (stale || now - (usageAt ?? 0) > 300_000)) await refreshUsage($, stale)
     })())
     return next(e)
   })
 
   // sending a prompt collapses the usage block, so it does not hold the composer down through the turn; no
-  // outside-click event exists. Read first: a write redraws even when the value is the same
+  // outside-click event exists. Read first: a write redraws even when the value is the same. The cache is not
+  // touched: a local slash command sends no request
   on('prompt.submit', async ($, e, next) => {
     if (await read($, usageOpen)) await update($, usageOpen, () => false)
-    const c = await read($, cache) // in use until the turn ends; read first, a write redraws
-    if (c && !c.active) await update($, cache, () => ({ ...c, active: true }))
     return next(e)
   })
 
   on('turn.complete', async ($, e, next) => {
     const result = await next(e)
-    if (!e.agentId) await markCache($) // a subagent's loop has a cache of its own
+    if (!e.agentId) { // the last step's line is there by now; a subagent's loop has a cache of its own
+      await readTtl($)
+      await readCompactAt($)
+    }
     await refreshUsage($)
     return result
   })
 
-  // $.agent.list() names no model, so a subagent's is kept from its requests, a fallback's included
   on('turn.step', async function* ($, e, next) {
-    // update() always writes, so look first: most steps repeat the model the agent already has
-    if (e.agentId && (await read($, agentModels))[e.agentId] !== e.model) {
-      await update($, agentModels, ms => withModel(ms, e.agentId, e.model))
+    if (e.agentId) {
+      // $.agent.list() names no model, so a subagent's is kept from its requests, a fallback's included.
+      // update() always writes, so look first: most steps repeat the model the agent already has
+      if ((await read($, agentModels))[e.agentId] !== e.model) await update($, agentModels, ms => withModel(ms, e.agentId, e.model))
+      return yield* next(e)
     }
-    return yield* next(e)
+    // the main loop's request is the cache clock: its send restarts the TTL, and the response's end starts the countdown
+    await readTtl($)
+    const [now, before, prev] = await Promise.all([$.clock.now(), read($, ctx), read($, cache)])
+    // what the bar says of the cache at the send, kept for the accuracy line
+    const predicted = prev?.model && prev.model !== e.model ? 'cold' : cacheState(prev, before?.tokens, now)?.state
+    await update($, cache, c => ({ ...c, sentAt: now, inFlight: true, ...(c?.model && c.model !== e.model && { cold: true as const }) }))
+    let usage: TurnUsage | null = null
+    try {
+      const r = yield* next(e)
+      usage = r.usage
+      return r
+    } finally { // an aborted stream ends the request too
+      await update($, cache, c => c && {
+        ...c, cold: undefined, inFlight: false,
+        ...(usage && { model: usage.model, read: usage.cache_read_input_tokens, input: usage.input_tokens }),
+      })
+      if (usage) {
+        try { // session.measure fired at the stream's end, so ctx and limits already hold this request's readings
+          const [after, header, endpoint] = await Promise.all([read($, ctx), read($, limits), $.store.get('endpoint')])
+          $.ui.log(accuracyLine({
+            predicted, read: usage.cache_read_input_tokens, prevTotal: before?.tokens, shown: after?.tokens,
+            total: usage.input_tokens + usage.cache_read_input_tokens + usage.cache_creation_input_tokens, header, endpoint: endpoint as Limits | undefined,
+          }), { to: 'debug' })
+        } catch {}
+      }
+    }
+  })
+
+  // a compaction of the main conversation that ran leaves no cache state: the next request reads the shared prefix, so
+  // neither cold nor the old countdown is right until its response ends. Nor a context reading: session.measure repeats
+  // the old count through it and never reports one absent (spike 1.2), so this is the only place to drop it. A precompute
+  // or a skip changes nothing
+  on('session.compact', async ($, e, next) => {
+    const r = await next(e)
+    if (r.messages && e.trigger !== 'precompute' && !e.agentId) {
+      if (await read($, cache)) await update($, cache, () => null)
+      if (await read($, ctx)) await update($, ctx, () => null)
+    }
+    return r
   })
 
   // an early reading, so the model shows before the subagent's first request; its steps stay the source
@@ -571,14 +669,14 @@ export const register: Register = on => {
   // pushed after each turn and whenever a window moves a point, so the band redraws live
   on('session.measure', async ($, e, next) => {
     // absent until a request lands: keep the last seen reading so 5h/7d don't blink out
-    if (e.rateLimits.length && !same(e.rateLimits, await read($, limits))) {
+    if (e.rateLimits.length && !same(whole(e.rateLimits), whole(await read($, limits)))) {
       await update($, limits, () => e.rateLimits)
       await $.store.set('limits', e.rateLimits)
     }
     const { tokens, window } = e.context
     const c = await read($, ctx)
     if (tokens !== undefined && window && (c?.tokens !== tokens || c.window !== window)) {
-      await update($, ctx, () => ({ tokens, window }))
+      await update($, ctx, p => ({ ...p, tokens, window })) // keeps the threshold read at the turn's end
     }
     return next(e)
   })
@@ -591,8 +689,10 @@ export const register: Register = on => {
     const windows = toWindows(ls, ws, now)
     // a subagent's transcript in view: its type and model; main's ctx, window and cache say nothing about it
     const agentId = e.props.view?.agentId
-    let shown: Pick<BarInput, 'agent' | 'model' | 'ctx' | 'cache'> = {
-      model: model ? modelLabel(model, c?.window) : undefined, ctx: c, cache: cacheState(cached, c?.tokens, now),
+    let shown: Pick<BarInput, 'agent' | 'model' | 'answered' | 'ctx' | 'cache'> = {
+      model: model ? modelLabel(model, c?.window) : undefined, ctx: c ?? undefined, cache: cacheState(cached, c?.tokens, now),
+      // the configured id may carry [1m], which the API's does not
+      answered: cached?.model && model && cached.model !== model.replace(/\[1m\]$/i, '') ? modelLabel(cached.model) : undefined,
     }
     if (agentId) {
       const [ms, agents] = await Promise.all([read($, agentModels), $.agent.list()])
@@ -607,6 +707,7 @@ export const register: Register = on => {
       const [below, open] = await Promise.all([next(e), read($, usageOpen)])
       const tier = desktopTier(badges, e.props.bodyColumns)
       const rows = open ? usageRows({ dir: '', ...shown, windows, now }) : []
+      const age = open ? usageAge((await $.store.get('usageAt')) as number | undefined, now) : undefined
       // two rows per line, one where two would break every line (under ~520px)
       const perLine = (e.props.bodyColumns ?? Infinity) * PX_PER_COL < 520 ? 1 : 2
       const pairs = rows.flatMap((r, i) => i % perLine ? [] : [rows.slice(i, i + perLine)])
@@ -628,6 +729,7 @@ export const register: Register = on => {
                     {pair.map(r => {
                       const bar = <Svg source={meter(r)} alt={`${r.name}: ${r.value}`} height={METER_H} />
                       const name = iconed(GLYPH[r.kind], `${r.kind === 'ctx' ? 'context' : r.kind} pill`, <Text wrap="truncate-end">{r.name}</Text>)
+                      const more = r.more?.map(t => <Text dimColor>{t}</Text>)
                       const line2 = r.line2 && (r.cache ? iconed(CACHE_GLYPH[r.cache], `cache ${r.cache}`, <Text dimColor>{r.line2}</Text>) : <Text dimColor>{r.line2}</Text>)
                       // one per line: name, meter and value share a line, 2 lines a row instead of 3, so the block fits
                       // the band's height and the pills never scroll out of view
@@ -636,6 +738,7 @@ export const register: Register = on => {
                           <Box justifyContent="space-between"><Box flexShrink={1}>{name}</Box><Text bold>{r.value}</Text></Box>
                           {bar}
                           {r.line && <Text dimColor>{r.line}</Text>}
+                          {more}
                           {line2}
                         </Box>
                       ) : (
@@ -646,12 +749,14 @@ export const register: Register = on => {
                             <Box width={6} flexShrink={0} justifyContent="flex-end"><Text bold>{r.value}</Text></Box>
                           </Box>
                           {r.line && <Text dimColor>{r.line}</Text>}
+                          {more}
                           {line2}
                         </Box>
                       )
                     })}
                   </Box>
                 ))}
+                {age && <Text dimColor>{age}</Text>}
               </Box>
             )}
             {/* one row, never wrapped: the tier sheds parts to fit instead */}

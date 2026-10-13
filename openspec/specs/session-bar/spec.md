@@ -59,7 +59,7 @@ A usage window with a known reset time SHALL turn orange when its used percentag
 - **THEN** its segment is an orange pill
 
 ### Requirement: Context size
-The context segment SHALL show the context's input tokens (e.g. `187K`), labelled `ctx`. It SHALL turn orange from 150K tokens, and vermillion from the lower of 250K tokens and 80% of the window. It SHALL be hidden until the session has a reading, and hidden while a subagent's transcript is in view.
+The context segment SHALL show the context's input tokens (e.g. `187K`), labelled `ctx`. It SHALL turn orange from 150K tokens, and vermillion from the lower of 250K tokens and 80% of the auto-compact threshold once that is known, else 80% of the window. It SHALL be hidden until the session has a reading, hidden again from a compaction until the next reply, and hidden while a subagent's transcript is in view.
 
 #### Scenario: Comfortable on a 1M window
 - **WHEN** the context holds 120,000 tokens of a 1,000,000-token window
@@ -73,8 +73,16 @@ The context segment SHALL show the context's input tokens (e.g. `187K`), labelle
 - **WHEN** the context holds 170,000 tokens of a 200,000-token window
 - **THEN** the context segment shows `170K` in a vermillion pill
 
+#### Scenario: A smaller auto-compact threshold caps the red threshold
+- **WHEN** the context holds 170,000 tokens of a 1,000,000-token window whose auto-compact threshold is 200,000
+- **THEN** the context segment shows `170K` in a vermillion pill
+
 #### Scenario: Fresh session
 - **WHEN** no response has landed yet
+- **THEN** no context segment is drawn
+
+#### Scenario: Just compacted
+- **WHEN** the conversation was compacted and no reply has landed since
 - **THEN** no context segment is drawn
 
 #### Scenario: Subagent in view
@@ -109,7 +117,7 @@ The context segment SHALL show a bar before its token count that runs from 0 to 
 - **THEN** its bar reads `━━╾┼─`
 
 ### Requirement: Model label
-The model segment SHALL show the model's name and version (e.g. `Opus 5.5`) followed by the context window size once the session has a context reading (e.g. `Opus 5.5 1M`). Before that, it SHALL show `1M` only when the model ID names the 1M window (`[1m]`). For a subagent in view, it SHALL name the model of that subagent's latest model request, with `1M` only when that model ID names it, and SHALL be left out until the subagent has made a request.
+The model segment SHALL show the model's name and version (e.g. `Opus 5.5`) followed by the context window size once the session has a context reading (e.g. `Opus 5.5 1M`). Before that, it SHALL show `1M` only when the model ID names the 1M window (`[1m]`). For a subagent in view, it SHALL name the model of that subagent's latest model request, with `1M` only when that model ID names it, and SHALL be left out until the subagent has made a request. When the model that answered the last main request differs from the configured one, the usage block SHALL add a row line `Answered by Sonnet 5.5`; the segment keeps the configured model.
 
 #### Scenario: Window from the context reading
 - **WHEN** the model ID is `claude-opus-5-5` and the context reports a 1,000,000-token window
@@ -130,6 +138,10 @@ The model segment SHALL show the model's name and version (e.g. `Opus 5.5`) foll
 #### Scenario: Subagent before its first request
 - **WHEN** a `Plan` subagent's transcript is in view and it has made no model request yet
 - **THEN** the bar starts `plugins · Plan` and names no model
+
+#### Scenario: Fallback answered
+- **WHEN** the configured model is `claude-opus-5-5` and the last main request was answered by `claude-sonnet-5-5`
+- **THEN** the model segment shows `Opus 5.5 1M` and the usage block's context row adds `Answered by Sonnet 5.5`
 
 ### Requirement: Bar follows the transcript in view
 The bar SHALL describe the loop whose transcript is on screen. With a subagent's transcript open from the tasks list, the directory segment SHALL be followed by that subagent's agent type and then its model segment. Switching back to the main conversation SHALL restore the main bar. Usage windows SHALL show in every view, since they belong to the account.
@@ -181,7 +193,7 @@ The bar SHALL redraw at least once a minute so countdowns and pace colors stay c
 - **THEN** the 5h countdown has dropped by 3 minutes
 
 ### Requirement: Values survive gaps
-The bar SHALL draw the last known usage readings, from this session or an earlier one, until a fresh reading arrives. It SHALL drop a reading whose window has already reset.
+The bar SHALL draw the last known usage readings, from this session or an earlier one, until a fresh reading arrives. While a surface is attached and the last successful usage fetch is over 5 minutes old, the bar SHALL fetch again within the next minute, so that other sessions' spend and a reset show without a turn. A reading whose window has reset SHALL be re-fetched, and not drawn until a fresh reading replaces it. A failed fetch SHALL NOT count as a fresh reading.
 
 #### Scenario: Launch before any response
 - **WHEN** a session starts and an earlier session stored 5h and 7d readings whose windows have not reset
@@ -189,7 +201,19 @@ The bar SHALL draw the last known usage readings, from this session or an earlie
 
 #### Scenario: Stale window
 - **WHEN** a stored 5h reading's reset time has passed
-- **THEN** the 5h segment is not drawn from it
+- **THEN** the 5h segment is not drawn from it, and a fetch runs within the next minute
+
+#### Scenario: Idle session, other sessions spend
+- **WHEN** no turn runs for 12 minutes and another session raised the 5h window from 40% to 55%
+- **THEN** the bar shows 55% within 7 minutes of the change
+
+#### Scenario: Fetch fails
+- **WHEN** a usage fetch fails
+- **THEN** the last good readings stay, and the next tick past 5 minutes from the last success fetches again
+
+#### Scenario: Same reading from two sources
+- **WHEN** a response header reports 23.4% and the usage endpoint reports 23% for the same window
+- **THEN** the bar does not redraw between them
 
 ### Requirement: Git branch segment
 Inside a git repository the bar SHALL show the current branch, dimmed, after the directory as `dir (branch)`. A detached HEAD reads `HEAD`. Outside a repository, or when git fails, no branch is shown.
@@ -394,7 +418,7 @@ A window row that is ahead of pace SHALL add when the cap would be hit at the cu
 - **THEN** its line reads `Ahead of pace` and no cap time
 
 ### Requirement: Usage block context row
-When the context has a reading, the usage block SHALL show a row named `Context` with the tokens, and a meter that runs to the ideal ceiling, not to the window. Its line SHALL name the ideal range and keep the window size as a fact: `Ideal under 150K · window 1M` while calm, `Past the ideal range · window 1M` from 150K, and `Past <ceiling>, quality drops · window 1M` from the ceiling. Its meter SHALL have no shadow.
+When the context has a reading, the usage block SHALL show a row named `Context` with the tokens, and a meter that runs to the ideal ceiling, not to the window. Its line SHALL name the ideal range and keep the window size as a fact: `Ideal under 150K · window 1M` while calm, `Past the ideal range · window 1M` from 150K, and `Past <ceiling>, quality drops · window 1M` from the ceiling, the ceiling being the one the auto-compact threshold sets when known. Its meter SHALL have no shadow.
 
 #### Scenario: Calm
 - **WHEN** the context holds 120,000 tokens of a 1,000,000-token window
@@ -407,6 +431,10 @@ When the context has a reading, the usage block SHALL show a row named `Context`
 #### Scenario: A smaller window lowers the ceiling
 - **WHEN** the context holds 170,000 tokens of a 200,000-token window
 - **THEN** its line reads `Past 160K, quality drops · window 200K` and its fill is the pill's red
+
+#### Scenario: A smaller auto-compact threshold lowers the ceiling
+- **WHEN** the context holds 140,000 tokens of a 200,000-token window whose auto-compact threshold is 167,000
+- **THEN** its line reads `Past 134K, quality drops · window 200K`, with nothing said about the threshold
 
 ### Requirement: Usage block layout
 The usage block SHALL show its rows two to a line, each meter filling its cell's width without being stretched, with no tick and no legend. Where two rows would not fit a line, it SHALL show one compact row per line instead, the name, meter and value on one line and the dim line under it, so the block and the pills fit the band without scrolling.
@@ -435,68 +463,84 @@ While expanded, the usage block SHALL redraw only when a reading changes or a mi
 - **THEN** the pills, the button and the block do not flicker
 
 ### Requirement: Cache state
-Once a main-loop turn has completed, the context segment SHALL carry a cache state while the context holds 100K tokens or more: in use while a turn runs, then warm, warm with under 5 minutes left, or cold, counted from the turn's end and the TTL. It SHALL be hidden before the first turn, below 100K tokens, in a subagent's view, and when the TTL is unknown.
+The context segment SHALL carry a cache state while the context holds 100K tokens or more: in flight while a main-loop model request streams, then warm, warm with under 5 minutes left, or cold, counted from the moment the last main-loop request was sent and its TTL. A wait between two requests of one turn SHALL count down like idle time. The state SHALL be hidden before the first main request, below 100K tokens, in a subagent's view, and when the TTL is unknown.
 
 #### Scenario: Warm after a turn
-- **WHEN** a turn ended 22 minutes ago with a 1-hour TTL and the context holds 412,000 tokens
+- **WHEN** the turn's last main request was sent 22 minutes ago with a 1-hour TTL and the context holds 412,000 tokens
 - **THEN** the cache state is warm with 38 minutes left
 
+#### Scenario: Turn ends
+- **WHEN** the response of a turn's last main request ends
+- **THEN** the cache state is warm with the whole TTL left, less the response's own length
+
 #### Scenario: Under 5 minutes left
-- **WHEN** a turn ended 56 minutes ago with a 1-hour TTL and the context holds 412,000 tokens
+- **WHEN** the last main request was sent 56 minutes ago with a 1-hour TTL and the context holds 412,000 tokens
 - **THEN** the cache state is warm with under 5 minutes left
 
 #### Scenario: Cold
-- **WHEN** a turn ended 61 minutes ago with a 1-hour TTL
-- **THEN** the cache state is cold, and stays cold until the next prompt is sent
+- **WHEN** the last main request was sent 61 minutes ago with a 1-hour TTL
+- **THEN** the cache state is cold, and stays cold until the next main request is sent
 
 #### Scenario: Small context
-- **WHEN** a turn ended and the context holds 45,000 tokens
+- **WHEN** a request was sent and the context holds 45,000 tokens
 - **THEN** no cache state is shown
 
 #### Scenario: Turn running
-- **WHEN** a prompt has been sent and its turn has not completed, however long it runs
-- **THEN** the cache state is in use, with no time left shown
+- **WHEN** a main-loop model request has been sent and its response has not ended
+- **THEN** the cache state is in flight, with no time left shown
 
-#### Scenario: Turn ends
-- **WHEN** a turn completes while the cache state is in use
-- **THEN** the cache state is warm with the whole TTL left
+#### Scenario: Long wait inside a turn
+- **WHEN** the turn's last request ended 7 minutes ago with a 5-minute TTL and a tool of that turn is still running
+- **THEN** the cache state is cold
+
+#### Scenario: Permission dialog left open
+- **WHEN** the turn's last request ended 20 minutes ago with a 1-hour TTL and a permission dialog of that turn is open
+- **THEN** the cache state is warm with 40 minutes left
+
+#### Scenario: Slash command sends no request
+- **WHEN** a local slash command runs after a request that was sent 10 minutes ago with a 1-hour TTL
+- **THEN** the cache state is warm with 50 minutes left, and never in flight
 
 #### Scenario: Subagent turn
-- **WHEN** a subagent's turn completes while the main turn runs
-- **THEN** the cache state stays in use
+- **WHEN** a subagent's request is sent while the main loop's last request was sent 10 minutes ago
+- **THEN** the cache state keeps counting from the main loop's request
 
 ### Requirement: Cache TTL from the transcript
-The TTL SHALL come from the last response in the session's transcript that wrote cache tokens: 1 hour when it wrote some with a 1-hour TTL and none with a 5-minute TTL, else 5 minutes. When the transcript cannot be read, or no response in its tail records a cache write, the TTL SHALL be unknown.
+After each main-loop request ends, the TTL SHALL be read from the newest transcript response whose cache-read and uncached input counts equal that request's: 1 hour when it wrote only 1-hour cache tokens, else 5 minutes when it wrote any 5-minute ones. A response that wrote nothing, no matching response, or a transcript that cannot be read SHALL keep the TTL last read; before any TTL was read, the TTL SHALL be unknown.
 
 #### Scenario: One-hour writes only
-- **WHEN** the last response records 1,457 tokens written with a 1-hour TTL and 0 with a 5-minute TTL
+- **WHEN** the matching response records 1,457 tokens written with a 1-hour TTL and 0 with a 5-minute TTL
 - **THEN** the TTL is 1 hour
 
 #### Scenario: Mixed writes
-- **WHEN** the last response records tokens written with both TTLs
+- **WHEN** the matching response records tokens written with both TTLs
 - **THEN** the TTL is 5 minutes
 
 #### Scenario: Field order does not matter
-- **WHEN** the last response lists the 5-minute count before the 1-hour count
+- **WHEN** the matching response lists the 5-minute count before the 1-hour count
 - **THEN** the TTL is read the same as when the order is reversed
 
 #### Scenario: Last response wrote nothing
-- **WHEN** the last response wrote no cache tokens and the one before wrote only 1-hour ones
-- **THEN** the TTL is 1 hour
+- **WHEN** the matching response wrote no cache tokens and the TTL read before was 1 hour
+- **THEN** the TTL stays 1 hour
+
+#### Scenario: Transcript not yet written
+- **WHEN** the newest transcript response's counts differ from the request's
+- **THEN** the TTL read before stands, and the state is not hidden
 
 #### Scenario: Unreadable transcript
-- **WHEN** the transcript file is missing or no response in its tail records a cache write
+- **WHEN** the transcript file is missing and no TTL was read before
 - **THEN** the TTL is unknown and no cache state is shown
 
 ### Requirement: Cache state in the terminal bar
-The terminal context segment SHALL show the cache state after its token count: `❄ in use` dimmed while a turn runs, `❄ 38m` dimmed while warm, `❄ 4m` in orange with under 5 minutes left, and `❄ cold` dimmed once cold. The time left SHALL use the reset countdown's format.
+The terminal context segment SHALL show the cache state after its token count: `❄ in use` dimmed while a request streams, `❄ 38m` dimmed while warm, `❄ 4m` in orange with under 5 minutes left, and `❄ cold` dimmed once cold. The time left SHALL use the reset countdown's format.
 
 #### Scenario: Warm
 - **WHEN** the cache state is warm with 38 minutes left and the context holds 412,000 tokens
 - **THEN** the context segment reads `ctx`, its bar, `412K`, then a dimmed `❄ 38m`
 
 #### Scenario: In use
-- **WHEN** a turn runs and the cache state is in use
+- **WHEN** a main request streams and the cache state is in flight
 - **THEN** the context segment ends with a dimmed `❄ in use`
 
 #### Scenario: Under 5 minutes
@@ -508,30 +552,30 @@ The terminal context segment SHALL show the cache state after its token count: `
 - **THEN** the context segment ends with a dimmed `❄ cold`
 
 ### Requirement: Cache state on the Desktop context pill
-The Desktop context pill SHALL show one glyph for the cache state after its token count: a flame while in use or warm, an hourglass with under 5 minutes left, a snowflake once cold. The snowflake SHALL have a branch on each of its six arms, so it reads as a snowflake and not an asterisk at pill size. Sending a prompt SHALL NOT change the pill's width. The glyph SHALL use the theme's text color, and the pill SHALL show no cache countdown. The pill's alternative text SHALL name the state and the time left.
+The Desktop context pill SHALL show one glyph for the cache state after its token count: a flame while in flight or warm, an hourglass with under 5 minutes left, a snowflake once cold. The snowflake SHALL have a branch on each of its six arms, so it reads as a snowflake and not an asterisk at pill size. A request SHALL NOT change the pill's width. The glyph SHALL use the theme's text color, and the pill SHALL show no cache countdown. The pill's alternative text SHALL name the state and the time left: `Context: 187K of 1M tokens · cache cold in 38m`. The context scale is explained in the usage block only.
 
 #### Scenario: Warm pill
-- **WHEN** the cache state is warm with 38 minutes left
-- **THEN** the context pill shows its token count and a flame, no `38m`, and its alternative text names `cache cold in 38m`
+- **WHEN** the cache state is warm with 38 minutes left and the context holds 187,000 tokens of a 1,000,000-token window
+- **THEN** the context pill shows `187K` and a flame, no `38m`, and its alternative text is `Context: 187K of 1M tokens · cache cold in 38m`
 
 #### Scenario: Pill while a turn runs
-- **WHEN** a prompt is sent while the cache state is warm
-- **THEN** the pill keeps its flame and width, and its alternative text names `cache in use`
+- **WHEN** a main request streams while the cache state was warm
+- **THEN** the pill keeps its flame and width, and its alternative text ends `cache in use`
 
 #### Scenario: Cold pill
 - **WHEN** the cache state is cold
 - **THEN** the context pill shows a snowflake with a branch on each of its six arms, in the theme's text color
 
 #### Scenario: No state
-- **WHEN** no cache state is shown
-- **THEN** the context pill is drawn as before, with no glyph and no added width
+- **WHEN** no cache state is shown and the context holds 120,000 tokens of a 200,000-token window
+- **THEN** the context pill is drawn with no glyph and no added width, and its alternative text is `Context: 120K of 200K tokens`
 
 ### Requirement: Cache line in the usage block
-While a cache state is shown, the usage block's context row SHALL add a second dim line: `Cache in use` while a turn runs, `Cache cold in 38m` while warm, and `Cache cold, the next message re-reads 412K` once cold. The line SHALL start with the same cache glyph the context pill shows, drawn as the row icons are.
+While a cache state is shown, the usage block's context row SHALL add a dim line after its two context lines: `Cache in use` while a request streams, `Cache cold in 38m` while warm, and `Cache cold, the next message re-reads 412K` once cold. The line SHALL start with the same cache glyph the context pill shows, drawn as the row icons are.
 
 #### Scenario: Warm line
 - **WHEN** the usage block is open and the cache state is warm with 38 minutes left
-- **THEN** the context row shows a flame and `Cache cold in 38m` under its existing line
+- **THEN** the context row shows a flame and `Cache cold in 38m` under its scale line
 
 #### Scenario: Cold line
 - **WHEN** the usage block is open, the cache state is cold and the context holds 412,000 tokens
@@ -539,7 +583,7 @@ While a cache state is shown, the usage block's context row SHALL add a second d
 
 #### Scenario: Other lines
 - **WHEN** the usage block is open
-- **THEN** the pace lines and the context range line show no icon
+- **THEN** the pace lines and the two context lines show no icon
 
 ### Requirement: Usage block row icons
 Each usage block row SHALL show its pill's icon before its name, in the same shape, size and stroke width as on the pill. The icon SHALL use an accent blue, lighter on a dark theme, whatever the row's state, and the name SHALL keep its font, size and weight. The icons SHALL show at every block width; a name too wide for its column SHALL be cut, and its icon kept.
@@ -566,3 +610,44 @@ The open usage block SHALL draw as a card: the theme's inverse ground (white on 
 #### Scenario: Solid fill
 - **WHEN** the Session limit is 25% used and calm
 - **THEN** its meter fills a quarter in solid blue on a gray track
+
+### Requirement: Usage reading age
+The usage block SHALL show when its usage readings were last fetched once that is over 10 minutes ago, as a dim line under the window rows: `Usage as of 14:20`, in the reset time's format.
+
+#### Scenario: Fresh readings
+- **WHEN** the usage block is open and the readings were fetched 3 minutes ago
+- **THEN** no age line is shown
+
+#### Scenario: Old readings
+- **WHEN** the usage block is open, the readings were fetched at 14:20 today and it is now 14:35
+- **THEN** a dim line reads `Usage as of 14:20`
+
+#### Scenario: Readings from yesterday
+- **WHEN** the readings were fetched on Tuesday at 17:30 and it is now Wednesday
+- **THEN** the line reads `Usage as of Tue 17:30`
+
+### Requirement: Cache state ends on a model change or compaction
+The cache state SHALL turn cold the moment a main-loop request names a model other than the one the last request was answered by, and SHALL be hidden from a compaction of the main conversation until the next main request. A compaction that only precomputes, or that is skipped, SHALL change nothing.
+
+#### Scenario: Model switched
+- **WHEN** the last request was answered by `claude-opus-5-5` 3 minutes ago with a 1-hour TTL and the next main request names `claude-sonnet-5-5`
+- **THEN** the cache state is cold until that request's response ends
+
+#### Scenario: Compacted
+- **WHEN** the main conversation is compacted
+- **THEN** no cache state is shown until the next main request ends
+
+#### Scenario: Precompute
+- **WHEN** a compaction runs only to precompute, or is skipped
+- **THEN** the cache state is unchanged
+
+### Requirement: Accuracy log
+With debug logging on, the bar SHALL write one line per main-loop request that pairs each predicted value with the measured one: the cache state predicted at send time with the request's cache-read tokens against the previous request's total input; the context tokens shown with the request's total input; the window percentages from the last header against the endpoint.
+
+#### Scenario: Warm prediction confirmed
+- **WHEN** the state predicted warm and the request read 411,900 of the previous request's 412,000 input tokens from cache
+- **THEN** the line marks the cache prediction as confirmed
+
+#### Scenario: Warm prediction wrong
+- **WHEN** the state predicted warm and the request read 1,200 of the previous request's 412,000 input tokens from cache
+- **THEN** the line marks the cache prediction as wrong

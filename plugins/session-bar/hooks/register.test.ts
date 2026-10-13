@@ -2,8 +2,9 @@ import { test, expect, mock } from 'claude-code/testing'
 import {
   band, paceBand, ctxBand, tokensText, shortDir, limitText, parseUsage, fresh, modelLabel, withModel,
   elapsed, countdown, bar, segments, desktopSegments, resetTime, usageRows, meter, desktopTier, DESKTOP_TIERS, buttonText, pill as desktopPill, layout, width, same, minuteKey, WINDOW_MS, WEEK,
+  cacheTtl, cacheState, CACHE_MIN,
 } from './register'
-import type { BarInput, Badge, Run } from './register'
+import type { BarInput, Badge, CacheState, Run } from './register'
 
 test('bands, dir, labels, weekly parse', async () => {
   expect([49, 50, 79, 80].map(band)).toEqual([undefined, 'warn', 'warn', 'hot'])
@@ -424,15 +425,16 @@ test('desktop mount: calm draws nothing of ours and spawns no git; attention is 
       props: { hasSurvey: false, isWorking: false, maxRows: 3, view: agentId ? { agentId } : {} } as never,
     })
     const n = (await ui.findAll({ type: 'Svg' })).length
-    const text = await ui.find({ type: 'Text' }) // dir, branch and model are Text on the terminal
+    // dir, branch and model are Text on the terminal; the only Text here is each pill's hover card, its alt text
+    const text = (await ui.findAll({ type: 'Text' })).map(t => t.text).filter(t => !/^(Context|Session limit):/.test(t))
     await ui.unmount()
     return { n, text }
   }
 
   await $.session.measure({ context: { tokens: 50_000, window: 1_000_000 }, rateLimits: [{ kind: 'five_hour', percentUsed: 20 }], changed: ['context', 'rateLimits'] } as never)
-  expect(await pills()).toEqual({ n: 2, text: undefined }) // calm: neutral ctx and 5h pills, still no dir, branch or model
+  expect(await pills()).toEqual({ n: 2, text: [] }) // calm: neutral ctx and 5h pills, still no dir, branch or model
   await $.session.measure({ context: { tokens: 187_400, window: 1_000_000 }, rateLimits: [{ kind: 'five_hour', percentUsed: 71 }], changed: ['context', 'rateLimits'] } as never)
-  expect(await pills()).toEqual({ n: 2, text: undefined }) // ctx and 5h pills, no dir, branch or model text
+  expect(await pills()).toEqual({ n: 2, text: [] }) // ctx and 5h pills, no dir, branch or model text
   expect((await pills('a1')).n).toBe(1) // a subagent in view: the 5h pill only, no ctx
   expect(spawns).toBe(0)
 
@@ -711,4 +713,144 @@ test('reset time: a clock time today, a weekday and clock time on another day', 
   expect(resetTime(at(2026, 9, 12, 18, 40), now)).toBe('18:40')
   expect(resetTime(at(2026, 9, 12, 9, 5), now)).toBe('09:05') // zero-padded
   expect(resetTime(at(2026, 9, 13, 17, 30), now)).toBe('Tue 17:30') // 2026-10-13 is a Tuesday
+})
+
+const MIN = 60_000
+const usageLine = (cache_creation: object) => JSON.stringify({ type: 'assistant', message: { usage: { cache_creation } } })
+
+test('cache TTL: 1h only when nothing took 5m, either key order, a cut first line, nothing written looks further back', () => {
+  expect(cacheTtl(usageLine({ ephemeral_1h_input_tokens: 1457, ephemeral_5m_input_tokens: 0 }))).toBe(60 * MIN)
+  expect(cacheTtl(usageLine({ ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 1457 }))).toBe(60 * MIN)
+  expect(cacheTtl(usageLine({ ephemeral_1h_input_tokens: 900, ephemeral_5m_input_tokens: 12 }))).toBe(5 * MIN) // mixed: 5m goes first
+  expect(cacheTtl(usageLine({ ephemeral_5m_input_tokens: 300 }))).toBe(5 * MIN)
+  const tail = ['_input_tokens":1}}}', usageLine({ ephemeral_5m_input_tokens: 40, ephemeral_1h_input_tokens: 0 }), '{"type":"user"}', ''].join('\n')
+  expect(cacheTtl(tail)).toBe(5 * MIN) // the cut line and a line with no usage are skipped
+  const reads = [usageLine({ ephemeral_1h_input_tokens: 50, ephemeral_5m_input_tokens: 0 }), usageLine({ ephemeral_1h_input_tokens: 0, ephemeral_5m_input_tokens: 0 })].join('\n')
+  expect(cacheTtl(reads)).toBe(60 * MIN) // the last response wrote nothing: the one before decides
+  expect(cacheTtl('{"type":"user"}\nnot json')).toBeUndefined()
+  expect(cacheTtl('')).toBeUndefined()
+})
+
+test('cache state: warm with time left, soon under 5 minutes, cold past the TTL; none below 100K or without a turn end', () => {
+  const ended = (ago: number) => ({ endedAt: NOW - ago, ttlMs: 60 * MIN })
+  expect(cacheState(ended(22 * MIN), 412_000, NOW)).toEqual({ state: 'warm', left: 38 * MIN })
+  expect(cacheState(ended(56 * MIN), 412_000, NOW)).toEqual({ state: 'soon', left: 4 * MIN })
+  expect(cacheState(ended(61 * MIN), 412_000, NOW)).toEqual({ state: 'cold', left: 0 })
+  expect(cacheState(ended(22 * MIN), 45_000, NOW)).toBeUndefined()
+  expect(cacheState(ended(22 * MIN), CACHE_MIN, NOW)?.state).toBe('warm')
+  expect(cacheState(undefined, 412_000, NOW)).toBeUndefined() // no turn has ended
+  expect(cacheState({ ...ended(90 * MIN), active: true }, 412_000, NOW)).toEqual({ state: 'active', left: 60 * MIN }) // a turn runs
+  expect(cacheState(ended(22 * MIN), undefined, NOW)).toBeUndefined()
+})
+
+test('cache in the terminal bar: dim countdown, orange when soon, dim cold, a bare symbol at the narrowest tier', () => {
+  const ctx = { tokens: 120_000, window: 1_000_000 } // calm, so the runs keep their own colors (a pill paints its own)
+  const run = (cache: CacheState, tier: 0 | 4 = 0) => segments(input({ ctx, cache }), tier).find(r => r.text.startsWith(' ❄'))
+  expect(run({ state: 'warm', left: 38 * MIN })).toEqual({ text: ' ❄ 38m', dimColor: true })
+  expect(run({ state: 'soon', left: 4 * MIN })).toEqual({ text: ' ❄ 4m', color: '#E69F00' })
+  expect(run({ state: 'cold', left: 0 })).toEqual({ text: ' ❄ cold', dimColor: true })
+  expect(run({ state: 'warm', left: 38 * MIN }, 4)).toEqual({ text: ' ❄', dimColor: true })
+  expect(run({ state: 'cold', left: 0 }, 4)?.text).toBe(' ❄ cold')
+  expect(run({ state: 'active', left: 60 * MIN })).toEqual({ text: ' ❄ in use', dimColor: true })
+  expect(run({ state: 'active', left: 60 * MIN }, 4)?.text).toBe(' ❄')
+  expect(texts(segments(input({ ctx }), 0)).join('')).not.toContain('❄') // no state, nothing added
+  // it comes after the token count, inside the ctx segment
+  const all = texts(segments(input({ ctx, cache: { state: 'warm', left: 38 * MIN } }), 0))
+  expect(all.indexOf(' ❄ 38m')).toBe(all.indexOf('120K') + 1)
+  expect(width(layout(input({ ctx, cache: { state: 'warm', left: 38 * MIN } }), 40))).toBeGreaterThan(0)
+})
+
+test('cache on the Desktop pill: a glyph per state in the ink, no countdown, named in the hover text', () => {
+  const ctx = { tokens: 412_000, window: 1_000_000 }
+  const badge = (cache?: CacheState) => desktopSegments(input({ ctx, cache, windows: [] }))[0]!
+  const warm = badge({ state: 'warm', left: 38 * MIN }), cold = badge({ state: 'cold', left: 0 }), none = badge()
+  expect(warm.tip).toBe('Context: 412K of 1M tokens · cache cold in 38m')
+  expect(cold.tip).toBe('Context: 412K of 1M tokens · cache cold, the next message re-reads 412K')
+  expect(none.tip).toBe('Context: 412K of 1M tokens')
+  const glyphs = (b: Badge, parts = DESKTOP_TIERS[0]!) => desktopPill(b, parts).source.match(/<g transform/g)?.length ?? 0
+  expect([glyphs(none), glyphs(warm), glyphs(cold)]).toEqual([1, 2, 2]) // the ctx icon, then the cache glyph
+  expect(desktopPill(warm).source).not.toBe(desktopPill(badge({ state: 'soon', left: 4 * MIN })).source) // flame, hourglass
+  const active = badge({ state: 'active', left: 60 * MIN })
+  expect(active.tip).toBe('Context: 412K of 1M tokens · cache in use')
+  expect(desktopPill(active).width).toBe(desktopPill(warm).width) // a send does not move the row
+  expect(desktopPill(active).source.split('</title>')[1]).toBe(desktopPill(warm).source.split('</title>')[1]) // the same flame
+  expect(desktopPill(warm).source.split('<text')[1]).not.toContain('38m') // drawn text; the title is the alt text
+  expect(desktopPill(warm).width).toBeGreaterThan(desktopPill(none).width)
+  expect(glyphs(warm, DESKTOP_TIERS[3]!)).toBe(0) // the narrowest tier drops every icon
+  expect(desktopPill(warm, DESKTOP_TIERS[3]!).width).toBe(desktopPill(none, DESKTOP_TIERS[3]!).width)
+})
+
+test('cache line in the usage block: time left while warm, the re-read once cold', () => {
+  const ctx = { tokens: 412_000, window: 1_000_000 }
+  const row = (cache?: CacheState) => usageRows(input({ ctx, cache, windows: [] }))[0]!
+  expect(row({ state: 'warm', left: 38 * MIN }).line2).toBe('Cache cold in 38m')
+  expect(row({ state: 'cold', left: 0 }).line2).toBe('Cache cold, the next message re-reads 412K')
+  expect(row({ state: 'active', left: 60 * MIN }).line2).toBe('Cache in use')
+  expect(row().line2).toBeUndefined()
+})
+
+test('a minute tick redraws for a cache state change, and for its countdown only where one is drawn', () => {
+  const key = (cache: CacheState | undefined, drawn: boolean) => minuteKey([], NOW, false, cache, drawn)
+  expect(key({ state: 'warm', left: 38 * MIN }, false)).toBe(key({ state: 'warm', left: 37 * MIN }, false)) // Desktop, collapsed
+  expect(key({ state: 'warm', left: 38 * MIN }, true)).not.toBe(key({ state: 'warm', left: 37 * MIN }, true)) // terminal or open block
+  expect(key({ state: 'soon', left: 30_000 }, false)).not.toBe(key({ state: 'cold', left: 0 }, false)) // the glyph changes
+  expect(key({ state: 'warm', left: 5 * MIN }, false)).not.toBe(key({ state: 'soon', left: 4 * MIN }, false))
+  expect(key({ state: 'cold', left: 0 }, true)).toBe(key({ state: 'cold', left: 0 }, true))
+  expect(minuteKey([], NOW, true)).toBe(minuteKey([], NOW + MIN, true)) // no cache: unchanged rule
+})
+
+test('cache state lifecycle: a main turn end sets it from the transcript tail, a subagent turn does not, a prompt hides it; pills carry hover text', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  on('session.root', async () => ({ value: '/home/me/skills' }))
+  on('env.get', async () => ({ value: '/home/me' }))
+  on('session.model', async () => ({ value: 'claude-opus-5-5' }))
+  on('session.id', async () => ({ value: 'sess-1' }))
+  on('fs.list', async () => ({ value: [{ name: '-home-me-other' }, { name: '-home-me-skills' }] }) as never)
+  on('fs.exists', async (_$, e) => ({ value: (e as { path: string }).path === '/home/me/.claude/projects/-home-me-skills/sess-1.jsonl' }) as never)
+  const tails: string[] = []
+  on('process.run', async (_$, e) => {
+    const argv = (e as { argv: string[] }).argv
+    if (argv[0] === 'tail') tails.push(argv[3]!)
+    return { value: { exitCode: 0, stdout: argv[0] === 'tail' ? usageLine({ ephemeral_1h_input_tokens: 1457, ephemeral_5m_input_tokens: 0 }) : 'main\n', stderr: '' } } as never
+  })
+  on('session.measure', async (_$, e) => ({ changed: e.changed }))
+  on('turn.complete', async () => ({ text: '' }))
+  on('prompt.submit', async (_$, e) => ({ text: e.text }) as never)
+  on('ui.render', async () => h('Box', {}) as never)
+  on('store.get', async () => ({ value: Date.now() * 2 })) // the usage fetch's 5-minute gate stays shut
+  on('store.set', async () => ({ value: undefined }))
+
+  const terminal = async () => {
+    const ui = await $.ui.mount({ plugin: 'session-bar', surface: 'terminal', component: 'AbovePrompt', props: { hasSurvey: false, isWorking: false, maxRows: 3, bodyColumns: 200 } as never })
+    const t = (await ui.findAll({ type: 'Text' })).map(x => x.text).find(x => x.startsWith(' ❄'))
+    await ui.unmount()
+    return t
+  }
+  await $.session.measure({ context: { tokens: 412_000, window: 1_000_000 }, rateLimits: [], changed: ['context'] } as never)
+  expect(await terminal()).toBeUndefined() // no turn has ended
+
+  await $.turn.complete({ reason: 'answer', answer: '', text: '', durationMs: 1, isAborted: false, turnId: 't1', agentId: 'a1' } as never)
+  expect(await terminal()).toBeUndefined() // a subagent's turn says nothing of main's cache
+
+  await $.turn.complete({ reason: 'answer', answer: '', text: '', durationMs: 1, isAborted: false, turnId: 't2' } as never)
+  expect(tails).toEqual(['/home/me/.claude/projects/-home-me-skills/sess-1.jsonl'])
+  expect(await terminal()).toBe(' ❄ 1h')
+  await clock.advance(22 * MIN)
+  expect(await terminal()).toBe(' ❄ 38m')
+
+  const ui = await $.ui.mount({ plugin: 'session-bar', surface: 'desktop', component: 'AbovePrompt', props: { hasSurvey: false, isWorking: false, maxRows: 3, view: {} } as never })
+  // the kit keeps `hover` out of props: a keyed Box per pill (the hover scope) and its hidden child are what show
+  const boxes = await ui.findAll({ type: 'Box' })
+  expect(boxes.filter(b => b.key?.startsWith('pill-')).map(b => b.key)).toEqual(['pill-ctx-']) // one pill: ctx
+  expect(boxes.filter(b => b.props.display === 'none' && b.props.position === 'absolute')).toHaveLength(1)
+  expect(await ui.find({ type: 'Text', text: 'Context: 412K of 1M tokens · cache cold in 38m' })).toBeDefined()
+  expect((await ui.findAll({ type: 'Svg' })).some(s => (s.props as { isInteractive?: boolean }).isInteractive)).toBe(false)
+  await ui.unmount()
+
+  await $.prompt.submit({ text: 'hi', wait: false, origin: { kind: 'person' } } as never)
+  expect(await terminal()).toBe(' ❄ in use') // the turn runs: every request restarts the TTL, so no countdown
+  await clock.advance(70 * MIN)
+  expect(await terminal()).toBe(' ❄ in use') // never cold while in use
+  await $.turn.complete({ reason: 'answer', answer: '', text: '', durationMs: 1, isAborted: false, turnId: 't3' } as never)
+  expect(await terminal()).toBe(' ❄ 1h') // the turn end restarts the countdown
 })

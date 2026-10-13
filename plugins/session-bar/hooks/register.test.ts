@@ -2,7 +2,7 @@ import { test, expect, mock } from 'claude-code/testing'
 import {
   band, paceBand, ctxBand, tokensText, shortDir, limitText, parseUsage, fresh, modelLabel, withModel,
   elapsed, countdown, bar, segments, desktopSegments, resetTime, usageRows, meter, desktopTier, DESKTOP_TIERS, buttonText, pill as desktopPill, layout, width, same, minuteKey, WINDOW_MS, WEEK,
-  cacheTtl, cacheState, CACHE_MIN,
+  cacheTtl, cacheState, CACHE_MIN, icon,
 } from './register'
 import type { BarInput, Badge, CacheState, Run } from './register'
 
@@ -383,25 +383,33 @@ test('pill: fill is the share used, icon per kind, tint by level, neutral when c
   expect(fillW({ share: 100 }).w).toBe(fillW({ share: 100 }).total)
   expect(fillW({ share: 0 }).w).toBe(0)
   // color means severity only: a translucent track and meter fill in the status color, gray when calm
-  expect(src()).toContain('fill="#fab219" fill-opacity="0.8"') // warn: amber fill
-  expect(src({ level: 'hot' })).toContain('fill="#d03b3b" fill-opacity="0.8"')
-  expect(src({ level: 'hot' })).toContain('stroke-opacity=".7"') // a firm border
+  // warn: amber fill, red when hot, each at a per-scheme opacity so the ink stays 4.5:1 on fill and track alike
+  expect(src()).toContain('fill="#fab219" class="sb-fwarn"')
+  expect(src({ level: 'hot' })).toContain('fill="#d03b3b" class="sb-fhot"')
+  expect(src()).toContain('.sb-fwarn{fill-opacity:.8}.sb-fhot{fill-opacity:.55}') // light: dark ink
+  expect(src()).toContain('.sb-fwarn{fill-opacity:.25}.sb-fhot{fill-opacity:.85}.sb-f5h{fill-opacity:.6}') // dark: light ink; the calm blue firmer
+  expect(desktopPill({ ...b, label: '5h', level: 'hot' }).source).toContain('<tspan class="sb-i">5h</tspan>') // no dim label on red
+  expect(desktopPill({ ...b, label: '5h', level: undefined }).source).toContain('<tspan class="sb-d">5h</tspan>')
+  expect(src()).toContain('.sb-d{fill:#555550}') // the dim label: 4.5:1 on a calm hue, light and dark
+  expect(src({ level: 'hot' })).toContain('class="sb-b"') // the mockup's neutral hairline, not the status color
+  expect(src({ level: 'hot' })).not.toContain('stroke="#d03b3b"')
   const calm = src({ level: undefined })
   expect(calm).toContain('fill="rgb(127,127,127)" fill-opacity="0.3"')
-  expect(calm).toContain('class="sb-t"') // calm track: a white chip, fainter in dark
+  expect(calm).toContain('class="sb-t sb-b"') // calm track: a white chip, fainter in dark, the same hairline
   expect(calm).toContain('.sb-t{fill-opacity:.07}')
-  expect(src()).not.toContain('class="sb-t"') // an attention track is the status color
+  expect(src()).not.toContain('class="sb-t') // an attention track is the status color
   expect(calm).not.toContain('#fab219')
   expect(calm).toContain('prefers-color-scheme:dark') // ink follows the scheme
   expect(src()).toContain('<title>a &amp; b &lt;c></title>') // escaped
   const kinds = ['ctx', '5h', '7d', 'model'] as const
   const paths = kinds.map(kind => /<g [^>]*>(.*?)<\/g>/.exec(src({ kind }))![1])
   expect(new Set(paths).size).toBe(4) // four different icons
-  expect(calm).toContain('stroke-width="2"') // 1.5px on screen at 18/24 scale
-  const colors = (s: string) => s.match(/#[0-9a-f]{6}/gi)!.filter(c => !['#1f1f1e', '#6b6b6b', '#f0efe9', '#a8a79f'].includes(c))
-  expect(kinds.map(kind => [...new Set(colors(src({ kind, level: undefined })))])).toEqual([[], ['#0072B2'], ['#009E73'], ['#CC79A7']]) // a calm quota's own hue; calm ctx stays gray
+  expect(calm).toContain('stroke-width="2.4"') // 1.5px on screen at 15/24 scale
+  expect(calm).toMatch(/<text x="30" y="16.5" font-size="12"/) // 10px side, 15px icon, 5px gap; 12px text
+  const colors = (s: string) => s.match(/#[0-9a-f]{6}/gi)!.filter(c => !['#1f1f1e', '#555550', '#f0efe9', '#bdbcb4'].includes(c))
+  expect(kinds.map(kind => [...new Set(colors(src({ kind, level: undefined })))])).toEqual([[], ['#0072B2'], ['#2c8e68'], ['#CC79A7']]) // a calm quota's own hue; calm ctx stays gray
   expect(kinds.map(kind => [...new Set(colors(src({ kind, level: 'hot' })))])).toEqual(kinds.map(() => ['#d03b3b'])) // attention replaces it
-  expect(calm).toContain('class="sb-s"') // a calm icon is secondary ink, an attention one primary
+  expect(calm).toContain('class="sb-p"') // the mockup's icon is the primary ink, calm or not
   expect(src()).toContain('class="sb-p"')
   const wide = desktopPill({ ...b, label: '5h', value: '15%', share: 15, level: undefined, tip: '' })
   expect(wide.width).toBeGreaterThan(desktopPill({ ...b, value: '15%', share: 15, level: undefined, tip: '' }).width) // the label widens it
@@ -553,7 +561,7 @@ test('usage button: on Desktop only, expands and collapses the block above the p
   const collapsed = { buttons: [['usage', 'Usage details']], alts: [expect.stringMatching(/^Session limit:/), expect.stringMatching(/^Context:/)] }
   expect(await seen(ui)).toEqual(collapsed) // calm: pills and the button, block collapsed
   await ui.press({ key: 'usage' })
-  expect(await seen(ui)).toEqual({ ...collapsed, alts: ['Context: 50K', 'Session limit: 20%', ...collapsed.alts] }) // the block's meters, then the pills
+  expect(await seen(ui)).toEqual({ ...collapsed, alts: ['context pill', 'Context: 50K', '5h pill', 'Session limit: 20%', ...collapsed.alts] }) // each row's icon and meter, then the pills
   expect(await ui.find({ text: 'Ideal under 150K · window 1M' })).toBeDefined()
   expect(await ui.find({ text: '5h' })).toBeUndefined() // the pills' labels are in their Svg, not renamed Text
   await ui.press({ key: 'usage' })
@@ -576,8 +584,17 @@ test('usage block: two rows a line when wide, one compact row a line when narrow
   const draw = async (bodyColumns: number) => {
     const ui = await $.ui.mount({ plugin: 'session-bar', surface: 'desktop', component: 'AbovePrompt', props: { hasSurvey: false, isWorking: false, maxRows: 9, bodyColumns, view: {} } as never })
     await ui.press({ key: 'usage' })
+    const svgs = (await ui.findAll({ type: 'Svg' })).map(s => s.props as { alt: string; source: string })
+    // each row's icon is its pill's, the same <g> (shape, size, stroke) but for where it sits and its ink: the rows' is the
+    // mockup's accent blue, the pills' the primary ink
+    const g = (s: string) => s.match(/<g [^>]*>.*?<\/g>/)![0].replace(/translate\([^)]*\)/, '').replace(/class="sb-[pa]"/, '')
+    const pills = svgs.filter(s => s.source.includes('<title>')).map(s => g(s.source))
+    const icons = svgs.filter(s => s.alt.endsWith(' pill'))
+    expect(icons.map(s => s.alt)).toEqual(['context pill', '5h pill', '7d pill'])
+    expect(icons.every(s => s.source.includes('class="sb-a"') && s.source.includes('.sb-a{stroke:#084f95}'))).toBe(true)
+    expect([...icons.map(s => g(s.source))].sort()).toEqual([...pills].sort())
     const out = {
-      meters: (await ui.findAll({ type: 'Svg' })).map(s => (s.props as { alt: string }).alt).filter(alt => /^[^:]+: [\d.]+[%K]$/.test(alt)),
+      meters: svgs.map(s => s.alt).filter(alt => /^[^:]+: [\d.]+[%K]$/.test(alt)),
       texts: await Promise.all(['Context', '50K', 'Session limit', '20%', 'Weekly · all models', '40%', 'Ideal under 150K · window 1M'].map(async text => !!(await ui.find({ text })))),
     }
     await ui.press({ key: 'usage' }) // the open state is the session's: close it for the next mount
@@ -593,9 +610,14 @@ test('usage block: two rows a line when wide, one compact row a line when narrow
 test('usage meter: fill is the share, a pale shadow behind it for the time gone, no tick, sized by its cell', () => {
   const r = { kind: '5h', name: 'x', value: '25%', share: 25, shadow: 77, level: undefined, line: '' } as const
   const m = meter(r)
-  expect(m).toContain('width="25%" height="8" clip-path="url(#sb-c-meter-x)" fill="#0072B2" fill-opacity="0.55"') // fill: a quarter in the 5h hue, firmer than the pill's calm .3
-  expect(m).toContain('width="77%" height="8" clip-path="url(#sb-c-meter-x)" class="sb-k"') // shadow: 77%
-  expect(m.indexOf('class="sb-k"/>')).toBeLessThan(m.indexOf('fill="#0072B2" fill-opacity')) // drawn behind the fill
+  expect(m).toContain('width="25%" height="6" clip-path="url(#sb-c-meter-x)" fill="#0072B2"/>') // fill: a quarter, solid in the 5h hue, as the mockup
+  expect(m).toContain('width="77%" height="6" clip-path="url(#sb-c-meter-x)" class="sb-k"') // shadow: 77%
+  expect(m.indexOf('class="sb-k"/>')).toBeLessThan(m.indexOf('fill="#0072B2"')) // drawn behind the fill
+  expect(m).not.toContain('stroke') // a plain gray track, no outline
+  expect(m).toContain('<rect x="25%" width="2" height="6" clip-path="url(#sb-c-meter-x)" class="sb-g"/>') // a 2px gap where fill meets shadow
+  expect(m.indexOf('class="sb-g"')).toBeGreaterThan(m.indexOf('fill="#0072B2"')) // over the fill's end
+  expect(meter({ ...r, shadow: 10 })).not.toContain('class="sb-g"') // a shadow under the fill shows no edge to mark
+  expect(meter({ ...r, share: 0 })).not.toContain('class="sb-g"')
   expect(m).not.toContain('viewBox') // no fixed coordinate width to stretch: the flex cell sets it
   expect(m).toContain('<svg xmlns="http://www.w3.org/2000/svg" width="100%"')
   expect(meter({ ...r, level: 'hot' })).toContain('fill="#d03b3b"') // the pill's hot color
@@ -620,9 +642,10 @@ test('desktop tiers: one row that sheds labels, then the button name, then icons
   expect(tiers).toEqual([...tiers].sort()) // narrower never gets richer
 
   const full = desktopPill(badges[0]!), bare = desktopPill(badges[0]!, { label: false, icon: false })
-  expect(full.source).toContain('>5h </tspan>')
+  expect(full.source).toContain('<tspan class="sb-d">5h</tspan><tspan dx="5" class="sb-i">1%</tspan>') // 5px between label and value
   expect(full.source).toContain('<g ')
-  expect(bare.source).not.toContain('>5h </tspan>') // no label
+  expect(bare.source).not.toContain('>5h</tspan>') // no label
+  expect(bare.source).toContain('<tspan class="sb-i">1%</tspan>') // and no gap before the value
   expect(bare.source).not.toContain('<g ') // no icon
   expect(bare.width).toBeLessThan(desktopPill(badges[0]!, { label: false, icon: true }).width)
   expect(desktopPill(badges[0]!, { label: false, icon: true }).width).toBeLessThan(full.width)
@@ -637,10 +660,12 @@ test('every Svg keeps its classes and clip id to itself, so markup placed in the
   const ids = sources.map(s => /id="([^"]+)"/.exec(s)![1])
   expect(new Set(ids).size).toBe(sources.length) // one clip id per Svg
   for (const s of sources) {
-    expect([...s.matchAll(/class="([^"]+)"/g)].every(m => m[1]!.startsWith('sb-'))).toBe(true)
+    expect([...s.matchAll(/class="([^"]+)"/g)].flatMap(m => m[1]!.split(' ')).every(c => c.startsWith('sb-'))).toBe(true)
     expect(s).toContain(`clip-path="url(#${/id="([^"]+)"/.exec(s)![1]})"`) // each fill uses its own clip
   }
-  expect(desktopPill(badge('5h', '5h')).source).toContain('<tspan font-size="13" class="sb-i">') // the value sets its own size, at the label's regular weight
+  expect(desktopPill(badge('5h', '5h')).source).toContain('font-size="12"') // label and value one size, as the mockup, at regular weight
+  expect(desktopPill(badge('5h', '5h')).source).not.toContain('font-weight')
+  expect(icon('').includes('class=') && [...icon('').matchAll(/class="([^"]+)"/g)].every(m => m[1]!.startsWith('sb-'))).toBe(true)
 })
 
 test('usage rows: app names, pace line, cap time, reset; context against the ideal ceiling', () => {
@@ -770,6 +795,17 @@ test('cache on the Desktop pill: a glyph per state in the ink, no countdown, nam
   const glyphs = (b: Badge, parts = DESKTOP_TIERS[0]!) => desktopPill(b, parts).source.match(/<g transform/g)?.length ?? 0
   expect([glyphs(none), glyphs(warm), glyphs(cold)]).toEqual([1, 2, 2]) // the ctx icon, then the cache glyph
   expect(desktopPill(warm).source).not.toBe(desktopPill(badge({ state: 'soon', left: 4 * MIN })).source) // flame, hourglass
+  expect(desktopPill(cold).source).toContain('M12 2v6.5l3 1.72') // Tabler's snowflake: a branch on each arm
+  expect(desktopPill(cold).source).not.toContain('M12 3v18') // not the old asterisk
+  // a block icon is the pill's glyph: the same scale and stroke at its own spot, in the mockup's accent blue, its 2px gap
+  // inside its box
+  const ctxG = (s: string) => s.match(/<g [^>]*>.*?<\/g>/)![0].replace(/translate\([^)]*\)/, '').replace(/class="sb-[pa]"/, '')
+  const calm = desktopPill(desktopSegments(input({ ctx: { tokens: 50_000, window: 1_000_000 }, windows: [] }))[0]!).source
+  const row = icon('<path d="M12 4l-8 4l8 4l8-4z"/><path d="M4 12l8 4l8-4"/><path d="M4 16l8 4l8-4"/>')
+  expect(ctxG(row)).toBe(ctxG(calm))
+  expect(row).toContain('width="17" height="15"')
+  expect(row).toContain('class="sb-a"')
+  expect(row).toContain('translate(0 -1)') // 1px up, onto the text's baseline
   const active = badge({ state: 'active', left: 60 * MIN })
   expect(active.tip).toBe('Context: 412K of 1M tokens · cache in use')
   expect(desktopPill(active).width).toBe(desktopPill(warm).width) // a send does not move the row
@@ -787,6 +823,7 @@ test('cache line in the usage block: time left while warm, the re-read once cold
   expect(row({ state: 'cold', left: 0 }).line2).toBe('Cache cold, the next message re-reads 412K')
   expect(row({ state: 'active', left: 60 * MIN }).line2).toBe('Cache in use')
   expect(row().line2).toBeUndefined()
+  expect([row({ state: 'warm', left: 38 * MIN }).cache, row({ state: 'cold', left: 0 }).cache, row().cache]).toEqual(['warm', 'cold', undefined]) // picks the line's glyph
 })
 
 test('a minute tick redraws for a cache state change, and for its countdown only where one is drawn', () => {
@@ -838,13 +875,39 @@ test('cache state lifecycle: a main turn end sets it from the transcript tail, a
   await clock.advance(22 * MIN)
   expect(await terminal()).toBe(' ❄ 38m')
 
-  const ui = await $.ui.mount({ plugin: 'session-bar', surface: 'desktop', component: 'AbovePrompt', props: { hasSurvey: false, isWorking: false, maxRows: 3, view: {} } as never })
+  const desktop = () => $.ui.mount({ plugin: 'session-bar', surface: 'desktop', component: 'AbovePrompt', props: { hasSurvey: false, isWorking: false, maxRows: 3, view: {} } as never })
+  let ui = await desktop()
   // the kit keeps `hover` out of props: a keyed Box per pill (the hover scope) and its hidden child are what show
   const boxes = await ui.findAll({ type: 'Box' })
   expect(boxes.filter(b => b.key?.startsWith('pill-')).map(b => b.key)).toEqual(['pill-ctx-']) // one pill: ctx
   expect(boxes.filter(b => b.props.display === 'none' && b.props.position === 'absolute')).toHaveLength(1)
   expect(await ui.find({ type: 'Text', text: 'Context: 412K of 1M tokens · cache cold in 38m' })).toBeDefined()
   expect((await ui.findAll({ type: 'Svg' })).some(s => (s.props as { isInteractive?: boolean }).isInteractive)).toBe(false)
+  // the open block: the ctx icon on the name, the pill's cache glyph on the cache line, nothing on the range line
+  const glyphs = async () => (await ui.findAll({ type: 'Svg' })).filter(s => / pill$|^cache /.test((s.props as { alt: string }).alt)).map(s => (s.props as { source: string }).source)
+  // shape, size and stroke as on the pill; the ink is always the mockup's accent blue here, whatever the pill's state
+  const g = (s: string) => s.match(/<g [^>]*>.*?<\/g>/)![0].replace(/translate\([^)]*\)/, '').replace(/class="sb-[pa]"/, '')
+  const pillCache = async () => g((await ui.findAll({ type: 'Svg' })).map(s => (s.props as { source: string }).source).find(s => s.includes('<title>Context'))!.match(/<g [^>]*>.*?<\/g>/g)![1]!)
+  await ui.press({ key: 'usage' })
+  let [name, line] = await glyphs()
+  expect(await glyphs()).toHaveLength(2)
+  expect(name).toContain('M12 4l-8 4l8 4l8-4z') // the stack
+  expect(name).toContain('class="sb-a"')
+  expect(g(line!)).toBe(await pillCache()) // the flame, as on the pill
+  await ui.unmount()
+  await clock.advance(34 * MIN)
+  ui = await desktop() // the open state is the session's, so the block is still open
+  ;[, line] = await glyphs()
+  expect(line).toContain('M6.5 7h11') // the hourglass with 4 minutes left
+  expect(g(line!)).toBe(await pillCache())
+  await ui.unmount()
+  await clock.advance(6 * MIN)
+  ui = await desktop()
+  ;[, line] = await glyphs()
+  expect(line).toContain('M12 2v6.5l3 1.72') // the snowflake once cold
+  expect(line).toContain('class="sb-a"')
+  expect(g(line!)).toBe(await pillCache())
+  await ui.press({ key: 'usage' })
   await ui.unmount()
 
   await $.prompt.submit({ text: 'hi', wait: false, origin: { kind: 'person' } } as never)

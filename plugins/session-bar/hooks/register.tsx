@@ -242,7 +242,7 @@ export const resetTime = (resetsAt: string, now: number) => {
 
 // A row of the Desktop usage block. share and shadow are 0-100; shadow is the share of the window already gone, so
 // a quota meant to be used up reads as room (shadow past the fill) or overspend (fill past it); line is one dim line
-export type UsageRow = { kind: Kind; name: string; value: string; share: number; shadow?: number; level: Level; line: string; line2?: string }
+export type UsageRow = { kind: Kind; name: string; value: string; share: number; shadow?: number; level: Level; line: string; line2?: string; cache?: CacheState['state'] }
 
 // the app's own names, in the block only: the pills keep 5h, 7d and the model
 const rowName = (label: string) => label === '5h' ? 'Session limit' : label === '7d' ? 'Weekly · all models' : `Weekly · ${label}`
@@ -256,7 +256,7 @@ export const usageRows = (b: BarInput): UsageRow[] => {
       kind: 'ctx', name: 'Context', value: tokensText(b.ctx.tokens), share: clamp((b.ctx.tokens / hot) * 100), level,
       line: (level === 'hot' ? `Past ${tokensText(hot)}, quality drops` : level ? 'Past the ideal range' : `Ideal under ${tokensText(CTX_WARN)}`)
         + ` · window ${tokensText(b.ctx.window)}`,
-      ...(b.cache && { line2: (s => s[0]!.toUpperCase() + s.slice(1))(cacheText(b.cache, b.ctx.tokens)) }),
+      ...(b.cache && { line2: (s => s[0]!.toUpperCase() + s.slice(1))(cacheText(b.cache, b.ctx.tokens)), cache: b.cache.state }),
     })
   }
   for (const w of b.windows) {
@@ -287,10 +287,32 @@ export const usageRows = (b: BarInput): UsageRow[] => {
 // OS scheme stands in for the app's, which differ only when the app is not on auto
 const STATUS = { warn: '#fab219', hot: '#d03b3b' } as const
 const GRAY = 'rgb(127,127,127)'
-const HUE: Record<Kind, string> = { ctx: GRAY, '5h': '#0072B2', '7d': '#009E73', model: '#CC79A7' }
-const FILL = { calm: 0.3, warn: 0.8, hot: 0.8 } as const // meter fill opacity; the track is a white chip when calm, .3 of the status color otherwise
-const PILL_H = 28, ICON = 18, ICON_STROKE = 1.5
+// The green is written #2c8e68 so it shows as #009a68, 3:1 on white: Desktop draws an Svg's colors shifted, which a
+// linear-light matrix fitted on four sampled pairs predicts (#009E73 drawn #00ac74, #173c95 drawn #280695)
+const HUE: Record<Kind, string> = { ctx: GRAY, '5h': '#0072B2', '7d': '#2c8e68', model: '#CC79A7' }
+// pill fill opacity when calm; an attention fill's is per scheme (sb-fwarn, sb-fhot in INK). The track is a white chip when
+// calm, .3 of the status color otherwise
+const CALM_FILL = 0.3
+// the approved mockup's pill: 24px high, 10px sides, an icon about the 12px text's height, 5px between icon, label and value
+const PILL_H = 24, PILL_PAD = 10, ICON = 15, ICON_STROKE = 1.5, ICON_GAP = 5
 const xml = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;')
+// the inks, from the OS scheme as an Svg cannot read the app's variables: i/d text, p an icon stroke, t a calm track,
+// b the pill's neutral hairline, fwarn/fhot an attention fill's opacity. Each text and icon is 4.5:1 or more on its pill
+// with a margin for Desktop drawing an Svg's colors more saturated (#d03b3b read #e82250): the dim label on a calm hue,
+// and the ink on an amber or red fill and on its pale track alike, as a text often sits on both. So the red is .55 on
+// light, and the amber .25 on dark, where the ink is light
+const INK = '<style>.sb-i{fill:#1f1f1e}.sb-d{fill:#555550}.sb-p{stroke:#1f1f1e}.sb-t{fill:#fff;fill-opacity:.75}.sb-b{stroke:#1f1f1e;stroke-opacity:.15}'
+  + '.sb-fwarn{fill-opacity:.8}.sb-fhot{fill-opacity:.55}'
+  + '@media (prefers-color-scheme:dark){.sb-i{fill:#f0efe9}.sb-d{fill:#bdbcb4}.sb-p{stroke:#f0efe9}.sb-t{fill-opacity:.07}.sb-b{stroke:#f0efe9;stroke-opacity:.2}'
+  // dark: the red firmer against its track with the ink still 4.8:1; the calm blue firmer too, its label still 4.7:1
+  // (the green and pink have no such room: their label drops under 4.5:1 first)
+  + '.sb-fwarn{fill-opacity:.25}.sb-fhot{fill-opacity:.85}.sb-f5h{fill-opacity:.6}}</style>'
+// a 24px Tabler glyph drawn ICON wide at (x, y), for the pills and the usage block alike
+const glyph = (x: number, y: number, paths: string, ink: 'sb-p' | 'sb-a') => {
+  const scale = ICON / 24
+  return `<g transform="translate(${x} ${y}) scale(${scale})" fill="none" stroke-width="${+(ICON_STROKE / scale).toFixed(2)}" `
+    + `stroke-linecap="round" stroke-linejoin="round" class="${ink}">${paths}</g>`
+}
 
 // Tabler-style outline paths in a 24x24 box
 const GLYPH: Record<Kind, string> = {
@@ -306,8 +328,19 @@ const CACHE_GLYPH: Record<CacheState['state'], string> = {
   active: FLAME, // warm too, so a send moves nothing on the pill
   warm: FLAME,
   soon: '<path d="M6.5 7h11"/><path d="M6 20v-2a6 6 0 1 1 12 0v2a1 1 0 0 1-1 1h-10a1 1 0 0 1-1-1z"/><path d="M6 4v2a6 6 0 1 0 12 0v-2a1 1 0 0 0-1-1h-10a1 1 0 0 0-1 1z"/>',
-  cold: '<path d="M12 3v18M4.2 7.5l15.6 9M4.2 16.5l15.6-9"/><path d="M10 4l2 2l2-2M10 20l2-2l2 2"/>',
+  cold: '<path d="M10 4l2 1l2-1M12 2v6.5l3 1.72M17.928 6.268l.134 2.232l1.866 1.232M20.66 7l-5.629 3.25l.01 3.458'
+    + 'M19.928 14.268l-1.866 1.232l-.134 2.232M20.66 17l-5.629-3.25l-2.99 1.738M14 20l-2-1l-2 1M12 22v-6.5l-3-1.72'
+    + 'M6.072 17.732l-.134-2.232l-1.866-1.232M3.34 17l5.629-3.25l-.01-3.458M4.072 9.732l1.866-1.232l.134-2.232M3.34 7l5.629 3.25l2.99-1.738"/>',
 }
+
+// a glyph on its own, for the usage block: the pill's size and stroke in the approved mockup's accent blue (a lighter one
+// on dark). The gap is inside it, as a Box gap is a whole cell (8px); 2px reads as the pill's 5px, as Desktop draws more
+// room after an Svg. 1px up: centered on the line box, it sat 1px under the baseline
+export const ROW_GAP = 2
+export const icon = (paths: string) => `<svg xmlns="http://www.w3.org/2000/svg" width="${ICON + ROW_GAP}" height="${ICON}" viewBox="0 0 ${ICON + ROW_GAP} ${ICON}">`
+  // #084f95 shows as the mockup's #173c95 once Desktop shifts it (see HUE)
+  + '<style>.sb-a{stroke:#084f95}@media (prefers-color-scheme:dark){.sb-a{stroke:#85b7eb}}</style>'
+  + glyph(0, -1, paths, 'sb-a') + '</svg>'
 
 // Desktop may place the markup in its own page, where a <style> and an id would reach every element: so every class
 // is sb- prefixed and each Svg has its own clip id
@@ -321,31 +354,30 @@ export const pill = (b: Badge, parts: PillParts = FULL) => {
   const color = b.level ? STATUS[b.level] : HUE[b.kind]
   const clip = `sb-c-pill-${b.kind}-${slug(b.label ?? '')}`
   const label = parts.label ? b.label : undefined
-  const x = parts.icon ? 12 + ICON + 7 : 12
-  const text = (label ? label.length * 6.4 + 5 : 0) + b.value.length * 7.4 // measured live: 6.4 left the 5h pill ~7px short on the right
+  // the approved mockup's pill: 10px sides, 5px between icon, label and value, all 12px text
+  const x = parts.icon ? PILL_PAD + ICON + ICON_GAP : PILL_PAD
+  const text = (label ? label.length * 6.4 + ICON_GAP : 0) + b.value.length * 6.8 // 12px: 6.4 a label char measured live, 7.4 at 13px scaled
   const cached = parts.icon && b.cache ? b.cache : undefined // the narrowest tier drops every icon, this one too
-  const width = Math.ceil(x + text + (cached ? 6 + ICON : 0) + 12)
-  const scale = ICON / 24
-  const glyph = (at: number, paths: string) => `<g transform="translate(${at} ${(PILL_H - ICON) / 2}) scale(${scale})" fill="none" stroke-width="${+(ICON_STROKE / scale).toFixed(2)}" `
-    + `stroke-linecap="round" stroke-linejoin="round" class="${b.level ? 'sb-p' : 'sb-s'}">${paths}</g>`
+  const width = Math.ceil(x + text + (cached ? ICON_GAP + ICON : 0) + PILL_PAD)
+  const icon = (at: number, paths: string) => glyph(at, (PILL_H - ICON) / 2, paths, 'sb-p') // the primary ink, as the mockup's
   const shape = `x=".5" y=".5" width="${width - 1}" height="${PILL_H - 1}" rx="${PILL_H / 2 - .5}"`
   return {
     width,
     source: `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${PILL_H}" viewBox="0 0 ${width} ${PILL_H}">`
       + `<title>${xml(b.tip)}</title>`
-      + '<style>.sb-i{fill:#1f1f1e}.sb-d{fill:#6b6b6b}.sb-p{stroke:#1f1f1e}.sb-s{stroke:#6b6b6b}.sb-t{fill:#fff;fill-opacity:.75}'
-      + '@media (prefers-color-scheme:dark){.sb-i{fill:#f0efe9}.sb-d{fill:#a8a79f}.sb-p{stroke:#f0efe9}.sb-s{stroke:#a8a79f}.sb-t{fill-opacity:.07}}</style>'
+      + INK
       + `<clipPath id="${clip}"><rect ${shape}/></clipPath>`
       // a calm track is a white chip on the app's gray strip; a translucent gray one all but vanished there
-      + `<rect ${shape} ${b.level ? `fill="${color}" fill-opacity=".3"` : 'class="sb-t"'} stroke="${color}" stroke-opacity="${b.level ? '.7' : '.3'}"/>`
-      + `<rect width="${+((width * b.share) / 100).toFixed(2)}" height="${PILL_H}" clip-path="url(#${clip})" fill="${color}" fill-opacity="${FILL[b.level ?? 'calm']}"/>`
-      + (parts.icon ? glyph(12, GLYPH[b.kind]) : '')
-      + (cached ? glyph(+(x + text + 6).toFixed(2), CACHE_GLYPH[cached]) : '')
-      + `<text x="${x}" y="18.5" font-size="13" font-family="system-ui,-apple-system,sans-serif">`
-      + (label ? `<tspan font-size="12" class="sb-d">${xml(label)} </tspan>` : '')
+      // the mockup's hairline: neutral, not the pill's hue
+      + `<rect ${shape} ${b.level ? `fill="${color}" fill-opacity=".3" class="sb-b"` : 'class="sb-t sb-b"'}/>`
+      + `<rect width="${+((width * b.share) / 100).toFixed(2)}" height="${PILL_H}" clip-path="url(#${clip})" fill="${color}" ${b.level ? `class="sb-f${b.level}"` : `fill-opacity="${CALM_FILL}" class="sb-f${b.kind}"`}/>`
+      + (parts.icon ? icon(PILL_PAD, GLYPH[b.kind]) : '')
+      + (cached ? icon(+(x + text + ICON_GAP).toFixed(2), CACHE_GLYPH[cached]) : '')
+      + `<text x="${x}" y="16.5" font-size="12" font-family="system-ui,-apple-system,sans-serif">`
+      + (label ? `<tspan class="${b.level ? 'sb-i' : 'sb-d'}">${xml(label)}</tspan>` : '') // no dim gray passes on amber or red
       // regular weight, as the label: a heavier value (500 or 700) drew wider once the usage block opened, the label never did;
       // the primary ink against the label's dim one keeps it the stronger part
-      + `<tspan font-size="13" class="sb-i">${xml(b.value)}</tspan>`
+      + `<tspan${label ? ` dx="${ICON_GAP}"` : ''} class="sb-i">${xml(b.value)}</tspan>`
       + '</text></svg>',
   }
 }
@@ -375,23 +407,29 @@ export const desktopTier = (badges: Badge[], columns?: number): DesktopTier => {
     ?? DESKTOP_TIERS[DESKTOP_TIERS.length - 1]!
 }
 
-// A usage row's meter: the pill's colors and track, and behind the fill a pale shadow as wide as the window's share
-// gone. No tick, no legend. Not interactive, like every Svg here. No viewBox: the Svg takes its cell's width from the
-// flex layout and the rects are percentages of it, so nothing is stretched and the round ends keep their pixel radius.
-// The border is a 2px stroke clipped to the track, so 1px shows inside it at any width
-const METER_H = 8
+// A usage row's meter, as the approved mockup: a plain gray track with no outline, the fill solid in the pill's color,
+// and behind the fill a darker shadow as wide as the window's share gone. No tick, no legend. Not interactive, like
+// every Svg here. No viewBox: the Svg takes its cell's width from the flex layout and the rects are percentages of it,
+// so nothing is stretched and the round ends keep their pixel radius
+const METER_H = 6
 export const meter = (r: UsageRow) => {
   const color = r.level ? STATUS[r.level] : HUE[r.kind]
   const shape = `width="100%" height="${METER_H}" rx="${METER_H / 2}"`
   const clip = `sb-c-meter-${slug(r.name)}`
   const part = (share: number, attrs: string) => `<rect width="${+share.toFixed(2)}%" height="${METER_H}" clip-path="url(#${clip})" ${attrs}/>`
   return `<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="${METER_H}">`
-    + '<style>.sb-k{fill:#1f1f1e;fill-opacity:.14}.sb-t{fill:#fff;fill-opacity:.75}@media (prefers-color-scheme:dark){.sb-k{fill:#f0efe9;fill-opacity:.16}.sb-t{fill-opacity:.07}}</style>'
+    // as the approved mockup: a plain gray track, no outline, the fill solid in its own color
+    // grays firm enough that the time-gone band reads against the track (light 1.3:1 and dark 1.5:1 were too faint)
+    + '<style>.sb-t{fill:#d9d9d9}.sb-k{fill:#bdbdbd}.sb-g{fill:#fff}'
+    + '@media (prefers-color-scheme:dark){.sb-t{fill:#2f2f2e}.sb-k{fill:#525250}.sb-g{fill:#0b0b0b}}</style>'
     + `<clipPath id="${clip}"><rect ${shape}/></clipPath>`
-    + `<rect ${shape} clip-path="url(#${clip})" ${r.level ? `fill="${color}" fill-opacity=".3"` : 'class="sb-t"'} stroke="${color}" stroke-width="2" stroke-opacity="${r.level ? '.7' : '.3'}"/>`
+    + `<rect ${shape} class="sb-t"/>`
     + (r.shadow === undefined ? '' : part(clamp(r.shadow), 'class="sb-k"'))
-    // a calm fill firmer than the pill's, so its edge stands out from the gray shadow behind it
-    + part(r.share, `fill="${color}" fill-opacity="${r.level ? FILL[r.level] : 0.55}"`)
+    + part(r.share, `fill="${color}"`)
+    // a 2px gap in the card's color where the fill meets the shadow: most fills sit under 3:1 against the gray, so the
+    // edge shows by the gap, not the contrast (the card's ground read live: white, and #0b0b0b on dark)
+    + (r.shadow !== undefined && r.share > 0 && clamp(r.shadow) > r.share
+      ? `<rect x="${+r.share.toFixed(2)}%" width="2" height="${METER_H}" clip-path="url(#${clip})" class="sb-g"/>` : '')
     + '</svg>'
 }
 
@@ -572,35 +610,43 @@ export const register: Register = on => {
       // two rows per line, one where two would break every line (under ~520px)
       const perLine = (e.props.bodyColumns ?? Infinity) * PX_PER_COL < 520 ? 1 : 2
       const pairs = rows.flatMap((r, i) => i % perLine ? [] : [rows.slice(i, i + perLine)])
+      // the pill's glyph before a row's name or its cache line, so a row reads as its pill; a narrow column cuts the text,
+      // never the glyph. Its alt names the pill it matches; Desktop draws nothing for an empty one
+      const iconed = (paths: string, alt: string, text: JSX.Element) => (
+        <Box alignItems="center"><Box flexShrink={0}><Svg source={icon(paths)} alt={alt} width={ICON + ROW_GAP} height={ICON} /></Box>{text}</Box>
+      )
       return (
         <Box flexDirection="column">
-          {/* the room above the pills is a gap: Desktop drew no marginBottom. Compact rows space tighter, as the band's
-              height is what runs out there. None while collapsed, or the empty slot above the pills fattens the bar */}
-          <Box flexDirection="column" gap={open ? (perLine === 2 ? 3 : 1) : 0}>
+          {/* the room above the pills is a gap: Desktop drew no marginBottom. None while collapsed, or the empty slot above
+              the pills fattens the bar. The block is the mockup's card: the theme's inverse ink as its ground (white on
+              light), a round border, and padding that tightens with one row a line, as the band's height runs out there */}
+          <Box flexDirection="column" gap={open ? 1 : 0}>
             {open && (
-              <Box flexDirection="column" gap={perLine === 2 ? 2 : 1}>
+              <Box flexDirection="column" gap={perLine === 2 ? 2 : 1} backgroundColor="inverseText" borderStyle="round" borderColor="promptBorder" padding={perLine === 2 ? 2 : 1}>
                 {pairs.map(pair => (
                   <Box gap={3}>
                     {pair.map(r => {
                       const bar = <Svg source={meter(r)} alt={`${r.name}: ${r.value}`} height={METER_H} />
+                      const name = iconed(GLYPH[r.kind], `${r.kind === 'ctx' ? 'context' : r.kind} pill`, <Text wrap="truncate-end">{r.name}</Text>)
+                      const line2 = r.line2 && (r.cache ? iconed(CACHE_GLYPH[r.cache], `cache ${r.cache}`, <Text dimColor>{r.line2}</Text>) : <Text dimColor>{r.line2}</Text>)
                       // one per line: name, meter and value share a line, 2 lines a row instead of 3, so the block fits
                       // the band's height and the pills never scroll out of view
                       return perLine === 2 ? (
                         <Box flexDirection="column" width="50%" flexShrink={1}>
-                          <Box justifyContent="space-between"><Text>{r.name}</Text><Text bold>{r.value}</Text></Box>
+                          <Box justifyContent="space-between"><Box flexShrink={1}>{name}</Box><Text bold>{r.value}</Text></Box>
                           {bar}
                           {r.line && <Text dimColor>{r.line}</Text>}
-                          {r.line2 && <Text dimColor>{r.line2}</Text>}
+                          {line2}
                         </Box>
                       ) : (
                         <Box flexDirection="column" width="100%">
                           <Box gap={1} alignItems="center">
-                            <Box width="34%" flexShrink={0}><Text wrap="truncate-end">{r.name}</Text></Box>
+                            <Box width="34%" flexShrink={0}>{name}</Box>
                             <Box flexGrow={1} flexDirection="column">{bar}</Box>
                             <Box width={6} flexShrink={0} justifyContent="flex-end"><Text bold>{r.value}</Text></Box>
                           </Box>
                           {r.line && <Text dimColor>{r.line}</Text>}
-                          {r.line2 && <Text dimColor>{r.line2}</Text>}
+                          {line2}
                         </Box>
                       )
                     })}

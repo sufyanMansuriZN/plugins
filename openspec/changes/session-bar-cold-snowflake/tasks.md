@@ -28,7 +28,7 @@
 ## 5. Live check and release
 
 - [x] 5.1 In the hot-reloaded dev-mods copy, check on Desktop: a dark theme (card ground, blue icons, meters), a narrow window (1 row per line, a cut name keeps its icon), the snowflake once cold, and no flicker on send with the block open
-- [ ] 5.2 Sync the spec delta into `openspec/specs/session-bar`, bump `plugin.json` to 0.18.0, release (commit, push, `claude plugin update session-bar`), remove the dev-mods copy, re-enable the installed plugin, and verify `claude plugin test` passes and a new session shows the bar
+- [x] 5.2 Sync the spec delta into `openspec/specs/session-bar`, bump `plugin.json` to 0.18.0, release (commit, push, `claude plugin update session-bar`), remove the dev-mods copy, re-enable the installed plugin, and verify `claude plugin test` passes and a new session shows the bar
 
 ## Workflow follow-up
 

@@ -2,7 +2,7 @@ import { test, expect, mock } from 'claude-code/testing'
 import {
   band, paceBand, ctxBand, tokensText, shortDir, limitText, parseUsage, fresh, modelLabel, withModel,
   elapsed, countdown, bar, segments, desktopSegments, resetTime, usageRows, meter, desktopTier, DESKTOP_TIERS, buttonText, pill as desktopPill, layout, width, same, minuteKey, WINDOW_MS, WEEK,
-  cacheTtl, cacheState, icon, accuracyLine, usageAge,
+  cacheTtl, cacheState, seedFrom, icon, accuracyLine, usageAge,
 } from './register'
 import type { BarInput, Badge, CacheState, Run } from './register'
 import type { Cache } from '../types'
@@ -772,51 +772,102 @@ test('cache TTL: the newest line with the step\'s counts; 1h only when nothing t
   expect(cacheTtl('', READ, INPUT)).toBeUndefined()
 })
 
-test('cache state: counted from the last main request; soon under 5 minutes, cold past the TTL, in flight while one streams, at any context size; none before a request or without a TTL', () => {
+test('cache state: counted from the last main request; soon under 5 minutes, cold past the TTL, in flight while one streams, with or without a context reading; none before a request or without a TTL', () => {
   const sent = (ago: number, ttlMs = 60 * MIN): Cache => ({ sentAt: NOW - ago, inFlight: false, ttlMs })
-  expect(cacheState(sent(22 * MIN), 412_000, NOW)).toEqual({ state: 'warm', left: 38 * MIN })
-  expect(cacheState(sent(56 * MIN), 412_000, NOW)).toEqual({ state: 'soon', left: 4 * MIN })
-  expect(cacheState(sent(61 * MIN), 412_000, NOW)).toEqual({ state: 'cold', left: 0 })
-  expect(cacheState(sent(7 * MIN, 5 * MIN), 412_000, NOW)).toEqual({ state: 'cold', left: 0 }) // a tool of the turn still runs: idle for the cache
-  expect(cacheState(sent(20 * MIN), 412_000, NOW)).toEqual({ state: 'warm', left: 40 * MIN }) // a permission dialog left open: the same
-  expect(cacheState({ ...sent(0), inFlight: true }, 412_000, NOW)).toEqual({ state: 'active', left: 60 * MIN }) // a request streams
-  expect(cacheState({ ...sent(3 * MIN), inFlight: true, cold: true }, 412_000, NOW)).toEqual({ state: 'cold', left: 0 }) // it named another model
-  expect(cacheState(sent(22 * MIN), 45_000, NOW)).toEqual({ state: 'warm', left: 38 * MIN })
-  expect(cacheState(null, 412_000, NOW)).toBeUndefined() // no request yet
-  expect(cacheState({ sentAt: NOW, inFlight: true }, 412_000, NOW)).toEqual({ state: 'active', left: 0 }) // TTL unknown: in use needs none
-  expect(cacheState({ sentAt: NOW, inFlight: false }, 412_000, NOW)).toBeUndefined() // ended, TTL unknown: the first request's line is not read yet
-  expect(cacheState(sent(22 * MIN), undefined, NOW)).toBeUndefined()
+  expect(cacheState(sent(22 * MIN), NOW)).toEqual({ state: 'warm', left: 38 * MIN })
+  expect(cacheState(sent(56 * MIN), NOW)).toEqual({ state: 'soon', left: 4 * MIN })
+  expect(cacheState(sent(61 * MIN), NOW)).toEqual({ state: 'cold', left: 0 })
+  expect(cacheState(sent(7 * MIN, 5 * MIN), NOW)).toEqual({ state: 'cold', left: 0 }) // a tool of the turn still runs: idle for the cache
+  expect(cacheState(sent(20 * MIN), NOW)).toEqual({ state: 'warm', left: 40 * MIN }) // a permission dialog left open: the same
+  expect(cacheState({ ...sent(0), inFlight: true }, NOW)).toEqual({ state: 'active', left: 60 * MIN }) // a request streams
+  expect(cacheState({ ...sent(3 * MIN), inFlight: true, cold: true }, NOW)).toEqual({ state: 'cold', left: 0 }) // it named another model
+  expect(cacheState(null, NOW)).toBeUndefined() // no request yet
+  expect(cacheState({ sentAt: NOW, inFlight: true }, NOW)).toEqual({ state: 'active', left: 0 }) // TTL unknown: in use needs none
+  expect(cacheState({ sentAt: NOW, inFlight: false }, NOW)).toBeUndefined() // ended, TTL unknown: the first request's line is not read yet
+  expect(cacheState(sent(2 * 60 * MIN), NOW)).toEqual({ state: 'cold', left: 0 }) // no context reading needed: a reopened session
 })
 
-test('cache in the terminal bar: a section of its own in words, dim countdown, orange when soon, dim cold; only cold at the narrowest tier', () => {
+test('a reopened session takes its cache state from the transcript: the newest main response\'s time, the newest write\'s TTL; subagent lines skipped; its context the newest one\'s input', () => {
+  const line = (ago: number, cache_creation: object, more: object = {}) => JSON.stringify({
+    type: 'assistant', timestamp: new Date(NOW - ago).toISOString(), isSidechain: false, ...more,
+    message: { model: 'claude-opus-5-5', usage: { input_tokens: 2, cache_read_input_tokens: 179_103, cache_creation_input_tokens: 3349, cache_creation } },
+  })
+  const h1 = { ephemeral_1h_input_tokens: 3349, ephemeral_5m_input_tokens: 0 }, none = { ephemeral_1h_input_tokens: 0, ephemeral_5m_input_tokens: 0 }
+  const seedCache = (text: string) => seedFrom(text).cache
+  const seeded = (...lines: string[]) => cacheState(seedCache(lines.join('\n')) ?? null, NOW)
+  expect(seedFrom(line(9 * 60 * MIN, h1)).tokens).toBe(182_454) // uncached, read and written: the context it was answered over
+  expect(seedFrom(line(MIN, none)).tokens).toBe(182_454) // a count even when no TTL is known
+  expect(seedFrom('').tokens).toBeUndefined()
+  expect(seeded(line(9 * 60 * MIN, h1))).toEqual({ state: 'cold', left: 0 }) // resumed overnight
+  expect(seeded(line(20 * MIN, h1))).toEqual({ state: 'warm', left: 40 * MIN })
+  expect(seeded(line(30 * MIN, h1), line(10 * MIN, none))).toEqual({ state: 'warm', left: 50 * MIN }) // the read restarted it
+  expect(seeded(line(2 * 60 * MIN, h1), line(MIN, h1, { isSidechain: true }))).toEqual({ state: 'cold', left: 0 }) // a subagent's says nothing
+  const synthetic = JSON.stringify({ type: 'assistant', timestamp: new Date(NOW - MIN).toISOString(), message: { model: '<synthetic>', usage: { input_tokens: 0, cache_read_input_tokens: 0, cache_creation: none } } })
+  expect(seeded(line(2 * 60 * MIN, h1), synthetic)).toEqual({ state: 'cold', left: 0 }) // a resume's synthetic line sent nothing
+  expect(seeded(line(MIN, { ephemeral_5m_input_tokens: 90 }))).toEqual({ state: 'soon', left: 4 * MIN }) // a 5-minute write
+  expect(seedCache(line(20 * MIN, h1))).toEqual({ sentAt: NOW - 20 * MIN, inFlight: false, model: 'claude-opus-5-5', read: 179_103, input: 2, ttlMs: 60 * MIN })
+  expect(seedCache('')).toBeUndefined() // a fresh session
+  expect(seedCache(line(MIN, none))).toBeUndefined() // nothing ever written: no TTL
+  expect(seedCache('_input_tokens":1}}}\nnot json')).toBeUndefined() // a cut line
+})
+
+test('cache in the terminal bar: a section of its own in words, dim countdown, an orange pill when soon, a vermillion one with the re-read when cold; only cold at the narrowest tier', () => {
   const ctx = { tokens: 120_000, window: 1_000_000 }
-  const run = (cache: CacheState, tier: 0 | 4 = 0) => segments(input({ ctx, cache }), tier).find(r => r.text.startsWith('cache '))
+  const run = (cache: CacheState, tier: 0 | 4 = 0, c: typeof ctx | null = ctx) => segments(input({ ctx: c ?? undefined, cache }), tier).find(r => r.text.startsWith('cache '))
   expect(run({ state: 'warm', left: 38 * MIN })).toEqual({ text: 'cache 38m', dimColor: true })
-  expect(run({ state: 'soon', left: 4 * MIN })).toEqual({ text: 'cache 4m', color: '#E69F00' })
-  expect(run({ state: 'cold', left: 0 })).toEqual({ text: 'cache cold', dimColor: true })
+  expect(run({ state: 'soon', left: 4 * MIN })).toEqual({ text: 'cache 4m', color: '#191919', backgroundColor: '#E69F00' })
+  expect(run({ state: 'cold', left: 0 })).toEqual({ text: 'cache cold · re-reads 120K', color: '#191919', backgroundColor: '#D55E00' })
+  expect(run({ state: 'cold', left: 0 }, 0, null)?.text).toBe('cache cold') // no context reading: no count to name
+  // the pill's caps and padding, as every attention pill's
+  const cold = segments(input({ ctx, cache: { state: 'cold', left: 0 } }), 0)
+  const at = cold.findIndex(r => r.text.startsWith('cache '))
+  expect(cold.slice(at - 2, at + 3)).toEqual([{ text: '', color: '#D55E00' }, { text: ' ', color: '#191919', backgroundColor: '#D55E00' }, cold[at], { text: ' ', color: '#191919', backgroundColor: '#D55E00' }, { text: '', color: '#D55E00' }])
   expect(run({ state: 'warm', left: 38 * MIN }, 4)).toBeUndefined()
-  expect(run({ state: 'cold', left: 0 }, 4)?.text).toBe('cache cold')
+  expect(run({ state: 'soon', left: 4 * MIN }, 4)).toBeUndefined()
+  expect(run({ state: 'cold', left: 0 }, 4)).toEqual({ text: 'cache cold', color: '#191919', backgroundColor: '#D55E00' })
+  // the narrowest layout still carries the cold pill, right after the model
+  const narrow = input({ ctx, cache: { state: 'cold', left: 0 } })
+  const cols = width(segments(narrow, 4))
+  expect(width(segments(narrow, 3))).toBeGreaterThan(cols)
+  const shown = texts(layout(narrow, cols))
+  expect(shown.slice(shown.indexOf(' · Opus 5.5'), shown.indexOf('cache cold') + 1)).toEqual([' · Opus 5.5', ' · ', '', ' ', 'cache cold'])
   expect(run({ state: 'active', left: 60 * MIN })).toEqual({ text: 'cache in use', dimColor: true })
   expect(run({ state: 'active', left: 60 * MIN }, 4)).toBeUndefined()
   expect(texts(segments(input({ ctx }), 0)).join('')).not.toContain('cache') // no state, nothing added
-  // its own section after ctx, a dot between, as between every section
+  // its own section right after the model, before ctx, a dot between, as between every section
   const all = texts(segments(input({ ctx, cache: { state: 'warm', left: 38 * MIN } }), 0))
-  expect(all.slice(all.indexOf('120K'), all.indexOf('cache 38m') + 1)).toEqual(['120K', ' · ', 'cache 38m'])
+  expect(all.slice(all.indexOf(' · Opus 5.5'), all.indexOf('ctx ') + 1)).toEqual([' · Opus 5.5', ' · ', 'cache 38m', ' · ', 'ctx '])
   expect(width(layout(input({ ctx, cache: { state: 'warm', left: 38 * MIN } }), 40))).toBeGreaterThan(0)
 })
 
-test('cache on the Desktop pill: a glyph per state in the ink, no countdown, named in the hover text', () => {
+test('cache on the Desktop: a flame on the context pill while warm or in use; a pill of its own, amber soon and red cold, that keeps its icon at every width', () => {
   const ctx = { tokens: 412_000, window: 1_000_000 }
-  const badge = (cache?: CacheState) => desktopSegments(input({ ctx, cache, windows: [] }))[0]!
+  const all = (cache?: CacheState, c: typeof ctx | null = ctx) => desktopSegments(input({ ctx: c ?? undefined, cache, windows: [] }))
+  const badge = (cache?: CacheState) => all(cache)[0]!
   const warm = badge({ state: 'warm', left: 38 * MIN }), cold = badge({ state: 'cold', left: 0 }), none = badge()
   expect(warm.tip).toBe('Context: 412K of 1M tokens · cache cold in 38m')
   expect(cold.tip).toBe('Context: 412K of 1M tokens · cache cold, the next message re-reads 412K')
   expect(none.tip).toBe('Context: 412K of 1M tokens')
   const glyphs = (b: Badge, parts = DESKTOP_TIERS[0]!) => desktopPill(b, parts).source.match(/<g transform/g)?.length ?? 0
-  expect([glyphs(none), glyphs(warm), glyphs(cold)]).toEqual([1, 2, 2]) // the ctx icon, then the cache glyph
-  expect(desktopPill(warm).source).not.toBe(desktopPill(badge({ state: 'soon', left: 4 * MIN })).source) // flame, hourglass
-  expect(desktopPill(cold).source).toContain('M12 2v6.5l3 1.72') // Tabler's snowflake: a branch on each arm
-  expect(desktopPill(cold).source).not.toContain('M12 3v18') // not the old asterisk
+  expect([glyphs(none), glyphs(warm), glyphs(cold)]).toEqual([1, 2, 1]) // the ctx icon, then the flame; cold has its own pill
+  // soon and cold: a pill of its own right after ctx, full, in attention, its glyph the state's, its alt text the cache line
+  expect(all({ state: 'warm', left: 38 * MIN }).map(b => b.kind)).toEqual(['ctx'])
+  const [, soonPill] = all({ state: 'soon', left: 4 * MIN }), [, coldPill] = all({ state: 'cold', left: 0 })
+  expect(soonPill).toMatchObject({ kind: 'cache', value: '4m', level: 'warn', share: 100, tip: 'Cache cold in 4m' })
+  expect(coldPill).toMatchObject({ kind: 'cache', value: 'cold', level: 'hot', share: 100, tip: 'Cache cold, the next message re-reads 412K' })
+  expect(desktopPill(soonPill!).source).toContain('M6.5 7h11') // the hourglass
+  expect(desktopPill(coldPill!).source).toContain('M12 2v6.5l3 1.72') // Tabler's snowflake: a branch on each arm
+  expect(desktopPill(coldPill!).source).not.toContain('M12 3v18') // not the old asterisk
+  expect(desktopPill(coldPill!).source).toContain('fill="#d03b3b"') // the red
+  expect(all({ state: 'cold', left: 0 }, null)).toMatchObject([{ kind: 'cache', tip: 'Cache cold' }]) // reopened, no reading yet
+  // the narrowest tier: every other pill drops its icon, the cache pill keeps its snowflake
+  const narrow = DESKTOP_TIERS[3]!
+  expect(glyphs(coldPill!, narrow)).toBe(1)
+  expect(desktopPill(coldPill!, narrow).source).toContain('M12 2v6.5l3 1.72')
+  expect(glyphs(cold, narrow)).toBe(0)
+  const bar = desktopSegments(input({ ctx, cache: { state: 'cold', left: 0 } })) // with the 5h and 7d pills
+  expect(desktopTier(bar, 33)).toBe(narrow)
+  expect(bar.reduce((n, b) => n + desktopPill(b, narrow).width + 8, 8 + 16 + 6.5)).toBeLessThanOrEqual(33 * 8) // the icon it keeps still fits
   // a block icon is the pill's glyph: the same scale and stroke at its own spot, in the mockup's accent blue, its 2px gap
   // inside its box
   const ctxG = (s: string) => s.match(/<g [^>]*>.*?<\/g>/)![0].replace(/translate\([^)]*\)/, '').replace(/class="sb-[pa]"/, '')
@@ -852,6 +903,7 @@ test('a minute tick redraws for a cache state change, and for its countdown only
   expect(key({ state: 'warm', left: 38 * MIN }, true)).not.toBe(key({ state: 'warm', left: 37 * MIN }, true)) // terminal or open block
   expect(key({ state: 'soon', left: 30_000 }, false)).not.toBe(key({ state: 'cold', left: 0 }, false)) // the glyph changes
   expect(key({ state: 'warm', left: 5 * MIN }, false)).not.toBe(key({ state: 'soon', left: 4 * MIN }, false))
+  expect(key({ state: 'soon', left: 4 * MIN }, false)).not.toBe(key({ state: 'soon', left: 3 * MIN }, false)) // Desktop: the cache pill shows its minutes
   expect(key({ state: 'cold', left: 0 }, true)).toBe(key({ state: 'cold', left: 0 }, true))
   expect(minuteKey([], NOW, true)).toBe(minuteKey([], NOW + MIN, true)) // no cache: unchanged rule
 })
@@ -931,7 +983,12 @@ test('cache state lifecycle: a main request is the clock, its TTL the matching t
   const glyphs = async () => (await ui.findAll({ type: 'Svg' })).filter(s => / pill$|^cache /.test((s.props as { alt: string }).alt)).map(s => (s.props as { source: string }).source)
   // shape, size and stroke as on the pill; the ink is always the mockup's accent blue here, whatever the pill's state
   const g = (s: string) => s.match(/<g [^>]*>.*?<\/g>/)![0].replace(/translate\([^)]*\)/, '').replace(/class="sb-[pa]"/, '')
-  const pillCache = async () => g((await ui.findAll({ type: 'Svg' })).map(s => (s.props as { source: string }).source).find(s => s.includes('<title>Context'))!.match(/<g [^>]*>.*?<\/g>/g)![1]!)
+  // the cache glyph on a pill: the cache pill's own icon once soon or cold, else the context pill's second glyph
+  const pillCache = async () => {
+    const sources = (await ui.findAll({ type: 'Svg' })).map(s => (s.props as { source: string }).source)
+    const own = sources.find(s => s.includes('<title>Cache'))
+    return g(own ?? sources.find(s => s.includes('<title>Context'))!.match(/<g [^>]*>.*?<\/g>/g)![1]!)
+  }
   await ui.press({ key: 'usage' })
   let [name, line] = await glyphs()
   expect(await glyphs()).toHaveLength(2)
@@ -955,7 +1012,7 @@ test('cache state lifecycle: a main request is the clock, its TTL the matching t
   await ui.unmount()
 
   await $.prompt.submit({ text: '/help', wait: false, origin: { kind: 'person' } } as never)
-  expect(await terminal()).toBe('cache cold') // a prompt sends no request by itself: a local slash command leaves the state as it was
+  expect(await terminal()).toBe('cache cold · re-reads 412K') // a prompt sends no request by itself: a local slash command leaves the state as it was
 
   usage = { ...usage, cache_read_input_tokens: 412_000, input_tokens: 5_000 }
   await step({ turnId: 't2' }, 'cache in use') // the request streams: in use, no countdown
@@ -965,10 +1022,10 @@ test('cache state lifecycle: a main request is the clock, its TTL the matching t
   await step({ turnId: 't2', index: 1, agentId: 'a1' }, false) // a subagent's request inside the turn: main's clock runs on
   expect(await terminal()).toBe('cache 50m')
   await clock.advance(60 * MIN)
-  expect(await terminal()).toBe('cache cold') // a wait inside the turn goes cold like idle time
+  expect(await terminal()).toBe('cache cold · re-reads 412K') // a wait inside the turn goes cold like idle time
 
   await $.session.compact({ trigger: 'precompute', messages: kept } as never)
-  expect(await terminal()).toBe('cache cold') // a precompute changes nothing
+  expect(await terminal()).toBe('cache cold · re-reads 412K') // a precompute changes nothing
   await step({ turnId: 't3', model: 'claude-sonnet-5-5' }, false) // another model: cold while it streams (the next test), then from its send
   expect(await terminal()).toBe('cache 1h')
   await $.session.compact({ trigger: 'auto', messages: kept } as never)
@@ -1035,6 +1092,117 @@ test('the TTL is grepped from the whole transcript, a large line after it includ
   expect(greps).toHaveLength(n) // known now: the tick reads no more
 })
 
+test('the transcript is found per session id: after /clear or /resume the TTL is read from the new session file', async ($, on) => {
+  mock.clock(on, { now: NOW })
+  on('session.root', async () => ({ value: '/home/me/skills' }))
+  on('env.get', async () => ({ value: '/home/me' }))
+  on('session.model', async () => ({ value: 'claude-opus-5-5' }))
+  let id = 'sess-1'
+  on('session.id', async () => ({ value: id }))
+  on('fs.list', async () => ({ value: [{ name: '-home-me-skills' }] }) as never)
+  on('fs.exists', async () => ({ value: true }) as never)
+  on('session.measure', async (_$, e) => ({ changed: e.changed }))
+  on('turn.complete', async () => ({ text: '' }))
+  on('ui.render', async () => h('Box', {}) as never)
+  on('store.get', async () => ({ value: Date.now() * 2 }))
+  on('store.set', async () => ({ value: undefined }))
+  const greps: string[] = []
+  on('process.run', async (_$, e) => {
+    const argv = (e as { argv: string[] }).argv
+    if (argv[0] === 'grep') greps.push(argv[3]!)
+    // only the new session's file holds the line
+    const stdout = argv[0] !== 'grep' ? 'main\n' : argv[3]!.endsWith('sess-2.jsonl') ? usageLine({ ephemeral_1h_input_tokens: 1457 }) : ''
+    return { value: { exitCode: stdout ? 0 : 1, stdout, stderr: '' } } as never
+  })
+  const usage = { input_tokens: INPUT, output_tokens: 10, cache_read_input_tokens: READ, cache_creation_input_tokens: 0, model: 'claude-opus-5-5' }
+  on('turn.step', async function* (_$, e) {
+    yield { kind: 'text', index: 0, text: 'hi' } as never
+    return { turnId: e.turnId, index: e.index, answer: 'hi', toolUses: [], stopReason: 'end_turn', usage } as never
+  })
+  const turn = async (turnId: string) => {
+    for await (const _ of $.turn.step({ turnId, index: 0, model: 'claude-opus-5-5', messageCount: 1 } as never)) { /* to the end */ }
+    await $.turn.complete({ reason: 'answer', answer: '', text: '', durationMs: 1, isAborted: false, turnId } as never)
+  }
+  await $.session.measure({ context: { tokens: 45_000, window: 1_000_000 }, rateLimits: [], changed: ['context'] } as never)
+  await turn('t1')
+  expect(greps.at(-1)).toBe('/home/me/.claude/projects/-home-me-skills/sess-1.jsonl')
+  id = 'sess-2'
+  await turn('t2')
+  expect(greps.at(-1)).toBe('/home/me/.claude/projects/-home-me-skills/sess-2.jsonl')
+  const ui = await $.ui.mount({ plugin: 'session-bar', surface: 'terminal', component: 'AbovePrompt', props: { hasSurvey: false, isWorking: false, maxRows: 3, bodyColumns: 200 } as never })
+  expect((await ui.findAll({ type: 'Text' })).map(x => x.text)).toContain('cache 1h')
+  await ui.unmount()
+})
+
+test('a process opened on an old session shows its cache state from the transcript before any request', async ($, on) => {
+  mock.clock(on, { now: NOW })
+  mock.store(on, {})
+  on('session.root', async () => ({ value: '/home/me/skills' }))
+  on('env.get', async () => ({ value: '/home/me' }))
+  on('session.model', async () => ({ value: 'claude-opus-5-5' }))
+  on('session.authorize', async () => ({ deny: 'logged out' }))
+  on('session.id', async () => ({ value: 'sess-old' }))
+  on('fs.list', async () => ({ value: [{ name: '-home-me-skills' }] }) as never)
+  on('fs.exists', async () => ({ value: true }) as never)
+  on('session.start', async (_$, e) => e as never)
+  on('ui.render', async () => h('Box', {}) as never)
+  const runs: string[][] = []
+  const old = JSON.stringify({ type: 'assistant', timestamp: new Date(NOW - 9 * 60 * MIN).toISOString(), message: { model: 'claude-opus-5-5', usage: { input_tokens: 2, cache_read_input_tokens: 9, cache_creation: { ephemeral_1h_input_tokens: 40 } } } })
+  on('process.run', async (_$, e) => {
+    const argv = (e as { argv: string[] }).argv
+    runs.push(argv)
+    return { value: { exitCode: 0, stdout: argv[0] === 'sh' ? old : 'main\n', stderr: '' } } as never
+  })
+  await $.session.start({ source: 'resume', cwd: '/home/me/skills', surface: 'terminal', isInteractive: true } as never)
+  expect(runs.find(a => a[0] === 'sh')?.at(-1)).toBe('/home/me/.claude/projects/-home-me-skills/sess-old.jsonl')
+  const ui = await $.ui.mount({ plugin: 'session-bar', surface: 'terminal', component: 'AbovePrompt', props: { hasSurvey: false, isWorking: false, maxRows: 3, bodyColumns: 200 } as never })
+  expect((await ui.findAll({ type: 'Text' })).map(x => x.text)).toContain('cache cold') // no context reading yet: no re-read count
+  await ui.unmount()
+})
+
+test('Desktop reopening a session: no measure comes until a response, so the context reading is the engine window with the newest response\'s input; the cold pill names the re-read', async ($, on) => {
+  mock.clock(on, { now: NOW })
+  mock.store(on, {})
+  on('session.root', async () => ({ value: '/home/me/skills' }))
+  on('env.get', async () => ({ value: '/home/me' }))
+  on('session.model', async () => ({ value: 'claude-opus-5-5' }))
+  on('session.authorize', async () => ({ deny: 'logged out' }))
+  on('session.id', async () => ({ value: 'sess-desk' }))
+  on('session.usage', async () => ({ value: { startedAt: 0, context: { window: 1_000_000 }, rateLimits: [] } }) as never) // no tokens yet
+  on('fs.list', async () => ({ value: [{ name: '-home-me-skills' }] }) as never)
+  on('fs.exists', async () => ({ value: true }) as never)
+  on('session.start', async (_$, e) => e as never)
+  on('ui.render', async () => h('Box', {}) as never)
+  const old = JSON.stringify({ type: 'assistant', timestamp: new Date(NOW - 6 * 60 * MIN).toISOString(), message: { model: 'claude-opus-5-5', usage: { input_tokens: 2, cache_read_input_tokens: 400_000, cache_creation_input_tokens: 11_998, cache_creation: { ephemeral_1h_input_tokens: 11_998 } } } })
+  on('process.run', async (_$, e) => ({ value: { exitCode: 0, stdout: (e as { argv: string[] }).argv[0] === 'sh' ? old : 'main\n', stderr: '' } }) as never)
+  await $.session.start({ source: 'resume', cwd: '/home/me/skills', surface: 'desktop', isInteractive: true } as never)
+  const ui = await $.ui.mount({ plugin: 'session-bar', surface: 'desktop', component: 'AbovePrompt', props: { hasSurvey: false, isWorking: false, maxRows: 3, view: {} } as never })
+  const alts = (await ui.findAll({ type: 'Svg' })).map(s => (s.props as { alt: string }).alt)
+  expect(alts).toEqual(['Context: 412K of 1M tokens · cache cold, the next message re-reads 412K', 'Cache cold, the next message re-reads 412K'])
+  await ui.unmount()
+})
+
+test('/resume inside a running process seeds the cache state from the transcript the classic SessionStart names', async ($, on) => {
+  mock.clock(on, { now: NOW })
+  on('session.root', async () => ({ value: '/home/me/skills' }))
+  on('env.get', async () => ({ value: '/home/me' }))
+  on('session.model', async () => ({ value: 'claude-opus-5-5' }))
+  on('ui.render', async () => h('Box', {}) as never)
+  on('classic.SessionStart', async () => ({}) as never)
+  const runs: string[][] = []
+  const old = JSON.stringify({ type: 'assistant', timestamp: new Date(NOW - 3 * 60 * MIN).toISOString(), message: { model: 'claude-opus-5-5', usage: { input_tokens: 2, cache_read_input_tokens: 9, cache_creation: { ephemeral_1h_input_tokens: 40 } } } })
+  on('process.run', async (_$, e) => {
+    const argv = (e as { argv: string[] }).argv
+    runs.push(argv)
+    return { value: { exitCode: 0, stdout: argv[0] === 'sh' ? old : 'main\n', stderr: '' } } as never
+  })
+  await $.classic.SessionStart({ source: 'resume', transcript_path: '/home/me/.claude/projects/-home-me-skills/sess-res.jsonl' } as never)
+  expect(runs.find(a => a[0] === 'sh')?.at(-1)).toBe('/home/me/.claude/projects/-home-me-skills/sess-res.jsonl')
+  const ui = await $.ui.mount({ plugin: 'session-bar', surface: 'terminal', component: 'AbovePrompt', props: { hasSurvey: false, isWorking: false, maxRows: 3, bodyColumns: 200 } as never })
+  expect((await ui.findAll({ type: 'Text' })).map(x => x.text)).toContain('cache cold')
+  await ui.unmount()
+})
+
 test('a request that names another model is cold while it streams: the cache is keyed by model', async ($, on) => {
   mock.clock(on, { now: NOW })
   on('session.root', async () => ({ value: '/home/me/skills' }))
@@ -1069,7 +1237,7 @@ test('a request that names another model is cold while it streams: the cache is 
   await s.next()
   const mid = await terminal()
   for await (const _ of s) { /* to the end */ }
-  expect(mid).toBe('cache cold')
+  expect(mid).toBe('cache cold · re-reads 412K')
   expect(await terminal()).toBe('cache 1h') // its response ended: warm again, from its send
 })
 

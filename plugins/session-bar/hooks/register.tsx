@@ -45,20 +45,48 @@ export type CacheState = { state: 'active' | 'warm' | 'soon' | 'cold'; left: num
 // lands after the step's result and carries no id, so it is the newest whose cache-read and uncached input counts are
 // the step's. 1h only when none of it took 5m, as the 5m part goes cold first. No line yet, or a match that wrote
 // nothing: undefined, and the last TTL stands
+type Usage = { input_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number; cache_creation?: { ephemeral_1h_input_tokens?: number; ephemeral_5m_input_tokens?: number } }
+const ttlOf = (u: Usage) => {
+  const h1 = u.cache_creation?.ephemeral_1h_input_tokens ?? 0, m5 = u.cache_creation?.ephemeral_5m_input_tokens ?? 0
+  return h1 || m5 ? m5 ? 5 * 60_000 : HOUR : undefined
+}
 export const cacheTtl = (text: string, read: number, input: number): number | undefined => {
   for (const line of text.split('\n').reverse()) {
-    let u: { input_tokens?: number; cache_read_input_tokens?: number; cache_creation?: { ephemeral_1h_input_tokens?: number; ephemeral_5m_input_tokens?: number } } | undefined
+    let u: Usage | undefined
     try { u = JSON.parse(line)?.message?.usage } catch { continue }
     if (!u || u.cache_read_input_tokens !== read || u.input_tokens !== input) continue
-    const h1 = u.cache_creation?.ephemeral_1h_input_tokens ?? 0, m5 = u.cache_creation?.ephemeral_5m_input_tokens ?? 0
-    return h1 || m5 ? m5 ? 5 * 60_000 : HOUR : undefined
+    return ttlOf(u)
   }
 }
 
+// A process opened on an existing session (resume, restart, Desktop reopening it) has sent nothing, so its cache state
+// comes from the transcript's newest main-loop responses: the newest one's time, as a cache read restarts the TTL too,
+// and the TTL of the newest one that wrote. Its time is when the line was written, after the send, so it errs warm by
+// the response's length. A subagent's line, or none that wrote: no cache. tokens: the newest one's whole input, the context
+// it was answered over, for a session whose engine reports none until its next response (Desktop reopening it)
+export const seedFrom = (text: string): { cache?: Cache; tokens?: number } => {
+  let newest: Cache | undefined, tokens: number | undefined
+  for (const line of text.split('\n').reverse()) {
+    let d: { isSidechain?: boolean; timestamp?: string; message?: { model?: string; usage?: Usage } } | undefined
+    try { d = JSON.parse(line) } catch { continue }
+    const u = d?.message?.usage, sentAt = Date.parse(d?.timestamp ?? '')
+    // a <synthetic> line, which a resume can write, stands for no request
+    if (!u || d!.isSidechain || d!.message!.model === '<synthetic>' || !Number.isFinite(sentAt)) continue
+    if (!newest) {
+      newest = { sentAt, inFlight: false, model: d!.message!.model, read: u.cache_read_input_tokens, input: u.input_tokens }
+      tokens = (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0)
+    }
+    const ttlMs = ttlOf(u)
+    if (ttlMs) return { cache: { ...newest, ttlMs }, tokens }
+  }
+  return { tokens }
+}
+
 // counted from the last main request's send: a wait after its response, a tool, a dialog or a subagent included, is
-// idle time for the cache. Nothing before the first request, and no countdown while the TTL is unknown
-export const cacheState = (c: Cache | null | undefined, tokens: number | undefined, now: number): CacheState | undefined => {
-  if (!c || tokens === undefined) return
+// idle time for the cache. Nothing before the first request, and no countdown while the TTL is unknown; a context reading
+// is not needed, as a reopened session is cold before its first one
+export const cacheState = (c: Cache | null | undefined, now: number): CacheState | undefined => {
+  if (!c) return
   // a streaming request is the cache in use, so no countdown applies and no TTL is needed: a session's first request
   // shows it too. The pill keeps its glyph and width. One that named another model is cold until its response ends, as
   // the cache is keyed by model
@@ -178,13 +206,14 @@ const segment = (level: Level, runs: Run[]): Run[] => {
   return [{ text: '', color: bg }, ...[{ text: ' ' }, ...runs, { text: ' ' }].map(on), { text: '', color: bg }]
 }
 
-// a section of its own, in words: a ❄ glyph drew emoji-styled and two cells wide. Orange only when it is about to go
-// cold. The narrowest tier drops the countdown, as it does the 5h one, and so the section, unless cold
-const cacheRun = (c: CacheState, short: boolean): Run | undefined =>
-  c.state === 'cold' ? { text: 'cache cold', dimColor: true }
-    : short ? undefined
-    : c.state === 'active' ? { text: 'cache in use', dimColor: true }
-    : { text: `cache ${countdown(c.left)}`, ...(c.state === 'soon' ? { color: ATTN.warn } : { dimColor: true }) }
+// a section of its own, in words: a ❄ glyph drew emoji-styled and two cells wide. A pill once it needs attention, orange
+// about to go cold and vermillion cold, with the re-read it costs: the next message pays for it all. The narrowest tier
+// drops the countdown, as it does the 5h one, and so the section, unless cold
+const cacheRuns = (c: CacheState, short: boolean, tokens?: number): Run[] =>
+  c.state === 'cold' ? segment('hot', [{ text: `cache cold${short || tokens === undefined ? '' : ` · re-reads ${tokensText(tokens)}`}` }])
+    : short ? []
+    : c.state === 'soon' ? segment('warn', [{ text: `cache ${countdown(c.left)}` }])
+    : [{ text: c.state === 'active' ? 'cache in use' : `cache ${countdown(c.left)}`, dimColor: true }]
 
 export const segments = (b: BarInput, tier: Tier): Run[] => {
   const dim = (text: string): Run => ({ text, dimColor: true })
@@ -201,13 +230,14 @@ export const segments = (b: BarInput, tier: Tier): Run[] => {
   const groups: Run[][] = [[
     { text: b.dir, bold: true }, ...(b.branch ? [dim(` (${b.branch})`)] : []), ...[b.agent, b.model].filter(Boolean).map(t => dim(` · ${t}`)),
   ]]
+  // the cache is keyed by model, so it follows the model
+  const c = b.cache ? cacheRuns(b.cache, tier === 4, b.ctx?.tokens) : []
+  if (c.length) groups.push(c)
   if (b.ctx) {
     // the bar runs to the hot threshold, so bar and color share one scale: full means hot, the tick marks warn
     const hot = ctxHot(b.ctx)
     groups.push(meter('ctx', (b.ctx.tokens / hot) * 100, ctxBand(b.ctx), tokensText(b.ctx.tokens), undefined, CTX_WARN / hot))
   }
-  const c = b.cache && cacheRun(b.cache, tier === 4)
-  if (c) groups.push([c])
   for (const w of b.windows) {
     // the 5h reset is the one watched, so it stays until the last tier; weekly ones only show at full width
     const left = w.resetsAt ? Date.parse(w.resetsAt) - b.now : 0
@@ -221,12 +251,14 @@ export const segments = (b: BarInput, tier: Tier): Run[] => {
 // mod draws nothing while all is calm; once one segment needs attention, all show as pills (a lone one looks empty).
 // share: 0-100. For ctx it runs to the hot threshold like the terminal bar, so a full pill means hot.
 export type Kind = 'ctx' | '5h' | '7d' | 'model'
-export type Badge = { kind: Kind; label?: string; value: string; share: number; level: Level; tip: string; cache?: CacheState['state'] }
+// a cache badge is a pill of its own, only while it needs attention; cache is then its state, on ctx the glyph it carries
+export type Badge = { kind: Kind | 'cache'; label?: string; value: string; share: number; level: Level; tip: string; cache?: CacheState['state'] }
 
-// the words for a cache state, on the pill's hover and in the usage block
-const cacheText = (c: CacheState, tokens: number) =>
-  c.state === 'cold' ? `cache cold, the next message re-reads ${tokensText(tokens)}`
+// the words for a cache state, on the pill's hover and in the usage block; the re-read once a reading names it
+const cacheText = (c: CacheState, tokens?: number) =>
+  c.state === 'cold' ? `cache cold${tokens === undefined ? '' : `, the next message re-reads ${tokensText(tokens)}`}`
     : c.state === 'active' ? 'cache in use' : `cache cold in ${countdown(c.left)}`
+const upper = (s: string) => s[0]!.toUpperCase() + s.slice(1)
 const clamp = (n: number) => Math.min(100, Math.max(0, n))
 const WINDOW_NAMES: Record<string, string> = { '5h': 'Session limit', '7d': 'Weekly, all models' }
 
@@ -236,7 +268,15 @@ export const desktopSegments = (b: BarInput): Badge[] => {
     all.push({
       kind: 'ctx', value: tokensText(b.ctx.tokens), share: clamp((b.ctx.tokens / ctxHot(b.ctx)) * 100), level: ctxBand(b.ctx),
       tip: `Context: ${tokensText(b.ctx.tokens)} of ${tokensText(b.ctx.window)} tokens${b.cache ? ` · ${cacheText(b.cache, b.ctx.tokens)}` : ''}`,
-      cache: b.cache?.state,
+      cache: b.cache?.state === 'active' || b.cache?.state === 'warm' ? b.cache.state : undefined,
+    })
+  }
+  // soon or cold, the cache is a pill of its own, full and in attention, so it cannot be missed
+  if (b.cache?.state === 'soon' || b.cache?.state === 'cold') {
+    const cold = b.cache.state === 'cold'
+    all.push({
+      kind: 'cache', value: cold ? 'cold' : countdown(b.cache.left), share: 100, level: cold ? 'hot' : 'warn',
+      tip: upper(cacheText(b.cache, b.ctx?.tokens)), cache: b.cache.state,
     })
   }
   for (const w of b.windows) {
@@ -283,7 +323,7 @@ export const usageRows = (b: BarInput): UsageRow[] => {
       line: (level === 'hot' ? `Past ${tokensText(hot)}, quality drops` : level ? 'Past the ideal range' : `Ideal under ${tokensText(CTX_WARN)}`)
         + ` · window ${tokensText(b.ctx.window)}`,
       ...(b.answered && { more: [`Answered by ${b.answered}`] }),
-      ...(b.cache && { line2: (s => s[0]!.toUpperCase() + s.slice(1))(cacheText(b.cache, b.ctx.tokens)), cache: b.cache.state }),
+      ...(b.cache && { line2: upper(cacheText(b.cache, b.ctx.tokens)), cache: b.cache.state }),
     })
   }
   for (const w of b.windows) {
@@ -378,13 +418,16 @@ export type PillParts = { label: boolean; icon: boolean }
 const FULL: PillParts = { label: true, icon: true }
 
 export const pill = (b: Badge, parts: PillParts = FULL) => {
-  const color = b.level ? STATUS[b.level] : HUE[b.kind]
+  const own = b.kind === 'cache' ? undefined : b.kind
+  const color = b.level || !own ? STATUS[b.level ?? 'hot'] : HUE[own] // a cache pill is always in attention
   const clip = `sb-c-pill-${b.kind}-${slug(b.label ?? '')}`
   const label = parts.label ? b.label : undefined
+  // the cache pill keeps its icon at every tier: its snowflake is what says cache; the others drop theirs last
+  const iconed = parts.icon || !own
   // the approved mockup's pill: 10px sides, 5px between icon, label and value, all 12px text
-  const x = parts.icon ? PILL_PAD + ICON + ICON_GAP : PILL_PAD
+  const x = iconed ? PILL_PAD + ICON + ICON_GAP : PILL_PAD
   const text = (label ? label.length * 6.4 + ICON_GAP : 0) + b.value.length * 6.8 // 12px: 6.4 a label char measured live, 7.4 at 13px scaled
-  const cached = parts.icon && b.cache ? b.cache : undefined // the narrowest tier drops every icon, this one too
+  const cached = parts.icon && own && b.cache ? b.cache : undefined // the narrowest tier drops every icon, this one too
   const width = Math.ceil(x + text + (cached ? ICON_GAP + ICON : 0) + PILL_PAD)
   const icon = (at: number, paths: string) => glyph(at, (PILL_H - ICON) / 2, paths, 'sb-p') // the primary ink, as the mockup's
   const shape = `x=".5" y=".5" width="${width - 1}" height="${PILL_H - 1}" rx="${PILL_H / 2 - .5}"`
@@ -398,7 +441,7 @@ export const pill = (b: Badge, parts: PillParts = FULL) => {
       // the mockup's hairline: neutral, not the pill's hue
       + `<rect ${shape} ${b.level ? `fill="${color}" fill-opacity=".3" class="sb-b"` : 'class="sb-t sb-b"'}/>`
       + `<rect width="${+((width * b.share) / 100).toFixed(2)}" height="${PILL_H}" clip-path="url(#${clip})" fill="${color}" ${b.level ? `class="sb-f${b.level}"` : `fill-opacity="${CALM_FILL}" class="sb-f${b.kind}"`}/>`
-      + (parts.icon ? icon(PILL_PAD, GLYPH[b.kind]) : '')
+      + (iconed ? icon(PILL_PAD, own ? GLYPH[own] : CACHE_GLYPH[b.cache ?? 'cold']) : '')
       + (cached ? icon(+(x + text + ICON_GAP).toFixed(2), CACHE_GLYPH[cached]) : '')
       + `<text x="${x}" y="16.5" font-size="12" font-family="system-ui,-apple-system,sans-serif">`
       + (label ? `<tspan class="${b.level ? 'sb-i' : 'sb-d'}">${xml(label)}</tspan>` : '') // no dim gray passes on amber or red
@@ -481,11 +524,12 @@ export const toWindows = (ls: Limits, ws: Weekly, now: number): Win[] => [
 
 // what a passing minute can change on screen: each window's pace band, and its countdown text where one is drawn
 // (the terminal draws it, Desktop does not)
-// The cache state always counts; its countdown where one is drawn (the terminal, or the open usage block)
+// The cache state always counts; its countdown where one is drawn (the terminal, the open usage block, or the Desktop
+// cache pill, which shows its minutes once under 5)
 export const minuteKey = (windows: Win[], now: number, countdowns = true, cache?: CacheState, cacheCountdown = countdowns) =>
   JSON.stringify([
     windows.map(w => [w.label, countdowns && w.resetsAt && countdown(Date.parse(w.resetsAt) - now), pace(w, now)]),
-    cache && [cache.state, cacheCountdown && cache.state !== 'cold' && countdown(cache.left)],
+    cache && [cache.state, (cacheCountdown || cache.state === 'soon') && cache.state !== 'cold' && countdown(cache.left)],
   ])
 
 // the pills show whole numbers, and a header's 23.4 is the endpoint's 23: compare those, so the same reading from the two
@@ -525,15 +569,17 @@ const refreshUsage = async ($: EngineInterface, force = false) => {
 }
 
 // The TTL is in the transcript alone. classic.Stop, which names the file, never fired on Desktop, so the file is found
-// by the session id under each projects folder (its folder name is the cwd, encoded): once a module load.
+// by the session id under each projects folder (its folder name is the cwd, encoded): once per session id, as /clear
+// and /resume move the same module to another session.
 // shortcut: <HOME>/.claude/projects only; read CLAUDE_CONFIG_DIR if anyone sets it
-let transcript: string | undefined
+let transcript: { id: string; path: string } | undefined
 const findTranscript = async ($: EngineInterface) => {
-  if (transcript) return transcript
   const [id, home] = await Promise.all([$.session.id(), $.env.get('HOME')])
+  if (transcript?.id === id) return transcript.path
   const root = `${home}/.claude/projects`
   for (const d of await $.fs.list(root)) {
-    if (await $.fs.exists(`${root}/${d.name}/${id}.jsonl`)) return transcript = `${root}/${d.name}/${id}.jsonl`
+    const path = `${root}/${d.name}/${id}.jsonl`
+    if (await $.fs.exists(path)) return (transcript = { id, path }).path
   }
 }
 
@@ -549,6 +595,26 @@ const readTtl = async ($: EngineInterface) => {
     const r = path ? await $.process.run(['grep', '-F', `"cache_read_input_tokens":${c.read}`, path]) : undefined
     const ttlMs = r?.exitCode === 0 ? cacheTtl(r.stdout, c.read, c.input) : undefined
     if (ttlMs && ttlMs !== c.ttlMs) await update($, cache, p => p && { ...p, ttlMs })
+  } catch {}
+}
+
+// a process opened on an existing session: its cache state from the transcript's last responses, unless a request of this
+// process set one first, and its context reading when no measure brought one (Desktop sends none until a response): the
+// engine's count, else the newest response's, with the engine's window. grep then tail, so the output stays small however
+// large the file (tac is not on macOS)
+const seedFromTranscript = async ($: EngineInterface, known?: string) => {
+  try {
+    const [c, x] = await Promise.all([read($, cache), read($, ctx)])
+    if (c && x) return
+    const path = known || await findTranscript($)
+    if (!path) return
+    const r = await $.process.run(['sh', '-c', 'grep -F \'"cache_creation"\' "$1" | tail -n 20', 'sh', path])
+    const seeded = r.exitCode === 0 ? seedFrom(r.stdout) : {}
+    if (!c && seeded.cache) await update($, cache, p => p ?? seeded.cache!)
+    if (!x) {
+      const { tokens = seeded.tokens, window } = (await $.session.usage()).context
+      if (tokens && window) await update($, ctx, p => p ?? { tokens, window })
+    }
   } catch {}
 }
 
@@ -572,6 +638,7 @@ export const register: Register = on => {
     if (ls) await update($, limits, () => fresh(ls as Limits, now))
     if (ws) await update($, weekly, () => fresh(ws as Weekly, now))
     void refreshUsage($, true)
+    await seedFromTranscript($)
     // a reload drops this module's timers, so no cancel is kept. A tick redraws, so it fires only when a countdown
     // or pace band moved since the last one
     let seen = ''
@@ -579,7 +646,7 @@ export const register: Register = on => {
       const [ls, ws, now, surfaces, open, c, cached, usageAt] = await Promise.all([read($, limits), read($, weekly), $.clock.now(), $.session.surfaces().catch(() => ['terminal'] as const), read($, usageOpen), read($, ctx), read($, cache), $.store.get('usageAt') as Promise<number | undefined>]) // unknown surfaces: keep the countdown redraw
       const windows = toWindows(ls, ws, now), terminal = surfaces.includes('terminal')
       // the open usage block draws countdowns, cap times and the reading's age too, so while it is open its lines count
-      const key = minuteKey(windows, now, terminal, cacheState(cached, c?.tokens, now), terminal || open)
+      const key = minuteKey(windows, now, terminal, cacheState(cached, now), terminal || open)
         + (open ? JSON.stringify([usageRows({ dir: '', windows, now }).map(r => r.line), usageAge(usageAt, now)]) : '')
       if (key !== seen) {
         seen = key
@@ -595,6 +662,14 @@ export const register: Register = on => {
       if (surfaces.length && (stale || now - (usageAt ?? 0) > 300_000)) await refreshUsage($, stale)
     })())
     return next(e)
+  })
+
+  // session.start runs once a process; /clear and /resume move it to another session through the classic hook alone
+  // (spike 3.3), which names the new transcript
+  on('classic.SessionStart', async ($, e, next) => {
+    const r = await next(e)
+    await seedFromTranscript($, e.transcript_path)
+    return r
   })
 
   // sending a prompt collapses the usage block, so it does not hold the composer down through the turn; no
@@ -629,7 +704,7 @@ export const register: Register = on => {
     await readTtl($)
     const [now, before, prev] = await Promise.all([$.clock.now(), read($, ctx), read($, cache)])
     // what the bar says of the cache at the send, kept for the accuracy line
-    const predicted = prev?.model && prev.model !== e.model ? 'cold' : cacheState(prev, before?.tokens, now)?.state
+    const predicted = prev?.model && prev.model !== e.model ? 'cold' : cacheState(prev, now)?.state
     await update($, cache, c => ({ ...c, sentAt: now, inFlight: true, ...(c?.model && c.model !== e.model && { cold: true as const }) }))
     let usage: TurnUsage | null = null
     try {
@@ -699,7 +774,7 @@ export const register: Register = on => {
     // a subagent's transcript in view: its type and model; main's ctx, window and cache say nothing about it
     const agentId = e.props.view?.agentId
     let shown: Pick<BarInput, 'agent' | 'model' | 'answered' | 'ctx' | 'cache'> = {
-      model: model ? modelLabel(model, c?.window) : undefined, ctx: c ?? undefined, cache: cacheState(cached, c?.tokens, now),
+      model: model ? modelLabel(model, c?.window) : undefined, ctx: c ?? undefined, cache: cacheState(cached, now),
       // the configured id may carry [1m], which the API's does not
       answered: cached?.model && model && cached.model !== model.replace(/\[1m\]$/i, '') ? modelLabel(cached.model) : undefined,
     }

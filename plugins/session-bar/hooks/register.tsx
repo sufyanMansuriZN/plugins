@@ -37,8 +37,7 @@ export const ctxBand = (c: Ctx): Level =>
   c.tokens >= ctxHot(c) ? 'hot' : c.tokens >= CTX_WARN ? 'warn' : undefined
 
 // The prompt cache keeps the context cheap to resend for its TTL after the last request was sent; past it the next
-// message pays for all of it again. Below 100K a miss costs little, so no state shows there
-export const CACHE_MIN = 100_000
+// message pays for all of it again
 const CACHE_SOON = 5 * 60_000
 export type CacheState = { state: 'active' | 'warm' | 'soon' | 'cold'; left: number }
 
@@ -57,12 +56,14 @@ export const cacheTtl = (text: string, read: number, input: number): number | un
 }
 
 // counted from the last main request's send: a wait after its response, a tool, a dialog or a subagent included, is
-// idle time for the cache. Nothing before the first request or while the TTL is unknown
+// idle time for the cache. Nothing before the first request, and no countdown while the TTL is unknown
 export const cacheState = (c: Cache | null | undefined, tokens: number | undefined, now: number): CacheState | undefined => {
-  if (!c?.ttlMs || tokens === undefined || tokens < CACHE_MIN) return
-  // a streaming request is the cache in use, so no countdown applies; the pill keeps its glyph and width. One that named
-  // another model is cold until its response ends, as the cache is keyed by model
-  if (c.inFlight) return c.cold ? { state: 'cold', left: 0 } : { state: 'active', left: c.ttlMs }
+  if (!c || tokens === undefined) return
+  // a streaming request is the cache in use, so no countdown applies and no TTL is needed: a session's first request
+  // shows it too. The pill keeps its glyph and width. One that named another model is cold until its response ends, as
+  // the cache is keyed by model
+  if (c.inFlight) return c.cold ? { state: 'cold', left: 0 } : { state: 'active', left: c.ttlMs ?? 0 }
+  if (!c.ttlMs) return
   const left = c.sentAt + c.ttlMs - now
   return { state: left <= 0 ? 'cold' : left < CACHE_SOON ? 'soon' : 'warm', left: Math.max(0, left) }
 }
@@ -177,22 +178,23 @@ const segment = (level: Level, runs: Run[]): Run[] => {
   return [{ text: '', color: bg }, ...[{ text: ' ' }, ...runs, { text: ' ' }].map(on), { text: '', color: bg }]
 }
 
-// one symbol for every state, the text after it says which; orange only when it is about to go cold. The narrowest
-// tier drops the countdown, as it does the 5h one
-const cacheRun = (c: CacheState, short: boolean): Run =>
-  c.state === 'cold' ? { text: '❄ cold', dimColor: true }
-    : c.state === 'active' ? { text: short ? '❄' : '❄ in use', dimColor: true }
-    : { text: short ? '❄' : `❄ ${countdown(c.left)}`, ...(c.state === 'soon' ? { color: ATTN.warn } : { dimColor: true }) }
+// a section of its own, in words: a ❄ glyph drew emoji-styled and two cells wide. Orange only when it is about to go
+// cold. The narrowest tier drops the countdown, as it does the 5h one, and so the section, unless cold
+const cacheRun = (c: CacheState, short: boolean): Run | undefined =>
+  c.state === 'cold' ? { text: 'cache cold', dimColor: true }
+    : short ? undefined
+    : c.state === 'active' ? { text: 'cache in use', dimColor: true }
+    : { text: `cache ${countdown(c.left)}`, ...(c.state === 'soon' ? { color: ATTN.warn } : { dimColor: true }) }
 
 export const segments = (b: BarInput, tier: Tier): Run[] => {
   const dim = (text: string): Run => ({ text, dimColor: true })
-  const meter = (label: string, pct: number, level: Level, value = `${Math.round(pct)}%`, after?: string | Run, tick?: number) => {
+  const meter = (label: string, pct: number, level: Level, value = `${Math.round(pct)}%`, after?: string, tick?: number) => {
     const { used, rest } = bar(pct, tier < 2 ? 10 : 5, tick)
     return segment(level, [
       dim(`${label} `),
       ...(tier < 3 ? [{ text: used }, dim(rest), { text: ' ' }] : []),
       { text: value },
-      ...(typeof after === 'string' ? [dim(` ${after}`)] : after ? [{ ...after, text: ` ${after.text}` }] : []),
+      ...(after ? [dim(` ${after}`)] : []),
     ])
   }
 
@@ -202,15 +204,17 @@ export const segments = (b: BarInput, tier: Tier): Run[] => {
   if (b.ctx) {
     // the bar runs to the hot threshold, so bar and color share one scale: full means hot, the tick marks warn
     const hot = ctxHot(b.ctx)
-    groups.push(meter('ctx', (b.ctx.tokens / hot) * 100, ctxBand(b.ctx), tokensText(b.ctx.tokens), b.cache && cacheRun(b.cache, tier === 4), CTX_WARN / hot))
+    groups.push(meter('ctx', (b.ctx.tokens / hot) * 100, ctxBand(b.ctx), tokensText(b.ctx.tokens), undefined, CTX_WARN / hot))
   }
+  const c = b.cache && cacheRun(b.cache, tier === 4)
+  if (c) groups.push([c])
   for (const w of b.windows) {
     // the 5h reset is the one watched, so it stays until the last tier; weekly ones only show at full width
     const left = w.resetsAt ? Date.parse(w.resetsAt) - b.now : 0
     const shown = tier === 0 || (tier < 4 && w.windowMs === WINDOW_MS.five_hour)
     groups.push(meter(w.label, w.pct, pace(w, b.now), undefined, shown && left > 0 ? countdown(left) : undefined))
   }
-  return groups.flatMap((g, i) => i ? [{ text: '   ' }, ...g] : g)
+  return groups.flatMap((g, i) => i ? [dim(' · '), ...g] : g)
 }
 
 // Desktop already shows dir, branch, model, context and usage (header, changes band, footer, ring popover), so the
@@ -533,15 +537,16 @@ const findTranscript = async ($: EngineInterface) => {
   }
 }
 
-// the TTL of the last main request, from its transcript line, which lands about 100 ms after the step's result: read at
-// the next step's entry and at the turn's end (spike 1.1). tail, not $.fs.read: that refuses files over 4 MiB, which the
-// long sessions this is for pass. No match or any failure keeps the last TTL
+// the TTL of the last main request, from its transcript line, which lands about 100 ms after the step's result or later:
+// read at the next step's entry, at the turn's end (spike 1.1) and on the minute tick while unknown. grep over the whole
+// file: a tail missed it behind the 126 KB prompt snapshot written after a session's first request, and $.fs.read
+// refuses files over 4 MiB. No match or any failure keeps the last TTL
 const readTtl = async ($: EngineInterface) => {
   try {
     const c = await read($, cache)
     if (!c || c.read === undefined || c.input === undefined) return
     const path = await findTranscript($)
-    const r = path ? await $.process.run(['tail', '-c', '65536', path]) : undefined
+    const r = path ? await $.process.run(['grep', '-F', `"cache_read_input_tokens":${c.read}`, path]) : undefined
     const ttlMs = r?.exitCode === 0 ? cacheTtl(r.stdout, c.read, c.input) : undefined
     if (ttlMs && ttlMs !== c.ttlMs) await update($, cache, p => p && { ...p, ttlMs })
   } catch {}
@@ -580,6 +585,7 @@ export const register: Register = on => {
         seen = key
         await update($, tick, n => n + 1)
       }
+      if (cached && !cached.ttlMs && !cached.inFlight) await readTtl($) // its line landed after the turn's end
       // other sessions' spend shows without a turn once the reading is over 5 minutes old. A window past its reset is
       // fetched at once, past refreshUsage's gate, and dropped from the atoms now: one forced fetch per reset, not one a
       // minute while the endpoint still answers the old window. A detached session fetches nothing
@@ -601,8 +607,11 @@ export const register: Register = on => {
 
   on('turn.complete', async ($, e, next) => {
     const result = await next(e)
-    if (!e.agentId) { // the last step's line is there by now; a subagent's loop has a cache of its own
+    if (!e.agentId) { // a subagent's loop has a cache of its own
       await readTtl($)
+      // the last step's line can land after the turn's end, a session's first one most often: read again soon, before
+      // the minute tick's retry
+      if (!(await read($, cache))?.ttlMs) for (const ms of [1_000, 5_000]) $.clock.after(ms, () => void readTtl($))
       await readCompactAt($)
     }
     await refreshUsage($)

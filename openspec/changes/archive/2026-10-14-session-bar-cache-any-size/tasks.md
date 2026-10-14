@@ -16,7 +16,7 @@
 ## 2. Live check and release
 
 - [x] 2.1 In a terminal session under 100K tokens, send a prompt; verify the bar shows `cache in use` while it streams and `cache <minutes>` within seconds after, from the first reply on, with a dim ` · ` between sections
-- [ ] 2.2 Sync the spec delta into `openspec/specs/session-bar`, bump `plugin.json` to 0.20.0, release (commit, push, `claude plugin update session-bar`); verify a new session shows the cache state under 100K tokens
+- [x] 2.2 Sync the spec delta into `openspec/specs/session-bar`, bump `plugin.json` to 0.20.0, release (commit, push, `claude plugin update session-bar`); verify a new session shows the cache state under 100K tokens
 
 ## Workflow follow-up
 

@@ -140,9 +140,9 @@ class LineTest(unittest.TestCase):
         git = Git("feature/a-very-long-branch-name", 1, 0)
         full = plain(line(AFTER, NOW, git))
         gauges = "Opus 5.5 1M · ctx 6% · 5h 66% ↻46m · 7d 43% ↻3d21h"
-        cut = plain(line(AFTER, NOW, git, columns=2 + len(gauges) + 3 + 10))
+        cut = plain(line(AFTER, NOW, git, columns=4 + len(gauges) + 3 + 10))
         self.assertEqual(cut, "feature/a… · " + gauges)
-        self.assertEqual(plain(line(AFTER, NOW, git, columns=len(full) + 2)), full)
+        self.assertEqual(plain(line(AFTER, NOW, git, columns=len(full) + 4)), full)
 
     def test_width_never_cuts_gauges(self):
         self.assertEqual(

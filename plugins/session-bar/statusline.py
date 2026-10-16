@@ -16,8 +16,8 @@ RESET = "\x1b[0m"
 
 SEP_TEXT = " · "
 WINDOWS = (("five_hour", "5h", 5 * 3600), ("seven_day", "7d", 168 * 3600), ("spend_limit", "$", None))
-# The status line is drawn two cells in from the terminal's left edge.
-INDENT = 2
+# Claude Code keeps two cells free at each edge and cuts a longer row with `…` (measured on 2.1.301).
+MARGIN = 4
 
 
 class Git(NamedTuple):
@@ -179,7 +179,7 @@ def line(payload: dict, now: float, git: Optional[Git], columns: Optional[int] =
     head = git_segment(git)
     if head and columns:
         used = sum(width(seg) for seg in rest) + len(SEP_TEXT) * len(rest)
-        head = fit_git(head, columns - INDENT - used)
+        head = fit_git(head, columns - MARGIN - used)
     return render([head] + rest if head else rest)
 
 

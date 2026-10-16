@@ -7,7 +7,7 @@
     {
       "name": "session-bar",
       "source": "./plugins/session-bar",
-      "description": "Session dir, model, ctx and paced usage pills above the prompt"
+      "description": "Live status line: git, model, context and usage windows"
     },
     {
       "name": "plain-focus",

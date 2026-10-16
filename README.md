@@ -24,3 +24,4 @@ From inside a Claude Code session:
 
 - **session-bar**: Session dir, model, ctx and paced usage pills above the prompt
 - **plain-focus**: Always-on lean ADHD output rules plus ASD-STE100-style simple English (based on ayghri/i-have-adhd, MIT)
+- **mermaid-preview**: Draws each mermaid block of a reply as a picture in the chat, in Ghostty or kitty. A button under each picture shows its source. Needs Node: mermaid-cli 12.0.0 runs through `npx` (the first run downloads it and Chromium). Not through tmux; elsewhere replies are left as they are

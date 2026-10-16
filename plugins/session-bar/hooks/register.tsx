@@ -8,6 +8,10 @@ import type { AgentModels, Cache, Ctx, Limits, Weekly } from '../types'
 // hot (Okabe-Ito), with dark text that reads on both. Color, and the pill shape, always mean "look here".
 const ATTN = { warn: '#E69F00', hot: '#D55E00' } as const
 const ON_ATTN = '#191919'
+// a bar's remaining part inside a pill: a darker shade of its fill, so the used part (ON_ATTN) reads against it
+const REST_ON = { warn: '#94690A', hot: '#8A420A' } as const
+// the terminal's secondary text: one mid grey, 4.5:1 on white and 3.7:1 on near-black, where SGR dim faded on light themes
+const GREY = '#777777'
 
 const limits = atom({ plugin: 'session-bar', key: 'limits' } as const, [] as Limits)
 const weekly = atom({ plugin: 'session-bar', key: 'weekly' } as const, [] as Weekly)
@@ -134,11 +138,11 @@ export const countdown = (ms: number) => {
     : m ? `${m}m` : '<1m'
 }
 
-// 10 cells (one per 10%) or 5, at half-cell steps: heavy ━ used, light ─ left, ╾ the half between them.
+// 5 cells (one per 20%) at half-cell steps: heavy ━ used, light ─ left, ╾ the half between them.
 // The two parts differ in weight, not only color, so the bar reads on any theme and inside an attention pill.
 // `tick` (a share of the scale, 0-1) swaps its cell for a cross keeping that cell's line weight: ┿ on used,
 // ┽ on the half, ┼ on what's left. It then takes the look of the part it lands in
-export const bar = (pct: number, cells = 10, tick?: number) => {
+export const bar = (pct: number, cells = 5, tick?: number) => {
   const halves = Math.round((Math.min(100, Math.max(0, pct)) / 100) * cells * 2)
   const used = '━'.repeat(halves >> 1) + (halves % 2 ? '╾' : '')
   let line = used + '─'.repeat(cells - used.length)
@@ -187,23 +191,25 @@ export const parseUsage = (text: string): { limits: Limits; weekly: Weekly } => 
 export const fresh = <T extends { resetsAt?: string }>(ls: T[], now: number) =>
   ls.filter(l => !l.resetsAt || Date.parse(l.resetsAt) > now)
 
-export type Run = { text: string; color?: string; backgroundColor?: string; dimColor?: boolean; bold?: boolean }
+// rest: a bar's remaining part, which a pill shades apart from the used part; never drawn as a prop
+export type Run = { text: string; color?: string; backgroundColor?: string; bold?: boolean; rest?: boolean }
 export type Win = { label: string; pct: number; resetsAt?: string; windowMs?: number }
 // agent: the type of the subagent whose transcript is in view; absent on main. answered: the label of the model that
 // answered the last main request when it is not the configured one (a fallback)
 export type BarInput = { dir: string; branch?: string; agent?: string; model?: string; answered?: string; ctx?: Ctx; cache?: CacheState; windows: Win[]; now: number }
-// 0 full, 1 5h countdown only, 2 short bars, 3 no bars, 4 no countdowns
-export type Tier = 0 | 1 | 2 | 3 | 4
+// 0 full, 1 5h countdown only, 2 no bars, 3 no countdowns
+export type Tier = 0 | 1 | 2 | 3
 
 const pace = (w: Win, now: number): Level =>
   w.resetsAt && w.windowMs ? paceBand(w.pct, elapsed(w.resetsAt, w.windowMs, now)) : band(w.pct)
 
-// a calm segment as is; one needing attention wrapped in a rounded pill, every run on its fill
+// one needing attention a square pill, a cell of padding each side and every run on its fill; a calm one in the same
+// cells left blank, so a segment turning into a pill moves nothing
 const segment = (level: Level, runs: Run[]): Run[] => {
-  if (!level) return runs
+  const padded = [{ text: ' ' }, ...runs, { text: ' ' }]
+  if (!level) return padded
   const bg = ATTN[level]
-  const on = ({ text }: Run): Run => ({ text, color: ON_ATTN, backgroundColor: bg })
-  return [{ text: '', color: bg }, ...[{ text: ' ' }, ...runs, { text: ' ' }].map(on), { text: '', color: bg }]
+  return padded.map(({ text, bold, rest }) => ({ text, color: rest ? REST_ON[level] : ON_ATTN, backgroundColor: bg, ...(bold && { bold }) }))
 }
 
 // a section of its own, in words: a ❄ glyph drew emoji-styled and two cells wide. A pill once it needs attention, orange
@@ -213,26 +219,30 @@ const cacheRuns = (c: CacheState, short: boolean, tokens?: number): Run[] =>
   c.state === 'cold' ? segment('hot', [{ text: `cache cold${short || tokens === undefined ? '' : ` · re-reads ${tokensText(tokens)}`}` }])
     : short ? []
     : c.state === 'soon' ? segment('warn', [{ text: `cache ${countdown(c.left)}` }])
-    : [{ text: c.state === 'active' ? 'cache in use' : `cache ${countdown(c.left)}`, dimColor: true }]
+    : [{ text: c.state === 'active' ? 'cache in use' : `cache ${countdown(c.left)}`, color: GREY }]
 
-export const segments = (b: BarInput, tier: Tier): Run[] => {
-  const dim = (text: string): Run => ({ text, dimColor: true })
+// Two zones: where the session is on the left (identity, then the cache, keyed by the model so it follows it) and how
+// much is spent on the right, which the render pins to the band's right edge. Gauges hold their columns: a value in 4
+// cells, a countdown in 5, a calm gauge in its pill's cells, so only a tier change moves them
+export const segments = (b: BarInput, tier: Tier): { left: Run[]; right: Run[] } => {
+  const grey = (text: string): Run => ({ text, color: GREY })
   const meter = (label: string, pct: number, level: Level, value = `${Math.round(pct)}%`, after?: string, tick?: number) => {
-    const { used, rest } = bar(pct, tier < 2 ? 10 : 5, tick)
+    const { used, rest } = bar(pct, 5, tick)
     return segment(level, [
-      dim(`${label} `),
-      ...(tier < 3 ? [{ text: used }, dim(rest), { text: ' ' }] : []),
-      { text: value },
-      ...(after ? [dim(` ${after}`)] : []),
+      grey(`${label} `),
+      ...(tier < 2 ? [{ text: used }, { text: rest, color: GREY, rest: true }, { text: ' ' }] : []),
+      { text: value.padStart(4), bold: true },
+      ...(after ? [grey(` ${after.padEnd(5)}`)] : []),
     ])
   }
 
-  const groups: Run[][] = [[
-    { text: b.dir, bold: true }, ...(b.branch ? [dim(` (${b.branch})`)] : []), ...[b.agent, b.model].filter(Boolean).map(t => dim(` · ${t}`)),
-  ]]
-  // the cache is keyed by model, so it follows the model
-  const c = b.cache ? cacheRuns(b.cache, tier === 4, b.ctx?.tokens) : []
-  if (c.length) groups.push(c)
+  const left: Run[] = [
+    { text: b.dir, bold: true }, ...(b.branch ? [grey(` (${b.branch})`)] : []), ...[b.agent, b.model].filter(Boolean).map(t => grey(` · ${t}`)),
+  ]
+  const c = b.cache ? cacheRuns(b.cache, tier === 3, b.ctx?.tokens) : []
+  // a pill's fill sets it apart, so one blank cell before it; plain text takes the dot
+  if (c.length) left.push(b.cache!.state === 'active' || b.cache!.state === 'warm' ? grey(' · ') : { text: ' ' }, ...c)
+  const groups: Run[][] = []
   if (b.ctx) {
     // the bar runs to the hot threshold, so bar and color share one scale: full means hot, the tick marks warn
     const hot = ctxHot(b.ctx)
@@ -241,10 +251,10 @@ export const segments = (b: BarInput, tier: Tier): Run[] => {
   for (const w of b.windows) {
     // the 5h reset is the one watched, so it stays until the last tier; weekly ones only show at full width
     const left = w.resetsAt ? Date.parse(w.resetsAt) - b.now : 0
-    const shown = tier === 0 || (tier < 4 && w.windowMs === WINDOW_MS.five_hour)
+    const shown = tier === 0 || (tier < 3 && w.windowMs === WINDOW_MS.five_hour)
     groups.push(meter(w.label, w.pct, pace(w, b.now), undefined, shown && left > 0 ? countdown(left) : undefined))
   }
-  return groups.flatMap((g, i) => i ? [dim(' · '), ...g] : g)
+  return { left, right: groups.flatMap((g, i) => i ? [{ text: ' ' }, ...g] : g) }
 }
 
 // Desktop already shows dir, branch, model, context and usage (header, changes band, footer, ring popover), so the
@@ -505,13 +515,16 @@ export const meter = (r: UsageRow) => {
 
 export const width = (runs: Run[]) => runs.reduce((n, r) => n + [...r.text].length, 0)
 
-// the richest tier that fits one row
-export const layout = (b: BarInput, columns = Infinity): Run[] => {
-  for (const tier of [0, 1, 2, 3] as const) {
-    const runs = segments(b, tier)
-    if (width(runs) <= columns) return runs
+// the least space between the zones; the render's margin is the same, so the tier picked here fits its row
+export const GAP = 3
+
+// the richest tier that fits one row, the zones closed up to GAP first
+export const layout = (b: BarInput, columns = Infinity) => {
+  for (const tier of [0, 1, 2] as const) {
+    const z = segments(b, tier)
+    if (width(z.left) + GAP + width(z.right) <= columns) return z
   }
-  return segments(b, 4)
+  return segments(b, 3)
 }
 
 // update() always writes and every write redraws, so a reading that has not changed must not reach it
@@ -874,13 +887,19 @@ export const register: Register = on => {
     // shortcut: one git spawn per redraw, no cache; detached HEAD reads "HEAD". Cache on turn.complete if it shows
     const git = await $.process.run(['git', 'rev-parse', '--abbrev-ref', 'HEAD']).catch(() => undefined)
     const branch = git?.exitCode === 0 ? git.stdout.trim() || undefined : undefined
-    const runs = layout({ dir: shortDir(root, home), branch, ...shown, windows, now }, e.props.bodyColumns)
+    const { left, right } = layout({ dir: shortDir(root, home), branch, ...shown, windows, now }, e.props.bodyColumns)
     const { Box, Text } = $.ui.resolve(e)
     const below = await next(e)
+    const draw = (runs: Run[]) => runs.map(({ text, rest, ...style }) => <Text {...style}>{text}</Text>)
 
+    // the left zone grows into the blank between, so the right one ends at the band's edge; when even the last tier
+    // is too wide, the left zone is cut short instead of either zone wrapping
     return (
       <Box flexDirection="column">
-        <Box>{runs.map(({ text, ...style }) => <Text {...style}>{text}</Text>)}</Box>
+        <Box>
+          <Box flexGrow={1} flexShrink={1}><Text wrap="truncate-end">{draw(left)}</Text></Box>
+          <Box marginLeft={GAP} flexShrink={0}>{draw(right)}</Box>
+        </Box>
         {below}
       </Box>
     )

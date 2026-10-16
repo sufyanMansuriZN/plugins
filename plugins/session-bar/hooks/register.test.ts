@@ -1,7 +1,7 @@
 import { test, expect, mock } from 'claude-code/testing'
 import {
   band, paceBand, ctxBand, tokensText, shortDir, limitText, parseUsage, fresh, modelLabel, withModel,
-  elapsed, countdown, bar, segments, desktopSegments, resetTime, usageRows, meter, desktopTier, DESKTOP_TIERS, buttonText, pill as desktopPill, layout, width, same, minuteKey, WINDOW_MS, WEEK,
+  elapsed, countdown, bar, segments, desktopSegments, resetTime, usageRows, meter, desktopTier, DESKTOP_TIERS, buttonText, pill as desktopPill, layout, width, GAP, same, minuteKey, WINDOW_MS, WEEK,
   cacheTtl, cacheState, seedFrom, icon, accuracyLine, usageAge,
 } from './register'
 import type { BarInput, Badge, CacheState, Run } from './register'
@@ -164,13 +164,14 @@ test('pace, countdown, bar', async () => {
   expect(countdown(30_000)).toBe('<1m')
 
   const line = (pct: number, cells?: number) => { const b = bar(pct, cells); return b.used + b.rest }
-  expect(line(0)).toBe('──────────')
-  expect(line(20)).toBe('━━────────') // one cell per 10%
-  expect(line(25)).toBe('━━╾───────')
-  expect(line(23.4)).toBe('━━╾───────')
-  expect(line(100)).toBe('━━━━━━━━━━')
-  expect(line(61, 5)).toBe('━━━──')
-  expect(line(65, 5)).toBe('━━━╾─')
+  expect(line(0)).toBe('─────')
+  expect(line(40)).toBe('━━───') // one cell per 20%
+  expect(line(50)).toBe('━━╾──')
+  expect(line(23.4)).toBe('━────')
+  expect(line(100)).toBe('━━━━━')
+  expect(line(61)).toBe('━━━──')
+  expect(line(65)).toBe('━━━╾─')
+  expect(line(25, 10)).toBe('━━╾───────') // any width
 })
 
 const NOW = Date.parse('2026-10-03T00:00:00Z')
@@ -183,6 +184,12 @@ const input = (over: Partial<BarInput> = {}): BarInput => ({
   ...over,
 })
 const texts = (runs: Run[]) => runs.map(r => r.text)
+// both zones as one row, the blank between them left out
+const all = (z: { left: Run[]; right: Run[] }) => [...z.left, ...z.right]
+const joined = (runs: Run[]) => texts(runs).join('')
+// the band width a layout needs: both zones and the least gap between
+const cols = (z: { left: Run[]; right: Run[] }) => width(z.left) + GAP + width(z.right)
+const GREY = '#777777'
 const pill = (runs: Run[], text: string) => runs.find(r => r.text === text)?.backgroundColor
 
 test('context: tokens of the window, colored by tokens sent', async () => {
@@ -196,64 +203,101 @@ test('context: tokens of the window, colored by tokens sent', async () => {
   expect([249_999, 250_000].map(tokens => ctxBand({ tokens, window: M, compactAt: 967_000 }))).toEqual(['warn', 'hot']) // a far one leaves 250K
   expect([187_400, 1_000_000, 200_000, 1_500_000].map(tokensText)).toEqual(['187K', '1M', '200K', '1.5M'])
 
-  expect(pill(segments(input({ ctx: { tokens: 187_400, window: M } }), 0), '187K')).toBe('#E69F00') // past 150K
-  expect(pill(segments(input({ ctx: { tokens: 120_000, window: M } }), 0), '120K')).toBeUndefined()
-  expect(pill(segments(input({ ctx: { tokens: 180_000, window: M } }), 0), '180K')).toBe('#E69F00')
-  expect(pill(segments(input({ ctx: { tokens: 170_000, window: K200 } }), 0), '170K')).toBe('#D55E00')
-  expect(texts(segments(input({ ctx: undefined }), 0))).not.toContain('ctx ')
+  expect(pill(all(segments(input({ ctx: { tokens: 187_400, window: M } }), 0)), '187K')).toBe('#E69F00') // past 150K
+  expect(pill(all(segments(input({ ctx: { tokens: 120_000, window: M } }), 0)), '120K')).toBeUndefined()
+  expect(pill(all(segments(input({ ctx: { tokens: 180_000, window: M } }), 0)), '180K')).toBe('#E69F00')
+  expect(pill(all(segments(input({ ctx: { tokens: 170_000, window: K200 } }), 0)), '170K')).toBe('#D55E00')
+  expect(texts(all(segments(input({ ctx: undefined }), 0)))).not.toContain('ctx ')
 })
 
 test('context bar runs to the hot threshold, warn tick matches the line weight', async () => {
   const M = 1_000_000
   // the ctx bar is the first run after the label, then its dimmed rest
-  const ctxBar = (tokens: number, window = M, tier: 0 | 2 = 0) => {
-    const runs = segments(input({ ctx: { tokens, window } }), tier)
+  const ctxBar = (tokens: number, window = M) => {
+    const runs = segments(input({ ctx: { tokens, window } }), 0).right
     const i = runs.findIndex(r => r.text === 'ctx ')
     return [runs[i + 1]!, runs[i + 2]!]
   }
   const line = (...a: Parameters<typeof ctxBar>) => ctxBar(...a).map(r => r.text).join('')
-  expect(line(120_000)).toBe('━━━━━─┼───') // below warn
-  expect(line(187_400)).toBe('━━━━━━┿╾──') // past warn
-  expect(line(160_000)).toBe('━━━━━━┽───') // fill ends on the tick's cell
-  expect(line(260_000)).toBe('━━━━━━┿━━━') // past hot: clamped full
-  expect(line(80_000, 200_000)).toBe('━━━━━────┼') // a 200K window runs to 160K
-  expect(line(120_000, M, 2)).toBe('━━╾┼─') // short bars
+  expect(line(120_000)).toBe('━━╾┼─') // below warn
+  expect(line(160_000)).toBe('━━━┼─') // past warn, the fill ends before the tick's cell
+  expect(line(187_400)).toBe('━━━┽─') // the fill's half on the tick's cell
+  expect(line(200_000)).toBe('━━━┿─')
+  expect(line(260_000)).toBe('━━━┿━') // past hot: clamped full
+  expect(line(80_000, 200_000)).toBe('━━╾─┼') // a 200K window runs to 160K
 
   const [usedRun, restRun] = ctxBar(120_000)
-  expect(restRun).toEqual({ text: '─┼───', dimColor: true }) // tick not reached: dimmed with the rest
-  expect(usedRun!.dimColor).toBeUndefined()
+  expect(restRun).toEqual({ text: '┼─', color: GREY, rest: true }) // tick not reached: grey with the rest
+  expect(usedRun!.color).toBeUndefined()
   const [reached] = ctxBar(149_000, 200_000) // still calm, but the fill has reached the tick's cell
-  expect(reached).toEqual({ text: '━━━━━━━━━┽' }) // drawn like the used part
+  expect(reached).toEqual({ text: '━━━━┽' }) // drawn like the used part
 })
 
 test('tiers and layout', async () => {
   const b = input()
-  const [full, noWeekly, short, noBars, bare] = ([0, 1, 2, 3, 4] as const).map(t => segments(b, t))
-  expect(texts(full!)).toContain(' 2h40m')
-  expect(texts(full!)).toContain(' 1d7h')
-  expect(texts(noWeekly!)).toContain(' 2h40m') // the 5h reset stays
-  expect(texts(noWeekly!)).not.toContain(' 1d7h')
-  expect(texts(noWeekly!)).toContain('━━╾') // 5h at 23%
-  expect(texts(short!)).toContain('━')
-  expect(texts(noBars!).join('')).toBe('skills · Opus 5.5 · ctx 120K · 5h 23% 2h40m · 7d 61%')
-  expect(texts(bare!).join('')).toBe('skills · Opus 5.5 · ctx 120K · 5h 23% · 7d 61%')
+  const [full, noWeekly, noBars, bare] = ([0, 1, 2, 3] as const).map(t => segments(b, t))
+  expect(texts(full!.right)).toContain(' 2h40m')
+  expect(texts(full!.right)).toContain(' 1d7h ')
+  expect(texts(noWeekly!.right)).toContain(' 2h40m') // the 5h reset stays
+  expect(texts(noWeekly!.right)).not.toContain(' 1d7h ')
+  expect(texts(noWeekly!.right)).toContain('━') // 5h at 23%, bars still drawn
+  // identity sections take the dot; gauges are set apart by blank cells, a calm one in its pill's cells
+  expect(joined(full!.right)).toBe(' ctx ━━╾┼─ 120K   5h ━────  23% 2h40m   7d ━━━──  61% 1d7h  ')
+  expect(joined(noBars!.left)).toBe('skills · Opus 5.5')
+  expect(joined(noBars!.right)).toBe(' ctx 120K   5h  23% 2h40m   7d  61% ')
+  expect(joined(bare!.left)).toBe('skills · Opus 5.5')
+  expect(joined(bare!.right)).toBe(' ctx 120K   5h  23%   7d  61% ')
 
   expect(layout(b)).toEqual(full)
-  expect(layout(b, width(full!))).toEqual(full)
-  expect(layout(b, width(full!) - 1)).toEqual(noWeekly)
-  expect(layout(b, width(short!))).toEqual(short)
-  expect(layout(b, width(noBars!))).toEqual(noBars)
-  expect(layout(b, width(noBars!) - 1)).toEqual(bare)
+  expect(layout(b, cols(full!))).toEqual(full) // the gap closed to GAP before a tier drops
+  expect(layout(b, cols(full!) - 1)).toEqual(noWeekly)
+  expect(layout(b, cols(noWeekly!) - 1)).toEqual(noBars) // no short-bars step: bars go whole
+  expect(layout(b, cols(noBars!))).toEqual(noBars)
+  expect(layout(b, cols(noBars!) - 1)).toEqual(bare)
   expect(layout(b, 10)).toEqual(bare)
+})
+
+test('gauges hold their columns: fixed value and countdown slots, a calm gauge as wide as its pill', () => {
+  const at = (pct: number, ms: number, label = '5h', windowMs = WINDOW_MS.five_hour) => ({ label, pct, resetsAt: new Date(NOW + ms).toISOString(), windowMs })
+  const right = (over: Partial<BarInput>) => segments(input(over), 0).right
+  expect(texts(right({ windows: [at(10, 40 * MIN)] }))).toContain(' 40m  ') // 3 cells, then 2 blank
+  expect(texts(right({ windows: [at(9, 100 * MIN, '7d', WEEK)] }))).toContain('  9%') // 2 blank, then 2 cells
+  // a 5h gauge calm at 23% and a vermillion pill at 71%: the same cells
+  const calm = right({ ctx: undefined, windows: [at(23, 160 * MIN)] }), hot = right({ ctx: undefined, windows: [at(71, 3.5 * 60 * MIN)] })
+  expect(pill(hot, ' 71%')).toBe('#D55E00')
+  expect(width(hot)).toBe(width(calm))
+  // the context growing past a digit and into a pill moves no gauge after it
+  const offset = (tokens: number) => { const r = right({ ctx: { tokens, window: 1_000_000 } }); return width(r.slice(0, r.findIndex(x => x.text === '5h '))) }
+  expect(pill(right({ ctx: { tokens: 187_000, window: 1_000_000 } }), '187K')).toBe('#E69F00')
+  expect(offset(187_000)).toBe(offset(87_000))
+})
+
+test('secondary text is one grey, never faint; values bold in the text color', () => {
+  const b = input({ branch: 'main', cache: { state: 'warm', left: 38 * MIN } })
+  for (const tier of [0, 1, 2, 3] as const) {
+    const runs = all(segments(b, tier))
+    expect(runs.some(r => 'dimColor' in r)).toBe(false)
+    for (const r of runs.filter(r => r.bold && r.text !== 'skills')) expect(r.color).toBeUndefined() // the values
+  }
+  const runs = all(segments(b, 0))
+  const grey = (text: string) => expect(runs.find(r => r.text === text)?.color).toBe(GREY)
+  for (const text of [' (main)', ' · Opus 5.5', ' · ', 'cache 38m', 'ctx ', '5h ', ' 2h40m', ' 1d7h ']) grey(text)
+  expect(runs.find(r => r.text === ' 23%')).toEqual({ text: ' 23%', bold: true })
+  expect(runs.filter(r => r.rest).every(r => r.color === GREY)).toBe(true) // the bars' remaining parts
 })
 
 test('a subagent in view: type before its model, no ctx at any tier', async () => {
   const sub = input({ agent: 'Explore', model: 'Haiku 4.5', ctx: undefined })
-  expect(texts(segments(sub, 3)).join('')).toBe('skills · Explore · Haiku 4.5 · 5h 23% 2h40m · 7d 61%')
-  expect(texts(segments(input({ agent: 'Plan', model: undefined, ctx: undefined }), 4)).join(''))
-    .toBe('skills · Plan · 5h 23% · 7d 61%') // no model until its first request
-  for (const tier of [0, 1, 2, 3, 4] as const) expect(texts(segments(sub, tier))).not.toContain('ctx ')
-  expect(texts(layout(sub, 10)).join('')).toBe('skills · Explore · Haiku 4.5 · 5h 23% · 7d 61%')
+  expect(joined(segments(sub, 2).left)).toBe('skills · Explore · Haiku 4.5')
+  expect(joined(segments(sub, 2).right)).toBe(' 5h  23% 2h40m   7d  61% ') // only windows: the right zone starts with 5h
+  expect(joined(segments(input({ agent: 'Plan', model: undefined, ctx: undefined }), 3).left))
+    .toBe('skills · Plan') // no model until its first request
+  for (const tier of [0, 1, 2, 3] as const) {
+    expect(texts(all(segments(sub, tier)))).not.toContain('ctx ')
+    expect(joined(segments(sub, tier).right)).not.toContain(' · ')
+  }
+  expect(joined(layout(sub, 10).left)).toBe('skills · Explore · Haiku 4.5')
+  expect(joined(layout(sub, 10).right)).toBe(' 5h  23%   7d  61% ')
   expect(modelLabel('claude-sonnet-5-5')).toBe('Sonnet 5.5') // no window borrowed from main
 })
 
@@ -302,17 +346,33 @@ test('band follows the transcript in view: spawn seeds the model, a step overrid
 })
 
 test('calm segments are bare text; only attention gets a pill, all on its fill', async () => {
-  const calm = segments(input(), 0)
-  expect(calm.some(r => r.backgroundColor || r.color)).toBe(false) // terminal colors: any theme reads
+  const calm = all(segments(input(), 0))
+  // terminal colors: any theme reads. The one grey is the secondary text; values and the used bars carry none
+  expect(calm.some(r => r.backgroundColor || (r.color && r.color !== GREY))).toBe(false)
+  expect(calm.filter(r => r.text.includes('━') || r.bold).every(r => !r.color)).toBe(true)
 
-  const hot = segments(input({ windows: [
+  const hot = all(segments(input({ windows: [
     { label: '5h', pct: 71, resetsAt: new Date(NOW + 3.5 * 3_600_000).toISOString(), windowMs: WINDOW_MS.five_hour },
     { label: '7d', pct: 61, resetsAt: new Date(NOW + 31 * 3_600_000).toISOString(), windowMs: WEEK },
-  ] }), 0)
-  expect(pill(hot, '71%')).toBe('#D55E00')
-  expect(pill(hot, '61%')).toBeUndefined()
-  const start = hot.findIndex(r => r.text === ''), end = hot.findIndex(r => r.text === '')
-  expect(hot.slice(start + 1, end).every(r => r.backgroundColor === '#D55E00' && r.color === '#191919')).toBe(true)
+  ] }), 0))
+  expect(pill(hot, ' 71%')).toBe('#D55E00')
+  expect(pill(hot, ' 61%')).toBeUndefined()
+  // a square pill: one padding cell each side of the label and countdown, nothing on the fill past them
+  const start = hot.findIndex(r => r.text === '5h ') - 1, end = hot.findIndex(r => r.text === ' 3h30m') + 1
+  expect([hot[start]!.text, hot[end]!.text]).toEqual([' ', ' '])
+  expect([hot[start - 1]!.backgroundColor, hot[end + 1]!.backgroundColor]).toEqual([undefined, undefined])
+  // the bar's remaining part in a darker vermillion, the rest in the dark text color
+  expect(hot.slice(start, end + 1).every(r => r.backgroundColor === '#D55E00' && (r.color === '#191919' || r.color === '#8A420A'))).toBe(true)
+})
+
+test('a bar inside a pill: used part in the dark text color, its remaining part a darker shade of the fill', () => {
+  // 62% with 40% of the window gone: 22 points ahead, orange
+  const runs = segments(input({ ctx: undefined, windows: [
+    { label: '5h', pct: 62, resetsAt: new Date(NOW + 3 * 3_600_000).toISOString(), windowMs: WINDOW_MS.five_hour },
+  ] }), 0).right
+  expect(runs.find(r => r.text === '━━━')).toEqual({ text: '━━━', color: '#191919', backgroundColor: '#E69F00' })
+  expect(runs.find(r => r.text === '──')).toEqual({ text: '──', color: '#94690A', backgroundColor: '#E69F00' })
+  expect(runs.find(r => r.text === ' 62%')).toEqual({ text: ' 62%', color: '#191919', backgroundColor: '#E69F00', bold: true })
 })
 
 test('countdown moves while idle', async ($, on) => {
@@ -340,8 +400,39 @@ test('countdown moves while idle', async ($, on) => {
 })
 
 test('branch shows after the dir, only when given', () => {
-  expect(texts(segments(input({ branch: 'main' }), 0)).slice(0, 3)).toEqual(['skills', ' (main)', ' · Opus 5.5'])
-  expect(texts(segments(input(), 0))).not.toContain(' (main)')
+  expect(texts(segments(input({ branch: 'main' }), 0).left)).toEqual(['skills', ' (main)', ' · Opus 5.5'])
+  expect(texts(segments(input(), 0).left)).not.toContain(' (main)')
+})
+
+test('terminal mount: one row, identity in a growing left zone, the gauges after the least gap', async ($, on) => {
+  on('session.root', async () => ({ value: '/home/me/.claude/skills' }))
+  on('env.get', async () => ({ value: '/home/me' }))
+  on('session.model', async () => ({ value: 'claude-opus-5-5' }))
+  on('clock.now', async () => ({ value: NOW }))
+  on('session.measure', async (_$, e) => ({ changed: e.changed }))
+  on('ui.render', async () => h('Box', {}) as never)
+  on('store.set', async () => ({ value: undefined }))
+  await $.session.measure({ context: { tokens: 187_400, window: 1_000_000 }, rateLimits: [{ kind: 'five_hour', percentUsed: 23 }, { kind: 'seven_day', percentUsed: 61 }], changed: ['context', 'rateLimits'] } as never)
+  // what the mount draws, as the pure layout sees it
+  const full = segments({ dir: 'skills', model: 'Opus 5.5 1M', ctx: { tokens: 187_400, window: 1_000_000 }, now: NOW, windows: [
+    { label: '5h', pct: 23, windowMs: WINDOW_MS.five_hour }, { label: '7d', pct: 61, windowMs: WEEK },
+  ] }, 0)
+  const ui = await $.ui.mount({
+    plugin: 'session-bar', surface: 'terminal', component: 'AbovePrompt',
+    props: { hasSurvey: false, isWorking: false, maxRows: 3, bodyColumns: cols(full) } as never,
+  })
+  const [, row, left, right] = await ui.findAll({ type: 'Box' })
+  expect(row!.text).toBe(joined(full.left) + joined(full.right))
+  expect(left!.text).toBe('skills · Opus 5.5 1M')
+  expect(row!.text.endsWith('7d ━━━──  61% ')).toBe(true) // 61% with no reset to pace against: an orange pill
+  expect(left!.props.flexGrow).toBe(1)
+  // under the last tier's width the left zone is cut short and the gauges keep theirs: one row, never wrapped
+  expect(left!.props.flexShrink).toBe(1)
+  expect((await ui.findAll({ type: 'Text' })).find(t => t.props.wrap)?.props.wrap).toBe('truncate-end')
+  expect(right!.props.flexShrink).toBe(0)
+  expect(right!.props.marginLeft).toBe(GAP)
+  expect(right!.text).toBe(joined(full.right))
+  await ui.unmount()
 })
 
 test('desktop: every reading shows as a pill, calm ones neutral', () => {
@@ -813,31 +904,32 @@ test('a reopened session takes its cache state from the transcript: the newest m
 
 test('cache in the terminal bar: a section of its own in words, dim countdown, an orange pill when soon, a vermillion one with the re-read when cold; only cold at the narrowest tier', () => {
   const ctx = { tokens: 120_000, window: 1_000_000 }
-  const run = (cache: CacheState, tier: 0 | 4 = 0, c: typeof ctx | null = ctx) => segments(input({ ctx: c ?? undefined, cache }), tier).find(r => r.text.startsWith('cache '))
-  expect(run({ state: 'warm', left: 38 * MIN })).toEqual({ text: 'cache 38m', dimColor: true })
+  const run = (cache: CacheState, tier: 0 | 3 = 0, c: typeof ctx | null = ctx) => segments(input({ ctx: c ?? undefined, cache }), tier).left.find(r => r.text.startsWith('cache '))
+  expect(run({ state: 'warm', left: 38 * MIN })).toEqual({ text: 'cache 38m', color: GREY })
   expect(run({ state: 'soon', left: 4 * MIN })).toEqual({ text: 'cache 4m', color: '#191919', backgroundColor: '#E69F00' })
   expect(run({ state: 'cold', left: 0 })).toEqual({ text: 'cache cold · re-reads 120K', color: '#191919', backgroundColor: '#D55E00' })
   expect(run({ state: 'cold', left: 0 }, 0, null)?.text).toBe('cache cold') // no context reading: no count to name
-  // the pill's caps and padding, as every attention pill's
-  const cold = segments(input({ ctx, cache: { state: 'cold', left: 0 } }), 0)
+  // the pill's padding, as every attention pill's
+  const cold = segments(input({ ctx, cache: { state: 'cold', left: 0 } }), 0).left
   const at = cold.findIndex(r => r.text.startsWith('cache '))
-  expect(cold.slice(at - 2, at + 3)).toEqual([{ text: '', color: '#D55E00' }, { text: ' ', color: '#191919', backgroundColor: '#D55E00' }, cold[at], { text: ' ', color: '#191919', backgroundColor: '#D55E00' }, { text: '', color: '#D55E00' }])
-  expect(run({ state: 'warm', left: 38 * MIN }, 4)).toBeUndefined()
-  expect(run({ state: 'soon', left: 4 * MIN }, 4)).toBeUndefined()
-  expect(run({ state: 'cold', left: 0 }, 4)).toEqual({ text: 'cache cold', color: '#191919', backgroundColor: '#D55E00' })
-  // the narrowest layout still carries the cold pill, right after the model
+  expect(cold.slice(at - 1, at + 2)).toEqual([{ text: ' ', color: '#191919', backgroundColor: '#D55E00' }, cold[at], { text: ' ', color: '#191919', backgroundColor: '#D55E00' }])
+  expect(run({ state: 'warm', left: 38 * MIN }, 3)).toBeUndefined()
+  expect(run({ state: 'soon', left: 4 * MIN }, 3)).toBeUndefined()
+  expect(run({ state: 'cold', left: 0 }, 3)).toEqual({ text: 'cache cold', color: '#191919', backgroundColor: '#D55E00' })
+  // the narrowest layout still carries the cold pill, ending the left zone right after the model, one blank cell between
   const narrow = input({ ctx, cache: { state: 'cold', left: 0 } })
-  const cols = width(segments(narrow, 4))
-  expect(width(segments(narrow, 3))).toBeGreaterThan(cols)
-  const shown = texts(layout(narrow, cols))
-  expect(shown.slice(shown.indexOf(' · Opus 5.5'), shown.indexOf('cache cold') + 1)).toEqual([' · Opus 5.5', ' · ', '', ' ', 'cache cold'])
-  expect(run({ state: 'active', left: 60 * MIN })).toEqual({ text: 'cache in use', dimColor: true })
-  expect(run({ state: 'active', left: 60 * MIN }, 4)).toBeUndefined()
-  expect(texts(segments(input({ ctx }), 0)).join('')).not.toContain('cache') // no state, nothing added
-  // its own section right after the model, before ctx, a dot between, as between every section
-  const all = texts(segments(input({ ctx, cache: { state: 'warm', left: 38 * MIN } }), 0))
-  expect(all.slice(all.indexOf(' · Opus 5.5'), all.indexOf('ctx ') + 1)).toEqual([' · Opus 5.5', ' · ', 'cache 38m', ' · ', 'ctx '])
-  expect(width(layout(input({ ctx, cache: { state: 'warm', left: 38 * MIN } }), 40))).toBeGreaterThan(0)
+  const least = cols(segments(narrow, 3))
+  expect(cols(segments(narrow, 2))).toBeGreaterThan(least)
+  const shown = texts(layout(narrow, least).left)
+  expect(shown.slice(shown.indexOf(' · Opus 5.5'))).toEqual([' · Opus 5.5', ' ', ' ', 'cache cold', ' '])
+  expect(run({ state: 'active', left: 60 * MIN })).toEqual({ text: 'cache in use', color: GREY })
+  expect(run({ state: 'active', left: 60 * MIN }, 3)).toBeUndefined()
+  expect(joined(all(segments(input({ ctx }), 0)))).not.toContain('cache') // no state, nothing added
+  // the last section of the left zone, a dot after the model; the right zone starts with ctx
+  const warm = segments(input({ ctx, cache: { state: 'warm', left: 38 * MIN } }), 0)
+  expect(texts(warm.left).slice(-3)).toEqual([' · Opus 5.5', ' · ', 'cache 38m'])
+  expect(texts(warm.right).slice(0, 2)).toEqual([' ', 'ctx '])
+  expect(width(layout(input({ ctx, cache: { state: 'warm', left: 38 * MIN } }), 40).left)).toBeGreaterThan(0)
 })
 
 test('cache on the Desktop: a flame on the context pill while warm or in use; a pill of its own, amber soon and red cold, that keeps its icon at every width', () => {

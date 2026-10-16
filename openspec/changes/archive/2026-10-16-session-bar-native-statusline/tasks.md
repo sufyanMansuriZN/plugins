@@ -23,4 +23,4 @@
 
 ## 5. Release
 
-- [ ] 5.1 Archive this change after the user accepts 2.0.0.
+- [x] 5.1 Archive this change after the user accepts 2.0.0.

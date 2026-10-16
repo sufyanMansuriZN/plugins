@@ -7,18 +7,18 @@ The session bar is the band above the prompt that shows where the session is, wh
 ## Requirements
 
 ### Requirement: One status line under the prompt
-The plugin SHALL show its figures as one plain-text line set through `$.ui.status`, with segments in the order git, model, context, 5h, 7d, spend limit, joined by ` · `. A segment with no value SHALL be left out. The plugin SHALL draw nothing else: no `ui.render` hook, no Desktop case, no config rows and no options.
+The plugin SHALL draw its figures through Claude Code's `statusLine` setting: `statusline.py` reads the statusLine JSON on stdin and prints one row, with segments in the order git, model, context, 5h, 7d, spend limit, joined by a dim ` · `. A segment with no value SHALL be left out. Calm values SHALL use the terminal's own color and labels SHALL be dim. The plugin SHALL draw nothing through the mod API.
 
 #### Scenario: Every segment has a value
-- **WHEN** the repo is on `main` with 3 new and 2 changed files, the model is `claude-opus-5-5` with a 1,000,000-token window, the context is 42% full, 5h is at 31% resetting in 2h10m and 7d at 12% resetting in 3d4h
-- **THEN** the line reads `main +3 ~2 · Opus 5.5 1M · ctx 42% · 5h 31% ↻2h10m · 7d 12% ↻3d4h`
+- **WHEN** the repo is on `main` with 3 new and 2 changed files, the model's display name is `Opus 5.5` with a 1,000,000-token window, the context is 6% full, 5h is at 66% resetting in 46m and 7d at 43% resetting in 3d21h
+- **THEN** the row reads `main +3 ~2 · Opus 5.5 1M · ctx 6% · 5h 66% ↻46m · 7d 43% ↻3d21h`
 
 #### Scenario: Only the model is known
-- **WHEN** the session is outside a git repo, before its first response, with no usage reading
-- **THEN** the line reads the model label alone
+- **WHEN** the session is outside a git repo and the JSON has `used_percentage` `null` and no `rate_limits`
+- **THEN** the row reads `Opus 5.5 1M`
 
 ### Requirement: Git segment
-The git segment SHALL be the branch, then `+N` for untracked and added files and `~M` for modified, deleted and renamed files, each count left out at zero. A detached HEAD SHALL show the short commit sha, or `HEAD` when there is none. Outside a git repo the segment SHALL be left out. The plugin SHALL read it with one `git --no-optional-locks status --porcelain=v2 --branch` call that gives up after 10 seconds, so it never takes the index lock a `git add` in the same repo needs.
+The git segment SHALL be the branch, then `+N` for untracked and added files and `~M` for modified, deleted and renamed files, each count left out at zero. A detached HEAD SHALL show the short commit sha, or `HEAD` when there is none. Outside a git repo the segment SHALL be left out. The script SHALL read it with one `git --no-optional-locks -C <workspace.current_dir> status --porcelain=v2 --branch` call that gives up after 2 seconds.
 
 #### Scenario: Clean tree
 - **WHEN** the tree has no changes on branch `main`
@@ -30,137 +30,128 @@ The git segment SHALL be the branch, then `+N` for untracked and added files and
 
 #### Scenario: Not a repo
 - **WHEN** `git status` exits with an error
-- **THEN** the line has no git segment
+- **THEN** the row has no git segment
 
 ### Requirement: Model segment
-The model segment SHALL be the label derived from `$.session.model()`: `claude-<name>-<ver>[-<date>][[1m]]` reads as the capitalized name and the dotted version, any other id as given. A known window size from `$.session.usage().context.window` SHALL follow it as ` 1M` or ` 200K`; with no window, a `[1m]` id SHALL read ` 1M`.
+The model segment SHALL be `model.display_name` as Claude Code gives it. The window size from `context_window.context_window_size` SHALL follow it as ` 1M` or ` 200K`, unless the name already holds that size.
 
 #### Scenario: Labels
-- **WHEN** the id is `claude-opus-5-5[1m]`, or `claude-haiku-4-5-20251001` with a 200,000-token window, or `some-gateway-model` with a 200,000-token window
-- **THEN** the segment reads `Opus 5.5 1M`, `Haiku 4.5 200K` or `some-gateway-model 200K`
+- **WHEN** the display name is `Opus 5.5` with a 1,000,000-token window, or `Opus 5.5` with a 200,000-token window, or `Opus 4.6 (1M context)` with a 1,000,000-token window
+- **THEN** the segment reads `Opus 5.5 1M`, `Opus 5.5 200K` or `Opus 4.6 (1M context)`
 
 ### Requirement: Context segment
-The context segment SHALL read `ctx <percent>%` from `$.session.usage().context.percent`, with `!` from 70% and `!!` from 85%. It SHALL be left out while the percent is absent, before the first response of a fresh or just compacted window.
+The context segment SHALL read `ctx <percent>%` from `context_window.used_percentage`, rounded to a whole number, the value yellow from 70% and red from 85%. It SHALL be left out while the percent is `null` or absent.
 
 #### Scenario: Marks
 - **WHEN** the context is 69%, 70% or 85% full
-- **THEN** the segment reads `ctx 69%`, `ctx 70%!` or `ctx 85%!!`
+- **THEN** the value is in the default color, yellow or red
 
 #### Scenario: No response yet
-- **WHEN** the usage has no context percent
-- **THEN** the line has no context segment
+- **WHEN** `used_percentage` is `null`
+- **THEN** the row has no context segment
 
 ### Requirement: Usage window segments
-The `five_hour`, `seven_day` and `spend_limit` windows SHALL read `5h`, `7d` and `$`, then the whole percent, a mark, and `↻<countdown>` to the reset when one is known. The countdown SHALL use at most two units (`1d7h`, `2h40m`, `12m`, `<1m`). A reading whose reset time has passed SHALL be left out. Other window kinds SHALL be ignored.
+The `rate_limits` windows `five_hour`, `seven_day` and `spend_limit` SHALL read `5h`, `7d` and `$`, then `used_percentage` rounded to a whole number, and ` ↻<countdown>` to `resets_at` (Unix epoch seconds) when it is set. The countdown SHALL use at most two units (`1d7h`, `2h40m`, `12m`, `<1m`). A window whose reset time has passed SHALL be left out. Other window kinds SHALL be ignored.
 
 #### Scenario: Reset passed
-- **WHEN** a 5h reading at 88% has a reset time before now
-- **THEN** the line has no 5h segment
+- **WHEN** a 5h window at 88% has a reset time before now
+- **THEN** the row has no 5h segment
 
 #### Scenario: Spend limit
-- **WHEN** the reading holds a `spend_limit` at 40% with no reset time
+- **WHEN** the JSON holds a `spend_limit` at 40% with no reset time
 - **THEN** the segment reads `$ 40%`
 
-### Requirement: Usage window marks
-A window with a reset time and a known length (5h, 168h) SHALL be marked by pace: with `ahead` the percent minus the share of the window gone times 100, `!!` when `ahead` is over 30 or the percent is 90 or more, `!` when `ahead` is over 15. A window without them SHALL be marked `!` from 50% and `!!` from 80%.
-
-#### Scenario: Ahead of pace
-- **WHEN** 5h is at 40% with 4h left of 5h
-- **THEN** the segment reads `5h 40%! ↻4h`
-
-#### Scenario: Behind pace
-- **WHEN** 5h is at 40% with 2h left
-- **THEN** the segment reads `5h 40% ↻2h`
-
-#### Scenario: No reset time
-- **WHEN** 7d is at 50% with no reset time
-- **THEN** the segment reads `7d 50%!`
-
-### Requirement: Newest usage reading wins
-The plugin SHALL keep two readings of the usage windows, each stamped with a time: the response headers from `$.session.usage().rateLimits`, and the OAuth usage endpoint, whose `session` and `weekly_all` limits map to `five_hour` and `seven_day`. The line SHALL show the newer reading whole, with no merge per window.
-
-#### Scenario: A response after the fetch
-- **WHEN** the endpoint answered 5h at 31% and a later response's headers say 33%
-- **THEN** the 5h segment reads 33%
-
-#### Scenario: A fetch after the response
-- **WHEN** the header reading says 33% and a fetch 5 minutes later answers 45%
-- **THEN** the 5h segment reads 45%
-
-### Requirement: Reading stamps
-The header reading SHALL be stamped with the start of the newest `turn.step` whose result has a stop reason, that is a step that got a response. No other event SHALL advance that stamp, `turn.complete` included, since it also ends an interrupt or an API error. Before any such step the stamp SHALL be earlier than every endpoint reading. The endpoint reading SHALL be stamped with the time its fetch started.
-
-#### Scenario: A turn ends with no new response
-- **WHEN** the header reading says 33%, a later fetch answered 45%, and a `turn.complete` follows with no `turn.step`
-- **THEN** the 5h segment still reads 45%
-
-#### Scenario: Headers present at a reload
-- **WHEN** `session.start` finds headers saying 33% and the launch fetch answers 45%
-- **THEN** the 5h segment reads 33% until the fetch answers, then 45%
-
 ### Requirement: Limits parsed at the boundary
-Both the header and the endpoint parser SHALL drop a limit whose percent is not a finite number or whose window kind is unknown, and SHALL treat a reset time that does not parse as unknown.
-
-#### Scenario: A reset time that does not parse
-- **WHEN** the endpoint answers 5h at 20% with a reset time of `soon`
-- **THEN** the segment reads `5h 20%` with no countdown
+The script SHALL leave out a segment whose field is missing, not a finite number (booleans included) or of the wrong kind, and SHALL treat a `resets_at` that is not a number as no reset time.
 
 #### Scenario: A percent that is not a number
-- **WHEN** the endpoint answers 5h with a `null` percent
-- **THEN** that limit is dropped
+- **WHEN** `five_hour.used_percentage` is `null` and `context_window.used_percentage` is the string `"6"`
+- **THEN** the row has neither a 5h nor a context segment
 
-### Requirement: Usage endpoint fetch
-The plugin SHALL fetch `https://api.anthropic.com/api/oauth/usage` with the session's credential handle once just after `session.start`, then from the 30-second tick, at most every 5 minutes after a good reading. With no credential it SHALL skip the fetch and ask again 5 minutes later. An answer SHALL count as a reading only when it holds at least one limit with a finite percent.
+#### Scenario: A reset time that does not parse
+- **WHEN** `five_hour` is at 20% with a `resets_at` of `"soon"`
+- **THEN** the segment reads `5h 20%` with no countdown
 
-#### Scenario: Launch
-- **WHEN** a session starts with no response yet
-- **THEN** the endpoint's 5h and 7d readings fill the line without waiting for a turn
-
-#### Scenario: Empty answer
-- **WHEN** a good reading is on the line and a later fetch answers 200 with `{ "limits": [] }`
-- **THEN** the line keeps the good reading
-
-#### Scenario: No credential
-- **WHEN** the session has no credential handle
-- **THEN** no fetch is made
-
-### Requirement: Endpoint retry
-A failed fetch (a throw, a non-2xx status, or an answer with no usable limit) SHALL keep the last good reading and allow the next try 1 minute later.
-
-#### Scenario: Endpoint fails
-- **WHEN** the fetch answers a non-2xx status
-- **THEN** the line keeps the reading it had
-
-#### Scenario: Launch fetch fails
-- **WHEN** the launch fetch fails and the endpoint answers on the next try
-- **THEN** that try comes at the first tick at least 1 minute after the failure, and 5h and 7d appear then
-
-### Requirement: When the line updates
-The plugin SHALL rebuild the line at `session.start`, after each `turn.step` and `turn.complete`, after `session.compact`, and every 30 seconds. Git SHALL be re-read at `session.start`, `turn.complete` and each tick. It SHALL call `$.ui.status` only when the text differs from the last text it set.
-
-#### Scenario: A response changes the usage
-- **WHEN** a `turn.step` ends and the usage now has a context percent and a 5h reading
-- **THEN** the line is set again with the context and 5h segments
-
-#### Scenario: Nothing changed
-- **WHEN** two steps end with the same usage
-- **THEN** `$.ui.status` is called once for that text
+### Requirement: Refresh schedule
+Claude Code SHALL run the script on its own events and every 30 seconds, from `refreshInterval: 30` in the `statusLine` setting that `/session-bar:setup` writes. The script SHALL keep no state between runs.
 
 #### Scenario: Countdowns move while idle
 - **WHEN** no turn runs and a minute passes
-- **THEN** the next tick sets the line with the shorter countdown
+- **THEN** the next run prints the shorter countdown
 
-#### Scenario: Compaction clears the context
-- **WHEN** `session.compact` fires and the usage has no context percent
-- **THEN** the line is set again with no context segment
+### Requirement: Usage window colors
+A window with a reset time and a known length (5h is 5 hours, 7d is 168 hours) SHALL be colored by pace, with `elapsed` = 1 − (reset − now) / length and `ahead` = percent − elapsed × 100: the value red when `ahead` is over 30 or the percent is 90 or more, yellow when `ahead` is over 15. A window without a reset time or a known length (the spend limit) SHALL be yellow from 50% and red from 80%. The countdown SHALL be dim.
 
-### Requirement: Hooks do not wait on reads
-`session.start` SHALL wait for its rebuild, so the first line is there before the first prompt. `turn.step`, `turn.complete` and `session.compact` SHALL start theirs and return without waiting. Rebuilds SHALL run one at a time, in the order asked. A failure reading git, usage or the endpoint SHALL never throw out of a hook, and the line SHALL show what the other reads gave.
+#### Scenario: Ahead of pace
+- **WHEN** 5h is at 40% with 4h left of 5h
+- **THEN** `40%` is yellow
 
-#### Scenario: A slow git
-- **WHEN** `turn.complete` fires and git takes long to answer
-- **THEN** the hook returns at once, and the line shows the new git segment once git answers
+#### Scenario: Behind pace
+- **WHEN** 5h is at 40% with 2h left
+- **THEN** `40%` is in the default color
 
-#### Scenario: Reads fail
-- **WHEN** git, the usage call and the credential call all fail
-- **THEN** every hook returns and the line shows the model label
+#### Scenario: Near the limit
+- **WHEN** 5h is at 91% with 10m left
+- **THEN** `91%` is red
+
+#### Scenario: No reset time
+- **WHEN** 7d is at 50% with no reset time
+- **THEN** `50%` is yellow and the segment has no countdown
+
+### Requirement: Row fits the terminal
+The script SHALL fit the row in `COLUMNS` minus 4 cells, the cells Claude Code keeps free at the edges. When the row is wider, the git segment SHALL be cut and end with `…`, and left out when fewer than 2 cells are left for it. The other segments SHALL never be cut.
+
+#### Scenario: Narrow terminal
+- **WHEN** `COLUMNS` is 80 and the branch is `worktree-agent-a5c2eb6e2b1a239f6` with 2 new files
+- **THEN** the row reads `worktree-agent-a5c2eb6… · Opus 5.5 1M · ctx 6% · 5h 69% ↻32m · 7d 44% ↻3d20h`
+
+#### Scenario: Too narrow for the gauges
+- **WHEN** `COLUMNS` is 20
+- **THEN** the row has no git segment and every other segment is whole
+
+### Requirement: Bad input prints nothing
+When stdin is not a JSON object, or anything else fails, the script SHALL print nothing and exit 0.
+
+#### Scenario: Malformed JSON
+- **WHEN** stdin is `{bad`
+- **THEN** the script prints nothing to stdout or stderr and exits 0
+
+### Requirement: Setup command
+`/session-bar:setup` SHALL run `setup.py`, which writes `statusLine` = `{"type": "command", "command": "python3 <script>", "refreshInterval": 30}` into `settings.json` under `$CLAUDE_CONFIG_DIR`, or `~/.claude` when it is unset. `<script>` SHALL be the `statusline.py` under `plugins/marketplaces/*/plugins/session-bar/` whose marketplace manifest lists `session-bar`, preferring the marketplace the plugin is installed from; never the versioned cache. Setup SHALL print what it did.
+
+#### Scenario: No marketplace copy
+- **WHEN** no marketplace holds `session-bar/statusline.py`
+- **THEN** setup names the marketplace update and plugin update commands to run, leaves `settings.json` as it was and exits 1
+
+### Requirement: Setup keeps the user's settings
+Before it writes, setup SHALL check `python3` is on `PATH`, and SHALL save a `statusLine` that does not run session-bar to `session-bar/previous-statusline.json`. It SHALL keep every other key in its order and write JSON with a 2-space indent. Settings that are not a JSON object SHALL be left as they are.
+
+#### Scenario: Fresh settings
+- **WHEN** there is no `settings.json`
+- **THEN** setup writes one that holds only session-bar's `statusLine`
+
+#### Scenario: Another statusLine
+- **WHEN** `statusLine` runs `~/bin/my-statusline.sh`
+- **THEN** setup saves it to `previous-statusline.json`, says so, and writes session-bar's
+
+#### Scenario: Second run
+- **WHEN** setup runs again
+- **THEN** `settings.json` is byte for byte the same and setup says nothing changed
+
+### Requirement: Remove command
+`/session-bar:remove` SHALL run `setup.py --remove`. When `statusLine` runs session-bar, it SHALL put back the saved `statusLine` and delete the saved file, or remove the key when none was saved. When `statusLine` does not run session-bar, it SHALL change nothing.
+
+#### Scenario: Restore
+- **WHEN** setup saved `~/bin/my-statusline.sh` and remove runs
+- **THEN** `statusLine` runs `~/bin/my-statusline.sh` again and every other key is as it was
+
+### Requirement: Setup hint
+A SessionStart hook on `startup` SHALL show the user `session-bar: run /session-bar:setup once to show the status line.` as a `systemMessage`, which does not reach the model, while `statusLine` in `settings.json` does not run an existing session-bar script. Once it does, the hook SHALL print nothing.
+
+#### Scenario: After an update from 1.0.0
+- **WHEN** a session starts and `settings.json` has no `statusLine`
+- **THEN** the user sees the hint line once at startup
+
+#### Scenario: After setup
+- **WHEN** `statusLine` runs the marketplace `statusline.py`
+- **THEN** the hook prints nothing

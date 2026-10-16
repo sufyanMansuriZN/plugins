@@ -1,15 +1,22 @@
 import type { EngineInterface, Register, SessionRateLimit } from 'claude-code'
 
-export type Limit = { kind: string; pct: number; resetsAt?: number }
+const MINUTE = 60_000
+const HOUR = 60 * MINUTE
+
+export type Kind = 'five_hour' | 'seven_day' | 'spend_limit'
+const WINDOWS: Record<Kind, { label: string; ms?: number }> = {
+  five_hour: { label: '5h', ms: 5 * HOUR },
+  seven_day: { label: '7d', ms: 168 * HOUR },
+  spend_limit: { label: '$' },
+}
+const KINDS = Object.keys(WINDOWS) as Kind[]
+const isKind = (k: string): k is Kind => Object.hasOwn(WINDOWS, k)
+const ENDPOINT_KINDS = new Map<unknown, Kind>([['session', 'five_hour'], ['weekly_all', 'seven_day']])
+
+export type Limit = { kind: Kind; pct: number; resetsAt?: number }
 export type Reading = { limits: Limit[]; at: number }
 export type Git = { branch: string; added: number; changed: number }
 export type Snapshot = { git?: Git; model: string; window?: number; ctx?: number; limits: Limit[] }
-
-const MINUTE = 60_000
-const HOUR = 60 * MINUTE
-const WINDOW_MS: Record<string, number> = { five_hour: 5 * HOUR, seven_day: 168 * HOUR }
-const LABELS: Record<string, string> = { five_hour: '5h', seven_day: '7d', spend_limit: '$' }
-const ENDPOINT_KINDS: Record<string, string> = { session: 'five_hour', weekly_all: 'seven_day' }
 
 type Level = '' | '!' | '!!'
 
@@ -18,10 +25,9 @@ const tokensText = (n: number) => n >= 1e6 ? `${+(n / 1e6).toFixed(1)}M` : `${Ma
 // the id carries [1m] only sometimes, so a known window wins over it
 export const modelLabel = (id: string, window?: number) => {
   const size = window ? ` ${tokensText(window)}` : ''
-  const m = /^claude-([a-z]+)((?:-\d{1,2})+)(?:-\d{8})?(\[1m\])?$/i.exec(id)
-  if (!m) return id + size
-  const [, name, ver, big] = m as unknown as [string, string, string, string?]
-  return `${name[0]!.toUpperCase()}${name.slice(1)} ${ver.slice(1).replaceAll('-', '.')}${size || (big ? ' 1M' : '')}`
+  const { name, ver, big } = /^claude-(?<name>[a-z]+)(?<ver>(?:-\d{1,2})+)(?:-\d{8})?(?<big>\[1m\])?$/i.exec(id)?.groups ?? {}
+  if (!name || !ver) return id + size
+  return `${name.charAt(0).toUpperCase()}${name.slice(1)} ${ver.slice(1).replaceAll('-', '.')}${size || (big ? ' 1M' : '')}`
 }
 
 export const countdown = (ms: number) => {
@@ -33,7 +39,7 @@ export const countdown = (ms: number) => {
 
 // usage against the share of the window gone: 61% on day 6 is calm, 71% an hour and a half into 5h is not
 const pace = (l: Limit, now: number): Level => {
-  const windowMs = WINDOW_MS[l.kind]
+  const windowMs = WINDOWS[l.kind].ms
   if (l.resetsAt === undefined || windowMs === undefined) return l.pct >= 80 ? '!!' : l.pct >= 50 ? '!' : ''
   const elapsed = Math.min(1, Math.max(0, 1 - (l.resetsAt - now) / windowMs))
   const ahead = l.pct - elapsed * 100
@@ -43,13 +49,13 @@ const pace = (l: Limit, now: number): Level => {
 const gitText = (g: Git) => [g.branch, g.added && `+${g.added}`, g.changed && `~${g.changed}`].filter(Boolean).join(' ')
 
 const limitText = (l: Limit, now: number) =>
-  `${LABELS[l.kind]} ${Math.round(l.pct)}%${pace(l, now)}${l.resetsAt === undefined ? '' : ` ↻${countdown(l.resetsAt - now)}`}`
+  `${WINDOWS[l.kind].label} ${Math.round(l.pct)}%${pace(l, now)}${l.resetsAt === undefined ? '' : ` ↻${countdown(l.resetsAt - now)}`}`
 
 export const line = (s: Snapshot, now: number): string => [
   s.git && gitText(s.git),
   modelLabel(s.model, s.window),
   s.ctx !== undefined && `ctx ${s.ctx}%${s.ctx >= 85 ? '!!' : s.ctx >= 70 ? '!' : ''}`,
-  ...Object.keys(LABELS).flatMap(kind => s.limits.filter(l => l.kind === kind))
+  ...KINDS.flatMap(kind => s.limits.filter(l => l.kind === kind))
     .filter(l => l.resetsAt === undefined || l.resetsAt > now)
     .map(l => limitText(l, now)),
 ].filter(Boolean).join(' · ')
@@ -69,13 +75,23 @@ export const parseGit = (out: string): Git => {
   return { branch, added, changed }
 }
 
-export const fromHeaders = (ls: readonly SessionRateLimit[]): Limit[] =>
-  ls.map(l => ({ kind: l.kind, pct: l.percentUsed, resetsAt: l.resetsAt ? Date.parse(l.resetsAt) : undefined }))
+const parseLimit = (kind: Kind | undefined, pct: unknown, resets: unknown): Limit[] => {
+  if (!kind || typeof pct !== 'number' || !Number.isFinite(pct)) return []
+  const resetsAt = typeof resets === 'string' ? Date.parse(resets) : NaN
+  return [{ kind, pct, resetsAt: Number.isNaN(resetsAt) ? undefined : resetsAt }]
+}
 
-export const fromEndpoint = (text: string): Limit[] =>
-  ((JSON.parse(text) as { limits?: { kind: string; percent: number; resets_at?: string | null }[] }).limits ?? [])
-    .filter(l => ENDPOINT_KINDS[l.kind])
-    .map(l => ({ kind: ENDPOINT_KINDS[l.kind]!, pct: l.percent, resetsAt: l.resets_at ? Date.parse(l.resets_at) : undefined }))
+export const fromHeaders = (ls: readonly SessionRateLimit[]): Limit[] =>
+  ls.flatMap(l => parseLimit(isKind(l.kind) ? l.kind : undefined, l.percentUsed, l.resetsAt))
+
+type EndpointLimit = { kind?: unknown; percent?: unknown; resets_at?: unknown } | null
+
+export const fromEndpoint = (text: string): Limit[] => {
+  const { limits } = (JSON.parse(text) ?? {}) as { limits?: unknown }
+  return Array.isArray(limits)
+    ? (limits as EndpointLimit[]).flatMap(l => parseLimit(ENDPOINT_KINDS.get(l?.kind), l?.percent, l?.resets_at))
+    : []
+}
 
 let header: Reading | undefined
 let endpoint: Reading | undefined

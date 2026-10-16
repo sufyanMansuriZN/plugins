@@ -56,12 +56,12 @@ test('line: no reset time marks from 50 and 80', () => {
   expect(at(80)).toBe('Opus 5.5 1M · 7d 80%!!')
 })
 
-test('line: a reading past its reset is dropped, spend_limit shows as $, other kinds are ignored', () => {
+test('line: a reading past its reset is dropped, spend_limit shows as $', () => {
   expect(line({ ...base, limits: [
     { kind: 'five_hour', pct: 88, resetsAt: NOW - 1 },
     { kind: 'seven_day', pct: 10, resetsAt: NOW + 24 * HOUR },
   ] }, NOW)).toBe('Opus 5.5 1M · 7d 10% ↻1d')
-  expect(line({ ...base, limits: [{ kind: 'spend_limit', pct: 40 }, { kind: 'mystery', pct: 5 }] }, NOW)).toBe('Opus 5.5 1M · $ 40%')
+  expect(line({ ...base, limits: [{ kind: 'spend_limit', pct: 40 }] }, NOW)).toBe('Opus 5.5 1M · $ 40%')
 })
 
 test('git status v2: branch, untracked and added count as +, the rest as ~, detached as the short sha', () => {
@@ -155,13 +155,19 @@ test('outside a repo, and with the endpoint failing, the line is the model alone
   expect(w.statuses).toEqual(['Opus 5.5 1M'])
 })
 
-test('a turn.step with new usage changes the line; the same text twice is set once', async ($, on) => {
-  mock.clock(on, { now: NOW })
+test('a turn.step with new usage changes the line; the same text twice is set once; unknown windows are ignored', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
   const w = world(on)
   await start($)
-  w.usage = { ...w.usage, context: { window: 1_000_000, tokens: 420_000, percent: 42 }, rateLimits: [{ kind: 'five_hour', percentUsed: 20, resetsAt: iso(NOW + 3 * HOUR) }] }
+  w.usage = {
+    ...w.usage,
+    context: { window: 1_000_000, tokens: 420_000, percent: 42 },
+    rateLimits: [{ kind: 'five_hour', percentUsed: 20, resetsAt: iso(NOW + 3 * HOUR) }, { kind: 'mystery', percentUsed: 5 }],
+  }
   await step($)
+  await clock.settle()
   await step($)
+  await clock.settle()
   expect(w.statuses).toEqual(['main +1 ~1 · Opus 5.5 1M', 'main +1 ~1 · Opus 5.5 1M · ctx 42% · 5h 20% ↻3h'])
 })
 

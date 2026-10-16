@@ -9,7 +9,7 @@ The session bar grew into a 907-line band above the prompt. It had Desktop pills
 - **BREAKING** The band above the prompt goes. No `ui.render` hooks, no Desktop drawing, no usage block, no cache state, no `$.state` atoms, no types contract.
 - The plugin sets one plain-text line through `$.ui.status`, under the prompt: git branch and file counts, model label with its window size, context percent, and the 5h, 7d and spend-limit windows with a reset countdown.
 - `!` and `!!` mark a context or usage figure that needs attention. Usage windows are marked by pace against the share of the window gone.
-- Usage figures come from the newer of two readings: the response headers (`$.session.usage().rateLimits`) or the OAuth usage endpoint, fetched at launch and at most every 5 minutes.
+- Usage figures come from the newer of two readings: the response headers (`$.session.usage().rateLimits`) or the OAuth usage endpoint, fetched at launch, then every 5 minutes, or 1 minute after a failed fetch.
 - The line updates on each API response, turn end, compaction and a 30-second tick. It is set only when its text changes.
 - Version 1.0.0. The description becomes "Live status line: git, model, context and usage windows".
 

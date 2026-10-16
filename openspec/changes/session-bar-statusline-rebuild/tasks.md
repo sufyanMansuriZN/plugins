@@ -10,6 +10,7 @@
 - [x] 2.2 Wire the hooks: `session.start`, `turn.step`, `turn.complete`, `session.compact` and a 30-second `$.clock.every`. Fetch the usage endpoint once after start and at most every 5 minutes. Let the newest reading win whole. Set `$.ui.status` only on a changed text. Verify: kit tests that session.start sets the line, a turn.step with new usage changes it, the same text twice is set once, and a newer header reading beats an older endpoint reading and the other way round.
 - [x] 2.3 Run `claude plugin validate plugins/session-bar`, `claude plugin test plugins/session-bar` and a type-check against the build's declarations. Verify: all pass.
 - [x] 2.4 Live check in tmux with the installed copy disabled. Verify: the captured line matches `/usage` and the clock.
+- [x] 2.5 Review fixes: git status with no optional locks and a 10 s timeout; header stamp from the newest `turn.step` with a response; non-blocking turn hooks through one rebuild queue; an endpoint reading only with a usable limit; a 1-minute retry after a failed fetch. Verify: the new kit tests fail on the previous code and pass now, and a `git add` loop beside an idle session never hits `index.lock`.
 
 ## 3. Docs
 

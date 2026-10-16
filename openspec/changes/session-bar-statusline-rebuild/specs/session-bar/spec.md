@@ -12,7 +12,7 @@ The plugin SHALL show its figures as one plain-text line set through `$.ui.statu
 - **THEN** the line reads the model label alone
 
 ### Requirement: Git segment
-The git segment SHALL be the branch, then `+N` for untracked and added files and `~M` for modified, deleted and renamed files, each count left out at zero. A detached HEAD SHALL show the short commit sha, or `HEAD` when there is none. Outside a git repo the segment SHALL be left out. The plugin SHALL read it with one `git status --porcelain=v2 --branch` call.
+The git segment SHALL be the branch, then `+N` for untracked and added files and `~M` for modified, deleted and renamed files, each count left out at zero. A detached HEAD SHALL show the short commit sha, or `HEAD` when there is none. Outside a git repo the segment SHALL be left out. The plugin SHALL read it with one `git --no-optional-locks status --porcelain=v2 --branch` call that gives up after 10 seconds, so it never takes the index lock a `git add` in the same repo needs.
 
 #### Scenario: Clean tree
 - **WHEN** the tree has no changes on branch `main`
@@ -71,7 +71,7 @@ A window with a reset time and a known length (5h, 168h) SHALL be marked by pace
 - **THEN** the segment reads `7d 50%!`
 
 ### Requirement: Newest usage reading wins
-The plugin SHALL keep two readings of the usage windows, each stamped with when it was read: the response headers from `$.session.usage().rateLimits`, stamped at a `turn.step` or `turn.complete`, and the OAuth usage endpoint, whose `session` and `weekly_all` limits map to `five_hour` and `seven_day`. The line SHALL show the newest reading whole, with no merge per window. A header reading present at `session.start` with no response behind it SHALL count as older than any endpoint reading.
+The plugin SHALL keep two readings of the usage windows, each stamped with a time: the response headers from `$.session.usage().rateLimits`, and the OAuth usage endpoint, whose `session` and `weekly_all` limits map to `five_hour` and `seven_day`. The line SHALL show the newer reading whole, with no merge per window.
 
 #### Scenario: A response after the fetch
 - **WHEN** the endpoint answered 5h at 31% and a later response's headers say 33%
@@ -81,19 +81,56 @@ The plugin SHALL keep two readings of the usage windows, each stamped with when 
 - **WHEN** the header reading says 33% and a fetch 5 minutes later answers 45%
 - **THEN** the 5h segment reads 45%
 
+### Requirement: Reading stamps
+The header reading SHALL be stamped with the start of the newest `turn.step` whose result has a stop reason, that is a step that got a response. No other event SHALL advance that stamp, `turn.complete` included, since it also ends an interrupt or an API error. Before any such step the stamp SHALL be earlier than every endpoint reading. The endpoint reading SHALL be stamped with the time its fetch started.
+
+#### Scenario: A turn ends with no new response
+- **WHEN** the header reading says 33%, a later fetch answered 45%, and a `turn.complete` follows with no `turn.step`
+- **THEN** the 5h segment still reads 45%
+
+#### Scenario: Headers present at a reload
+- **WHEN** `session.start` finds headers saying 33% and the launch fetch answers 45%
+- **THEN** the 5h segment reads 33% until the fetch answers, then 45%
+
+### Requirement: Limits parsed at the boundary
+Both the header and the endpoint parser SHALL drop a limit whose percent is not a finite number or whose window kind is unknown, and SHALL treat a reset time that does not parse as unknown.
+
+#### Scenario: A reset time that does not parse
+- **WHEN** the endpoint answers 5h at 20% with a reset time of `soon`
+- **THEN** the segment reads `5h 20%` with no countdown
+
+#### Scenario: A percent that is not a number
+- **WHEN** the endpoint answers 5h with a `null` percent
+- **THEN** that limit is dropped
+
 ### Requirement: Usage endpoint fetch
-The plugin SHALL fetch `https://api.anthropic.com/api/oauth/usage` with the session's credential handle once just after `session.start`, then at most every 5 minutes from the 30-second tick. With no credential it SHALL skip the fetch. A failed fetch SHALL keep the last good reading.
+The plugin SHALL fetch `https://api.anthropic.com/api/oauth/usage` with the session's credential handle once just after `session.start`, then from the 30-second tick, at most every 5 minutes after a good reading. With no credential it SHALL skip the fetch and ask again 5 minutes later. An answer SHALL count as a reading only when it holds at least one limit with a finite percent.
 
 #### Scenario: Launch
 - **WHEN** a session starts with no response yet
 - **THEN** the endpoint's 5h and 7d readings fill the line without waiting for a turn
 
+#### Scenario: Empty answer
+- **WHEN** a good reading is on the line and a later fetch answers 200 with `{ "limits": [] }`
+- **THEN** the line keeps the good reading
+
+#### Scenario: No credential
+- **WHEN** the session has no credential handle
+- **THEN** no fetch is made
+
+### Requirement: Endpoint retry
+A failed fetch (a throw, a non-2xx status, or an answer with no usable limit) SHALL keep the last good reading and allow the next try 1 minute later.
+
 #### Scenario: Endpoint fails
 - **WHEN** the fetch answers a non-2xx status
 - **THEN** the line keeps the reading it had
 
+#### Scenario: Launch fetch fails
+- **WHEN** the launch fetch fails and the endpoint answers on the next try
+- **THEN** that try comes at the first tick at least 1 minute after the failure, and 5h and 7d appear then
+
 ### Requirement: When the line updates
-The plugin SHALL rebuild the line at `session.start`, after each `turn.step` and `turn.complete`, after `session.compact`, and every 30 seconds. Git SHALL be re-read at `session.start`, `turn.complete` and each tick. It SHALL call `$.ui.status` only when the text differs from the last text it set. A failure reading git, usage or the endpoint SHALL never throw out of a hook.
+The plugin SHALL rebuild the line at `session.start`, after each `turn.step` and `turn.complete`, after `session.compact`, and every 30 seconds. Git SHALL be re-read at `session.start`, `turn.complete` and each tick. It SHALL call `$.ui.status` only when the text differs from the last text it set.
 
 #### Scenario: A response changes the usage
 - **WHEN** a `turn.step` ends and the usage now has a context percent and a 5h reading
@@ -106,6 +143,21 @@ The plugin SHALL rebuild the line at `session.start`, after each `turn.step` and
 #### Scenario: Countdowns move while idle
 - **WHEN** no turn runs and a minute passes
 - **THEN** the next tick sets the line with the shorter countdown
+
+#### Scenario: Compaction clears the context
+- **WHEN** `session.compact` fires and the usage has no context percent
+- **THEN** the line is set again with no context segment
+
+### Requirement: Hooks do not wait on reads
+`session.start` SHALL wait for its rebuild, so the first line is there before the first prompt. `turn.step`, `turn.complete` and `session.compact` SHALL start theirs and return without waiting. Rebuilds SHALL run one at a time, in the order asked. A failure reading git, usage or the endpoint SHALL never throw out of a hook, and the line SHALL show what the other reads gave.
+
+#### Scenario: A slow git
+- **WHEN** `turn.complete` fires and git takes long to answer
+- **THEN** the hook returns at once, and the line shows the new git segment once git answers
+
+#### Scenario: Reads fail
+- **WHEN** git, the usage call and the credential call all fail
+- **THEN** every hook returns and the line shows the model label
 
 ## REMOVED Requirements
 

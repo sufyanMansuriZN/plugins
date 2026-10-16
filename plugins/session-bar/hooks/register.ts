@@ -96,6 +96,7 @@ export const fromEndpoint = (text: string): Limit[] => {
 let header: Reading | undefined
 let endpoint: Reading | undefined
 let nextFetchAt = -Infinity
+let respondedAt = -Infinity
 let git: Git | undefined
 let shown: string | undefined
 let tick: { cancel: () => void } | undefined
@@ -124,18 +125,20 @@ const readEndpoint = async ($: EngineInterface, now: number) => {
   } catch {}
 }
 
-type Refresh = { git?: boolean; endpoint?: boolean; response?: boolean }
+type Refresh = { git?: boolean; endpoint?: boolean }
 
 const refresh = async ($: EngineInterface, what: Refresh) => {
   try {
     const now = await $.clock.now()
     await Promise.all([what.git && readGit($), what.endpoint && readEndpoint($, now)])
-    const [model, usage] = await Promise.all([$.session.model(), $.session.usage()])
-    // headers read with no response behind them (a reload) date from before any fetch this process makes
-    if (usage.rateLimits.length && (what.response || !header)) header = { limits: fromHeaders(usage.rateLimits), at: what.response ? now : -1 }
+    const [model, usage] = await Promise.all([$.session.model(), $.session.usage().catch(() => undefined)])
+    if (usage) {
+      const limits = fromHeaders(usage.rateLimits)
+      header = limits.length ? { limits, at: respondedAt } : undefined
+    }
     const text = line({
-      git, model, window: usage.context.window, ctx: usage.context.percent, limits: newest(header, endpoint)?.limits ?? [],
-    }, await $.clock.now())
+      git, model, window: usage?.context.window, ctx: usage?.context.percent, limits: newest(header, endpoint)?.limits ?? [],
+    }, now)
     if (text !== shown) $.ui.status(shown = text)
   } catch {}
 }
@@ -150,13 +153,16 @@ export const register: Register = on => {
     return r
   })
   on('turn.step', async function* ($, e, next) {
+    // the headers arrive after the request leaves, so its start is a lower bound on their time
+    const sentAt = await $.clock.now()
     const r = yield* next(e)
-    await refresh($, { response: true })
+    if (r.stopReason !== null) respondedAt = Math.max(respondedAt, sentAt)
+    await refresh($, {})
     return r
   })
   on('turn.complete', async ($, e, next) => {
     const r = await next(e)
-    await refresh($, { git: true, response: true })
+    await refresh($, { git: true })
     return r
   })
   on('session.compact', async ($, e, next) => {

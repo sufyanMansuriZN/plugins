@@ -323,7 +323,7 @@ test('a failing git, usage or authorize call leaves the rest of the line', async
   await compact($)
   await clock.settle()
   expect(w.fetches).toBe(0)
-  expect(w.statuses).toEqual(['Opus 5.5 1M'])
+  expect(w.statuses).toEqual(['Opus 5.5'])
 })
 
 test('with no credential there is no fetch', async ($, on) => {

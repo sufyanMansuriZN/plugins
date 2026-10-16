@@ -95,7 +95,7 @@ export const fromEndpoint = (text: string): Limit[] => {
 
 let header: Reading | undefined
 let endpoint: Reading | undefined
-let fetchedAt = -Infinity
+let nextFetchAt = -Infinity
 let git: Git | undefined
 let shown: string | undefined
 let tick: { cancel: () => void } | undefined
@@ -108,15 +108,19 @@ const readGit = async ($: EngineInterface) => {
 }
 
 const readEndpoint = async ($: EngineInterface, now: number) => {
-  if (now - fetchedAt < 5 * MINUTE) return
-  fetchedAt = now
+  if (now < nextFetchAt) return
+  nextFetchAt = now + 5 * MINUTE
   try {
     const auth = (await $.session.authorize())?.handle
     if (!auth) return
+    nextFetchAt = now + MINUTE
     const r = await $.http.fetch('https://api.anthropic.com/api/oauth/usage', {
       auth, headers: { 'anthropic-beta': 'oauth-2025-04-20' },
     })
-    if (r.ok) endpoint = { limits: fromEndpoint(r.text), at: await $.clock.now() }
+    const limits = r.ok ? fromEndpoint(r.text) : []
+    if (!limits.length) return
+    endpoint = { limits, at: now }
+    nextFetchAt = now + 5 * MINUTE
   } catch {}
 }
 

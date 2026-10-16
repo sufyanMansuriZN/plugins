@@ -76,25 +76,34 @@ test('git status v2: branch, untracked and added count as +, the rest as ~, deta
   expect(parseGit('# branch.oid (initial)\n# branch.head main\n').branch).toBe('main')
 })
 
+type Rejectable = 'process.run' | 'session.usage' | 'session.authorize'
+
 type World = {
   usage: SessionUsage
   git: { exitCode: number; stdout: string }
-  endpoint?: { kind: string; percent: number; resets_at?: string }[]
+  endpoint?: unknown[]
+  auth: boolean
+  reject: Set<Rejectable>
   statuses: (string | undefined)[]
   fetches: number
 }
 
+const GIT = '# branch.oid 0123456789abcdef\n# branch.head main\n? a\n1 .M N... x x x a b b.ts\n'
+
 const world = (on: On): World => {
   const w: World = {
     usage: { startedAt: NOW, context: { window: 1_000_000 }, rateLimits: [] },
-    git: { exitCode: 0, stdout: '# branch.oid 0123456789abcdef\n# branch.head main\n? a\n1 .M N... x x x a b b.ts\n' },
+    git: { exitCode: 0, stdout: GIT },
+    auth: true,
+    reject: new Set(),
     statuses: [],
     fetches: 0,
   }
+  const refuse = (op: Rejectable) => { if (w.reject.has(op)) throw new Error(`${op} failed`) }
   on('session.model', async () => ({ value: 'claude-opus-5-5' }))
-  on('session.usage', async () => ({ value: w.usage }))
-  on('process.run', async () => ({ value: { ...w.git, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
-  on('session.authorize', async () => ({ value: { handle: 'tok', kind: 'bearer' } }) as never)
+  on('session.usage', async () => { refuse('session.usage'); return { value: w.usage } })
+  on('process.run', async () => { refuse('process.run'); return { value: { ...w.git, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } } })
+  on('session.authorize', async () => { refuse('session.authorize'); return { value: w.auth ? { handle: 'tok', kind: 'bearer' } : null } as never })
   on('http.fetch', async () => {
     w.fetches++
     return w.endpoint
@@ -103,7 +112,11 @@ const world = (on: On): World => {
   })
   on('ui.status', async (_$, e) => { w.statuses.push(e.text); return { value: undefined } as never })
   on('session.start', async (_$, e) => e as never)
-  on('turn.step', async function* (_$, e) { return { turnId: e.turnId, index: e.index, answer: '', toolUses: [] } as never })
+  on('turn.step', async function* (_$, e) {
+    return { turnId: e.turnId, index: e.index, answer: '', toolUses: [], stopReason: 'end_turn', usage: null } as never
+  })
+  on('turn.complete', async () => ({ text: '' }) as never)
+  on('session.compact', async (_$, e) => ({ messages: e.messages }) as never)
   return w
 }
 
@@ -112,6 +125,10 @@ const start = ($: Engine) =>
 const step = async ($: Engine) => {
   for await (const _ of $.turn.step({ turnId: 't', index: 0, model: 'claude-opus-5-5', messageCount: 1 } as never)) { /* drain */ }
 }
+const complete = ($: Engine) =>
+  $.turn.complete({ turnId: 't', answer: '', durationMs: 1, isAborted: false, reason: 'answer' } as never)
+const compact = ($: Engine) =>
+  $.session.compact({ trigger: 'manual', messages: [{ role: 'user', text: 'hi', toolUses: [] }] } as never)
 const last = (w: World) => w.statuses[w.statuses.length - 1]
 
 test('session.start draws git and model at once, then the usage endpoint fills 5h and 7d', async ($, on) => {
@@ -166,4 +183,149 @@ test('the newest reading wins whole: a header after the fetch beats it, a later 
   await clock.advance(5 * MIN)
   expect(w.fetches).toBe(2)
   expect(last(w)).toBe('main +1 ~1 · Opus 5.5 1M · 5h 45%! ↻3h54m')
+})
+
+test('a turn.complete with no new response does not make the headers newer than a later fetch', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  const w = world(on)
+  const reset = T0 + 4 * HOUR
+  w.endpoint = [{ kind: 'session', percent: 31, resets_at: iso(reset) }]
+  await start($)
+  await clock.advance(1)
+  await clock.advance(MIN)
+  w.usage = { ...w.usage, rateLimits: [{ kind: 'five_hour', percentUsed: 33, resetsAt: iso(reset) }] }
+  await step($)
+  await clock.settle()
+  expect(last(w)).toBe('main +1 ~1 · Opus 5.5 1M · 5h 33% ↻3h59m')
+
+  w.endpoint = [{ kind: 'session', percent: 45, resets_at: iso(reset) }]
+  await clock.advance(5 * MIN)
+  expect(last(w)).toBe('main +1 ~1 · Opus 5.5 1M · 5h 45%! ↻3h54m')
+  await complete($)
+  await clock.settle()
+  expect(last(w)).toBe('main +1 ~1 · Opus 5.5 1M · 5h 45%! ↻3h54m')
+})
+
+test('an endpoint answer with no usable limit keeps the last good reading', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  const w = world(on)
+  w.endpoint = [{ kind: 'session', percent: 31, resets_at: iso(T0 + 4 * HOUR) }]
+  await start($)
+  await clock.advance(1)
+  expect(last(w)).toBe('main +1 ~1 · Opus 5.5 1M · 5h 31% ↻4h')
+
+  w.endpoint = []
+  await clock.advance(6 * MIN)
+  expect(w.fetches).toBe(2)
+  expect(last(w)).toBe('main +1 ~1 · Opus 5.5 1M · 5h 31% ↻3h54m')
+
+  w.endpoint = [{ kind: 'session', percent: null, resets_at: 'soon' }]
+  await clock.advance(MIN)
+  expect(w.fetches).toBe(3)
+  expect(last(w)).toBe('main +1 ~1 · Opus 5.5 1M · 5h 31% ↻3h53m')
+})
+
+test('a reset time that does not parse leaves the window with no countdown', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  const w = world(on)
+  w.endpoint = [{ kind: 'session', percent: 20, resets_at: 'soon' }]
+  await start($)
+  await clock.advance(1)
+  expect(last(w)).toBe('main +1 ~1 · Opus 5.5 1M · 5h 20%')
+})
+
+test('a failed launch fetch is tried again a minute later, not five', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  const w = world(on)
+  await start($)
+  await clock.advance(1)
+  expect(w.fetches).toBe(1)
+  w.endpoint = [{ kind: 'session', percent: 31, resets_at: iso(T0 + 4 * HOUR) }, { kind: 'weekly_all', percent: 12, resets_at: iso(T0 + 5 * 24 * HOUR) }]
+  await clock.advance(90_000 - 1)
+  expect(w.fetches).toBe(2)
+  expect(last(w)).toBe('main +1 ~1 · Opus 5.5 1M · 5h 31% ↻3h58m · 7d 12% ↻4d23h')
+})
+
+test('turn.complete reads git again', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  const w = world(on)
+  await start($)
+  w.git = { exitCode: 0, stdout: '# branch.oid 0123456789abcdef\n# branch.head feat\n' }
+  await complete($)
+  await clock.settle()
+  expect(last(w)).toBe('feat · Opus 5.5 1M')
+})
+
+test('session.compact drops ctx when usage has no percent', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  const w = world(on)
+  await start($)
+  w.usage = { ...w.usage, context: { window: 1_000_000, tokens: 420_000, percent: 42 } }
+  await step($)
+  await clock.settle()
+  expect(last(w)).toBe('main +1 ~1 · Opus 5.5 1M · ctx 42%')
+  w.usage = { ...w.usage, context: { window: 1_000_000 } }
+  await compact($)
+  await clock.settle()
+  expect(last(w)).toBe('main +1 ~1 · Opus 5.5 1M')
+})
+
+test('after a reload, headers already there lose to the endpoint', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  const w = world(on)
+  const reset = T0 + 4 * HOUR
+  w.usage = { ...w.usage, rateLimits: [{ kind: 'five_hour', percentUsed: 33, resetsAt: iso(reset) }] }
+  w.endpoint = [{ kind: 'session', percent: 45, resets_at: iso(reset) }]
+  await start($)
+  expect(last(w)).toBe('main +1 ~1 · Opus 5.5 1M · 5h 33% ↻4h')
+  await clock.advance(1)
+  expect(last(w)).toBe('main +1 ~1 · Opus 5.5 1M · 5h 45%! ↻4h')
+})
+
+test('an endpoint failure after a good reading keeps the good reading', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  const w = world(on)
+  w.endpoint = [{ kind: 'session', percent: 31, resets_at: iso(T0 + 4 * HOUR) }]
+  await start($)
+  await clock.advance(1)
+  w.endpoint = undefined
+  await clock.advance(6 * MIN)
+  expect(w.fetches).toBe(2)
+  expect(last(w)).toBe('main +1 ~1 · Opus 5.5 1M · 5h 31% ↻3h54m')
+})
+
+test('idle, the countdown moves with the clock', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  const w = world(on)
+  w.endpoint = [{ kind: 'session', percent: 31, resets_at: iso(T0 + 4 * HOUR) }]
+  await start($)
+  await clock.advance(1)
+  expect(last(w)).toBe('main +1 ~1 · Opus 5.5 1M · 5h 31% ↻4h')
+  await clock.advance(MIN)
+  expect(last(w)).toBe('main +1 ~1 · Opus 5.5 1M · 5h 31% ↻3h59m')
+})
+
+test('a failing git, usage or authorize call leaves the rest of the line', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  const w = world(on)
+  w.reject = new Set(['process.run', 'session.usage', 'session.authorize'])
+  w.endpoint = [{ kind: 'session', percent: 31, resets_at: iso(T0 + 4 * HOUR) }]
+  await start($)
+  await clock.advance(1)
+  await step($)
+  await complete($)
+  await compact($)
+  await clock.settle()
+  expect(w.fetches).toBe(0)
+  expect(w.statuses).toEqual(['Opus 5.5 1M'])
+})
+
+test('with no credential there is no fetch', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  const w = world(on)
+  w.auth = false
+  await start($)
+  await clock.advance(10 * MIN)
+  expect(w.fetches).toBe(0)
+  expect(last(w)).toBe('main +1 ~1 · Opus 5.5 1M')
 })

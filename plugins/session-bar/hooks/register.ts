@@ -86,7 +86,7 @@ let tick: { cancel: () => void } | undefined
 
 const readGit = async ($: EngineInterface) => {
   try {
-    const r = await $.process.run(['git', 'status', '--porcelain=v2', '--branch'])
+    const r = await $.process.run(['git', '--no-optional-locks', 'status', '--porcelain=v2', '--branch'], { timeoutMs: 10_000 })
     git = r.exitCode === 0 ? parseGit(r.stdout) : undefined
   } catch {}
 }

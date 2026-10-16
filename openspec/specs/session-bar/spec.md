@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The session bar is the band above the prompt that shows where the session is, which model it runs, how full the context is and how much of the account's usage windows are spent, using color only when something needs attention.
+session-bar is a script for Claude Code's native status line, turned on once with `/session-bar:setup`. Its one row shows the git branch and its changes, which model the session runs, how full the context is and how much of the account's usage windows are spent, using color only when something needs attention.
 
 ## Requirements
 

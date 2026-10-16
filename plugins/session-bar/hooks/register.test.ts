@@ -84,6 +84,7 @@ type World = {
   endpoint?: unknown[]
   auth: boolean
   reject: Set<Rejectable>
+  gitGate?: Promise<void>
   statuses: (string | undefined)[]
   fetches: number
 }
@@ -102,7 +103,7 @@ const world = (on: On): World => {
   const refuse = (op: Rejectable) => { if (w.reject.has(op)) throw new Error(`${op} failed`) }
   on('session.model', async () => ({ value: 'claude-opus-5-5' }))
   on('session.usage', async () => { refuse('session.usage'); return { value: w.usage } })
-  on('process.run', async () => { refuse('process.run'); return { value: { ...w.git, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } } })
+  on('process.run', async () => { await w.gitGate; refuse('process.run'); return { value: { ...w.git, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } } })
   on('session.authorize', async () => { refuse('session.authorize'); return { value: w.auth ? { handle: 'tok', kind: 'bearer' } : null } as never })
   on('http.fetch', async () => {
     w.fetches++
@@ -183,6 +184,7 @@ test('the newest reading wins whole: a header after the fetch beats it, a later 
   await clock.advance(MIN)
   w.usage = { ...w.usage, rateLimits: [{ kind: 'five_hour', percentUsed: 33, resetsAt: iso(reset) }] }
   await step($)
+  await clock.settle()
   expect(last(w)).toBe('main +1 ~1 · Opus 5.5 1M · 5h 33% ↻3h59m')
 
   w.endpoint = [{ kind: 'session', percent: 45, resets_at: iso(reset) }]
@@ -334,4 +336,18 @@ test('with no credential there is no fetch', async ($, on) => {
   await clock.advance(10 * MIN)
   expect(w.fetches).toBe(0)
   expect(last(w)).toBe('main +1 ~1 · Opus 5.5 1M')
+})
+
+test('turn.complete returns before a slow git answers, and the line follows when it does', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  const w = world(on)
+  await start($)
+  let release = () => {}
+  w.gitGate = new Promise(resolve => { release = resolve })
+  w.git = { exitCode: 0, stdout: '# branch.oid 0123456789abcdef\n# branch.head feat\n' }
+  await complete($)
+  expect(last(w)).toBe('main +1 ~1 · Opus 5.5 1M')
+  release()
+  await clock.settle()
+  expect(last(w)).toBe('feat · Opus 5.5 1M')
 })

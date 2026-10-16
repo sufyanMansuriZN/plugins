@@ -99,7 +99,7 @@ let nextFetchAt = -Infinity
 let respondedAt = -Infinity
 let git: Git | undefined
 let shown: string | undefined
-let tick: { cancel: () => void } | undefined
+let queue = Promise.resolve()
 
 const readGit = async ($: EngineInterface) => {
   try {
@@ -127,7 +127,7 @@ const readEndpoint = async ($: EngineInterface, now: number) => {
 
 type Refresh = { git?: boolean; endpoint?: boolean }
 
-const refresh = async ($: EngineInterface, what: Refresh) => {
+const draw = async ($: EngineInterface, what: Refresh) => {
   try {
     const now = await $.clock.now()
     await Promise.all([what.git && readGit($), what.endpoint && readEndpoint($, now)])
@@ -143,12 +143,13 @@ const refresh = async ($: EngineInterface, what: Refresh) => {
   } catch {}
 }
 
+const refresh = ($: EngineInterface, what: Refresh) => (queue = queue.then(() => draw($, what)))
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const r = await next(e)
     await refresh($, { git: true })
-    tick?.cancel()
-    tick = $.clock.every(30_000, () => void refresh($, { git: true, endpoint: true }))
+    $.clock.every(30_000, () => void refresh($, { git: true, endpoint: true }))
     $.clock.after(1, () => void refresh($, { endpoint: true }))
     return r
   })
@@ -157,17 +158,17 @@ export const register: Register = on => {
     const sentAt = await $.clock.now()
     const r = yield* next(e)
     if (r.stopReason !== null) respondedAt = Math.max(respondedAt, sentAt)
-    await refresh($, {})
+    void refresh($, {})
     return r
   })
   on('turn.complete', async ($, e, next) => {
     const r = await next(e)
-    await refresh($, { git: true })
+    void refresh($, { git: true })
     return r
   })
   on('session.compact', async ($, e, next) => {
     const r = await next(e)
-    await refresh($, {})
+    void refresh($, {})
     return r
   })
 }

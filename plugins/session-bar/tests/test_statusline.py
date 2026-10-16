@@ -97,6 +97,10 @@ class LineTest(unittest.TestCase):
         payload["rate_limits"] = {"five_hour": {"used_percentage": None}, "seven_day": []}
         self.assertEqual(plain(line(payload, NOW, None)), "")
 
+    def test_reset_time_that_does_not_parse(self):
+        payload = with_limits(five_hour={"used_percentage": 20, "resets_at": "soon"})
+        self.assertEqual(plain(line(payload, NOW, None)), "Opus 5.5 1M · ctx 6% · 5h 20%")
+
     def test_reset_passed(self):
         payload = with_limits(five_hour={"used_percentage": 88, "resets_at": NOW - 1})
         self.assertEqual(plain(line(payload, NOW, None)), "Opus 5.5 1M · ctx 6%")

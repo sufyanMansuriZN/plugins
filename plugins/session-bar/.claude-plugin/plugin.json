@@ -1,1 +1,1 @@
-{ "name": "session-bar", "version": "1.0.0", "description": "Live status line: git, model, context and usage windows" }
+{ "name": "session-bar", "version": "2.0.0", "description": "Native status line: git, model, context and usage windows (run /session-bar:setup once)" }

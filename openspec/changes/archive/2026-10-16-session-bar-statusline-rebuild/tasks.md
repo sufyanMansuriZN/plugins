@@ -18,4 +18,4 @@
 
 ## 4. Release
 
-- [ ] 4.1 Archive this change and sync the delta into `openspec/specs/session-bar/spec.md` after the user accepts the rebuild.
+- [x] 4.1 Archive this change and sync the delta into `openspec/specs/session-bar/spec.md` after the user accepts the rebuild.

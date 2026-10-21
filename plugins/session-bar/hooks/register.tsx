@@ -20,13 +20,11 @@ const BADGE: Record<Extract<Run, { badge: true }>['tone'], string> = {
 }
 
 // oh-my-zsh robbyrussell's prompt colors, as the terminal's named ANSI colors: its theme sets them for light
-// and dark, so they are not fixed colors. A desktop has no such palette and would draw a fixed CSS color
-// (cyan on white is near unreadable), so it draws no ink.
+// and dark, so they are not fixed colors. A desktop has no such palette and would draw a fixed CSS color,
+// so it draws no ink.
 const INK: Record<Ink, { color: string; bold?: true }> = {
-  where: { color: 'cyan' },
   paren: { color: 'blue', bold: true },
   branch: { color: 'red' },
-  changes: { color: 'yellow' },
 }
 
 const props = (r: Run, inks: boolean) =>

@@ -72,11 +72,11 @@ The repo segment SHALL be the last part of the path of `$.session.repo()`'s `roo
 - **THEN** the row has no repo segment
 
 ### Requirement: Repo and branch colors
-On the terminal surface, the repo name, the parentheses, the branch and its counts SHALL be drawn in the oh-my-zsh robbyrussell colors, as the terminal's named ANSI colors. On the desktop surface they SHALL be in the default color, with dim parentheses. No other text SHALL have a color of its own.
+On the terminal surface, the parentheses and the branch name SHALL be drawn in the oh-my-zsh robbyrussell colors, as the terminal's named ANSI colors. The repo name and the counts SHALL be in the default color, since robbyrussell's cyan and yellow measure about 2:1 on the light theme. On the desktop surface all of them SHALL be in the default color, with dim parentheses. No other text SHALL have a color of its own.
 
 #### Scenario: The terminal
 - **WHEN** the session is in repo `plugins` on `main` with 3 new and 2 changed files, on the terminal surface
-- **THEN** `plugins` is cyan, ` (` and `)` are bold blue, `main` is red and ` +3 ~2` is yellow
+- **THEN** ` (` and `)` are bold blue, `main` is red, and `plugins` and ` +3 ~2` are in the default color
 
 #### Scenario: The desktop
 - **WHEN** the same session is on the desktop surface
@@ -84,4 +84,4 @@ On the terminal surface, the repo name, the parentheses, the branch and its coun
 
 #### Scenario: A cut into the counts
 - **WHEN** the left zone has room for only `main +…` of the git segment, on the terminal surface
-- **THEN** `main` is red and ` +…` is yellow
+- **THEN** `main` is red and ` +…` is in the default color

@@ -10,8 +10,9 @@ export type Window = { label: '5h' | '7d' | '$'; percent: number; resetsAt: numb
 export type BarInput = {
   where: string | null; git: Git | null; agent: string | null; model: string | null; ctx: Ctx | null; windows: Window[]; now: number
 }
-// the part of the repo and branch a run draws, which a surface may color in robbyrussell's scheme
-export type Ink = 'where' | 'paren' | 'branch' | 'changes'
+// the part of the branch a run draws, which a surface may color as robbyrussell does; its cyan repo name
+// and yellow counts fall under 2.2:1 on a light theme, so those stay plain
+export type Ink = 'paren' | 'branch'
 // a fixed color exists only on a badge, which fills the background behind the text; an ink run falls back
 // to its tone where the surface draws no ink
 export type Run =
@@ -261,19 +262,18 @@ export const segments = (input: BarInput, columns: number): Zones => {
   return { left: leftZone(left, input.git), right }
 }
 
-const inked = (text: string, ink: Ink): Run => ({ text, tone: 'plain', ink })
-
 // the shown text is the git text or a cut of it, so its first cells are the branch and the rest the counts
 const gitRuns = (text: string, branch: string): Run[] => {
   const chars = [...text]
   const at = Math.min(chars.length, cells(branch))
-  return [inked(chars.slice(0, at).join(''), 'branch'), ...(chars.length > at ? [inked(chars.slice(at).join(''), 'changes')] : [])]
+  return [
+    { text: chars.slice(0, at).join(''), tone: 'plain', ink: 'branch' },
+    ...(chars.length > at ? [{ text: chars.slice(at).join(''), tone: 'plain' } as const] : []),
+  ]
 }
 
 const runsOf = (n: Name, git: Git | null): Run[] =>
-  n.key === 'where' ? [inked(n.text, 'where')]
-  : n.key === 'branch' && git ? gitRuns(n.text, git.branch)
-  : [{ text: n.text, tone: n.tone }]
+  n.key === 'branch' && git ? gitRuns(n.text, git.branch) : [{ text: n.text, tone: n.tone }]
 
 const paren = (text: string): Run => ({ text, tone: 'dim', ink: 'paren' })
 

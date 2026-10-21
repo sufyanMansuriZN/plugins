@@ -268,20 +268,20 @@ describe('segments', () => {
     expect(left[0]!.filter(r => r.tone === 'dim').map(r => r.text)).toEqual([' (', ')'])
   })
 
-  test('the repo name, the parentheses, the branch and its counts each have their own ink; nothing else has one', () => {
+  test('only the parentheses and the branch name have an ink; the repo name and the counts stay plain', () => {
     const inks = (over: Partial<BarInput>, columns = 500) =>
       segments(input(over), columns).left.flat().map(r => [r.text, r.ink ?? null])
     expect(inks({ agent: 'Explore' })).toEqual([
-      ['plugins', 'where'], [' (', 'paren'], ['main', 'branch'], [' +3 ~2', 'changes'], [')', 'paren'], ['Explore', null], ['Opus 5.5 1M', null],
+      ['plugins', null], [' (', 'paren'], ['main', 'branch'], [' +3 ~2', null], [')', 'paren'], ['Explore', null], ['Opus 5.5 1M', null],
     ])
     expect(inks({ ctx: null, windows: [] }, 31), 'a cut into the counts').toEqual([
-      ['plugins', 'where'], [' (', 'paren'], ['main', 'branch'], [' +…', 'changes'], [')', 'paren'], ['Opus 5.5 1M', null],
+      ['plugins', null], [' (', 'paren'], ['main', 'branch'], [' +…', null], [')', 'paren'], ['Opus 5.5 1M', null],
     ])
     expect(inks({ git: LONG, ctx: null, windows: [] }, 36), 'a cut into the branch').toEqual([
-      ['plugins', 'where'], [' (', 'paren'], ['feature/a-v…', 'branch'], [')', 'paren'], ['Opus 5.5 1M', null],
+      ['plugins', null], [' (', 'paren'], ['feature/a-v…', 'branch'], [')', 'paren'], ['Opus 5.5 1M', null],
     ])
     expect(inks({ git: { branch: 'main', added: 0, changed: 0 } }), 'no counts').toEqual([
-      ['plugins', 'where'], [' (', 'paren'], ['main', 'branch'], [')', 'paren'], ['Opus 5.5 1M', null],
+      ['plugins', null], [' (', 'paren'], ['main', 'branch'], [')', 'paren'], ['Opus 5.5 1M', null],
     ])
     expect(segments(input(), 500).right.flat().some(r => r.ink), 'the gauges have no ink').toBe(false)
   })

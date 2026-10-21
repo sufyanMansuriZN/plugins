@@ -100,16 +100,14 @@ The text of each word is bold and black. The percent stays in the normal color, 
 
 The meters use color only as the background of a word or a percent, with bold black text on it. No text, cell or tick in the right zone has a color of its own.
 
-In the terminal, the repo and the branch use the colors of the oh-my-zsh robbyrussell prompt:
+In the terminal, the branch uses two colors of the oh-my-zsh robbyrussell prompt:
 
 | Part | Color |
 |---|---|
-| The repo name (`plugins`) | cyan |
 | ` (` and `)` | bold blue |
 | The branch (`main`) | red |
-| The counts (`+3 ~2`) | yellow |
 
-These are the terminal's own named colors. Your terminal theme sets them for light and dark, so they stay readable. The desktop app has no such colors, so there the repo and the branch are in the normal color, with dim parentheses.
+These are the terminal's own named colors, which your terminal theme sets for light and dark. The repo name and the counts (`+3 ~2`) stay in the normal color: robbyrussell's cyan and yellow have a contrast of about 2 : 1 on a light theme. The desktop app has no such colors, so there the repo and the branch are in the normal color, with dim parentheses.
 
 This keeps every alert easy to read in light and dark themes. Colored text sits on the terminal's own background, and the plugin does not know that color. For example, orange text on a white background has a contrast of only about 2.3 : 1. Black text on a fixed color has the same contrast in every theme: 9.3 : 1 on orange, 5.4 : 1 on vermillion and 9.1 : 1 on sky blue.
 

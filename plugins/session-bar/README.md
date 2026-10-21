@@ -5,13 +5,13 @@ Session bar above the prompt: git, model, context and usage windows, following t
 session-bar draws one row in the band above the prompt, in the terminal and in the desktop app. The row has two zones. The left zone tells you where you are: the repo, the branch and the model. The right zone has the meters, at the right edge of the band:
 
 ```
-plugins · main +3 ~2 · Opus 5.5 1M           ctx 6% · 5h ━━━━━╾─╂─ 66%  behind  ↻46m · 7d ━━━╾╂──── 43% ↻3d21h
+plugins · main +3 ~2 · Opus 5.5 1M   ctx ╾─╂────── 60K · 5h ━━━━━╾─╂─ 66%  behind  ↻46m · 7d ━━━╾╂──── 43% ↻3d21h
 ```
 
 When you open a subagent's transcript from the tasks list, the row shows that subagent instead of the main conversation:
 
 ```
-plugins · main +3 ~2 · Explore · Haiku 4.5   ctx 42K · 5h ━━━━━╾─╂─ 66%  behind  ↻46m · 7d ━━━╾╂──── 43% ↻3d21h
+plugins · main +3 ~2 · Explore · Haiku 4.5     ctx 42K · 5h ━━━━━╾─╂─ 66%  behind  ↻46m · 7d ━━━╾╂──── 43% ↻3d21h
 ```
 
 The free room goes between the two zones. There are always at least 3 spaces between them.
@@ -32,7 +32,7 @@ Each part is left out when it has no value. The left zone has the repo, git, age
 - **git**: the branch (a 7-character sha when detached), `+N` new files (untracked or added), `~M` changed files (modified, deleted or renamed). Left out outside a git repo. It is read at the session's start, at the end of each turn and every 30 seconds.
 - **agent**: only while a subagent's transcript is open. Its type, such as `Explore`, in dim text.
 - **model**: the model's name, such as `Opus 5.5`. In the main conversation, the context window size follows it (`1M`, `200K`). For a subagent, it is the model that subagent's requests use. It shows from the subagent's first request.
-- **ctx**: in the main conversation, how full the context window is. From 70%, the percent has an orange background. From 85%, the background is vermillion. It shows after the first response. For a subagent, the input tokens of its last request (`ctx 42K`).
+- **ctx**: in the main conversation, a meter of the context window and the tokens in the context (`60K`). From the tick, the count has a vermillion background. It shows after the first response. See [Context meter](#context-meter). For a subagent, the input tokens of its last request (`ctx 42K`), with no meter.
 - **5h**, **7d**, **$**: the 5-hour and 7-day usage windows and the spend limit. They are for the whole account, so they show in every view. Each one shows a meter, the percent used, a word for the pace when you are off pace, and the time to the reset (`↻2h10m`).
 
 ### Meter and pace
@@ -61,6 +61,28 @@ When half of the window has gone, the tick is in the middle:
 - A used cell after the tick is use ahead of pace. If you keep this rate, you run out before the reset.
 - The meter never has a color. Used cells and the tick are in the normal color, and unused cells are dim.
 
+### Context meter
+
+The ctx meter has the same 8 cells as the 5h and 7d meters. A full meter is the whole context window of the model, so on a 1M model each cell is 125K tokens.
+
+The tick is fixed. It marks the context size to stay under:
+
+| Model window | Tick at | Why |
+|---|---|---|
+| More than 200K | 250K | Anthropic's long-context scores drop past about 256K. |
+| 200K or less | 160K | A 200K window compacts at 200K, so the tick leaves room before that. |
+
+The sources are in [research-context-size.md](../../openspec/changes/archive/2026-10-03-session-bar-visual-redesign/research-context-size.md).
+
+```
+ctx ╾─╂────── 60K        1M window: the tick is after cell 2
+ctx ━━╋╾─────  300K      1M window, past the tick: the count has a vermillion background
+ctx ━━━━━─╂── 120K       200K window: the tick is after cell 6
+ctx ━━━━━━╋━─  170K      200K window, past the tick
+```
+
+From the tick, the token count has a vermillion background. Below the tick, it is in the normal color. If the window is smaller than its tick, the meter has no tick.
+
 ### Pace words
 
 When you are off pace, a word follows the percent. The word has a colored background:
@@ -88,9 +110,9 @@ Three things get a colored background:
 |---|---|---|
 | A pace word | `ahead` | `far ahead`, `used up` (`behind` is sky blue) |
 | The spend limit percent | 50% | 80% |
-| The context percent (`ctx`) | 70% | 85% |
+| The context tokens (`ctx`) | none | the tick: 250K, or 160K on a 200K window |
 
-Below those values, the percent is in the normal color.
+Below those values, the percent or the token count is in the normal color.
 
 ### Spend limit
 
@@ -110,7 +132,7 @@ In the terminal, the time to the reset starts with a refresh icon from the Nerd 
 When the band is too narrow, the parts go in this order:
 
 1. The git part is cut, down to 12 characters.
-2. The meters go: `5h 66%  behind  ↻46m`.
+2. The meters go, the ctx meter too: `ctx 60K · 5h 66%  behind  ↻46m`.
 3. The words go: `5h 66% ↻46m`.
 4. The git part is cut more, then it goes.
 5. The repo name is cut.

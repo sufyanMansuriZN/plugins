@@ -88,7 +88,7 @@ test('main view: repo, git and the main model on the left; context and the windo
   await engine($, on)
   for (const surface of SURFACES) {
     const { left, right } = await zonesOn($, surface)
-    expect([left, right], surface).toEqual(['plugins · main +3 ~2 · Opus 5.5 1M', marked(surface, `${CTX} · ${WINDOWS}`)])
+    expect([left, right], surface).toEqual(['plugins (main +3 ~2) · Opus 5.5 1M', marked(surface, `${CTX} · ${WINDOWS}`)])
   }
 })
 
@@ -96,7 +96,7 @@ test('a 200K window: the context meter fills over 200K, its tick for 160K after 
   await engine($, on, { usage: context(120_000, 200_000) })
   for (const surface of SURFACES) {
     const { left, right } = await zonesOn($, surface)
-    expect([left, right], surface).toEqual(['plugins · main +3 ~2 · Opus 5.5 200K', marked(surface, `ctx ━━━━━─╂── 120K · ${WINDOWS}`)])
+    expect([left, right], surface).toEqual(['plugins (main +3 ~2) · Opus 5.5 200K', marked(surface, `ctx ━━━━━─╂── 120K · ${WINDOWS}`)])
   }
 })
 
@@ -137,9 +137,9 @@ test('a subagent in view after a Haiku step: its type and model on the left, its
   await step($, 'a1', 'claude-haiku-4-5-20251001')
   for (const surface of SURFACES) {
     const { left, right } = await zonesOn($, surface, 'a1')
-    expect([left, right], surface).toEqual(['plugins · main +3 ~2 · Explore · Haiku 4.5', marked(surface, `ctx 42K · ${WINDOWS}`)])
+    expect([left, right], surface).toEqual(['plugins (main +3 ~2) · Explore · Haiku 4.5', marked(surface, `ctx 42K · ${WINDOWS}`)])
   }
-  expect((await zonesOn($, 'terminal')).left).toBe('plugins · main +3 ~2 · Opus 5.5 1M')
+  expect((await zonesOn($, 'terminal')).left).toBe('plugins (main +3 ~2) · Opus 5.5 1M')
 })
 
 test('a subagent with no step yet: its type, no model and no context', async ($, on) => {
@@ -148,7 +148,7 @@ test('a subagent with no step yet: its type, no model and no context', async ($,
   await step($, undefined, 'claude-fable-5-1')
   for (const surface of SURFACES) {
     const { left, right } = await zonesOn($, surface, 'a2')
-    expect([left, right], surface).toEqual(['plugins · main +3 ~2 · Plan', marked(surface, WINDOWS)])
+    expect([left, right], surface).toEqual(['plugins (main +3 ~2) · Plan', marked(surface, WINDOWS)])
   }
 })
 
@@ -170,7 +170,7 @@ test('a narrow band drops the meters, then the words, then cuts the branch, then
     const meters = marked(surface, `${CTX} · ${WINDOWS}`)
     const words = marked(surface, 'ctx 60K · 5h 66%  behind  ↻46m · 7d 43% ↻3d21h')
     const bare = marked(surface, 'ctx 60K · 5h 66% ↻46m · 7d 43% ↻3d21h')
-    const kept = 'plugins · feature/a-v… · Opus 5.5 1M'
+    const kept = 'plugins (feature/a-v…) · Opus 5.5 1M'
     const at = async (left: string, right: string) => {
       const { left: l, right: r } = await zonesOn($, surface, undefined, cells(left) + 3 + cells(right))
       return [l, r]
@@ -178,7 +178,7 @@ test('a narrow band drops the meters, then the words, then cuts the branch, then
     expect(await at(kept, meters), `${surface} branch cut to 12`).toEqual([kept, meters])
     expect(await at(kept, words), `${surface} meters off`).toEqual([kept, words])
     expect(await at(kept, bare), `${surface} words off`).toEqual([kept, bare])
-    expect(await at('plugins · f… · Opus 5.5 1M', bare), `${surface} branch cut`).toEqual(['plugins · f… · Opus 5.5 1M', bare])
+    expect(await at('plugins (f…) · Opus 5.5 1M', bare), `${surface} branch cut`).toEqual(['plugins (f…) · Opus 5.5 1M', bare])
     expect(await at('plugins · Opus 5.5 1M', bare), `${surface} branch left out`).toEqual(['plugins · Opus 5.5 1M', bare])
     expect(await at('plu… · Opus 5.5 1M', bare), `${surface} name cut`).toEqual(['plu… · Opus 5.5 1M', bare])
     expect(await at('', bare), `${surface} never the model or a gauge`).toEqual(['Opus 5.5 1M', bare])

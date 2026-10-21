@@ -12,7 +12,7 @@ const SEVEN: Window = { label: '7d', percent: 43, resetsAt: NOW + (3 * 24 + 21) 
 const FIVE_ROW = '5h ━━━━━╾─╂─ 66%  behind  ↻46m'
 const SEVEN_ROW = '7d ━━━╾╂──── 43% ↻3d21h'
 const TICKS = '┃┠┣┨╂╊┫╉╋'
-const LEFT = 'plugins · main +3 ~2 · Opus 5.5 1M'
+const LEFT = 'plugins (main +3 ~2) · Opus 5.5 1M'
 // 60K of 1M is 6% (0.96 half cells, 1); the 250K tick on a 1M window sits after cell 2
 const CTX = { kind: 'window', tokens: 60_000, window: 1_000_000 } as const
 const CTX_ROW = 'ctx ╾─╂────── 60K'
@@ -76,7 +76,7 @@ describe('segments', () => {
 
   test('each part is left out without a value', () => {
     expect(zones({ git: null })).toEqual(['plugins · Opus 5.5 1M', GAUGES])
-    expect(zones({ git: { branch: 'main', added: 0, changed: 0 } })).toEqual(['plugins · main · Opus 5.5 1M', GAUGES])
+    expect(zones({ git: { branch: 'main', added: 0, changed: 0 } })).toEqual(['plugins (main) · Opus 5.5 1M', GAUGES])
     expect(zones({ where: null })).toEqual(['main +3 ~2 · Opus 5.5 1M', GAUGES])
     expect(zones({ git: null, model: null })).toEqual(['plugins', GAUGES])
     expect(zones({ windows: [] })).toEqual([LEFT, CTX_ROW])
@@ -241,14 +241,14 @@ describe('segments', () => {
   test('a narrow row cuts the branch to 12 cells before it drops a meter', () => {
     const full = zones({ git: LONG })
     expect(zones({ git: LONG }, fitted(full[0], GAUGES))).toEqual(full)
-    const kept = 'plugins · feature/a-v… · Opus 5.5 1M'
+    const kept = 'plugins (feature/a-v…) · Opus 5.5 1M'
     expect(zones({ git: LONG }, fitted(kept, GAUGES))).toEqual([kept, GAUGES])
     expect(zones({ git: LONG }, fitted(kept, GAUGES) - 1), 'the meters give the branch its room back').toEqual([full[0], WORDS])
   })
 
   test('past the last step on the right, the branch is cut, then left out, then the name is cut', () => {
     const rest = 'plugins · Opus 5.5 1M'
-    expect(zones({ git: LONG }, fitted(rest, BARE) + SEP.length + 2)).toEqual(['plugins · f… · Opus 5.5 1M', BARE])
+    expect(zones({ git: LONG }, fitted(rest, BARE) + SEP.length + 2)).toEqual(['plugins (f…) · Opus 5.5 1M', BARE])
     expect(zones({ git: LONG }, fitted(rest, BARE) + SEP.length + 1)).toEqual([rest, BARE])
     expect(zones({ git: LONG }, fitted(rest, BARE))).toEqual([rest, BARE])
     expect(zones({ git: LONG }, fitted('plu… · Opus 5.5 1M', BARE))).toEqual(['plu… · Opus 5.5 1M', BARE])
@@ -260,7 +260,25 @@ describe('segments', () => {
   })
 
   test('with no gauges, the left zone has the whole row and no gap', () => {
-    expect(zones({ git: LONG, ctx: null, windows: [] }, 26)).toEqual(['plugins · f… · Opus 5.5 1M', ''])
+    expect(zones({ git: LONG, ctx: null, windows: [] }, 26)).toEqual(['plugins (f…) · Opus 5.5 1M', ''])
+  })
+
+  test('the branch sits in dim parentheses beside the repo name, in one segment', () => {
+    const { left } = segments(input(), 500)
+    expect(left.map(s => s.map(r => r.text).join(''))).toEqual(['plugins (main +3 ~2)', 'Opus 5.5 1M'])
+    expect(left[0]!.filter(r => r.tone === 'dim').map(r => r.text)).toEqual([' (', ')'])
+  })
+
+  test('a cut branch stays inside the parentheses; a dropped branch takes them with it', () => {
+    const narrow = (columns: number) => zones({ git: LONG, ctx: null, windows: [] }, columns)[0]
+    expect(narrow(36)).toBe('plugins (feature/a-v…) · Opus 5.5 1M')
+    expect(narrow(26)).toBe('plugins (f…) · Opus 5.5 1M')
+    expect(narrow(25)).toBe('plugins · Opus 5.5 1M')
+  })
+
+  test('a branch without a repo name shows bare, with no parentheses', () => {
+    expect(zones({ where: null })[0]).toBe('main +3 ~2 · Opus 5.5 1M')
+    expect(zones({ where: null, agent: 'Plan' })[0]).toBe('main +3 ~2 · Plan · Opus 5.5 1M')
   })
 })
 

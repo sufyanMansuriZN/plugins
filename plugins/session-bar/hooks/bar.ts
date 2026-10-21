@@ -254,5 +254,14 @@ export const segments = (input: BarInput, columns: number): Zones => {
   const right = ladder.find(g => kept + rightWidth(g) <= columns) ?? ladder.at(-1)!
   const room = columns - rightWidth(right)
   const left = SHEDS.reduce((left, key) => shed(left, key, room), names)
-  return { left: left.map(n => [{ text: n.text, tone: n.tone }]), right }
+  return { left: joinBranch(left), right }
+}
+
+const run = (n: Name): Run => ({ text: n.text, tone: n.tone })
+
+// the branch sits in parentheses beside the name it belongs to; ' (' and ')' take the cells of a SEP, so the fit holds
+const joinBranch = (names: Name[]): Segment[] => {
+  const [where, branch, ...rest] = names
+  if (where?.key !== 'where' || branch?.key !== 'branch') return names.map(n => [run(n)])
+  return [[run(where), { text: ' (', tone: 'dim' }, run(branch), { text: ')', tone: 'dim' }], ...rest.map(n => [run(n)])]
 }

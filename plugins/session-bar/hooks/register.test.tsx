@@ -200,7 +200,7 @@ test('a badge is black bold text on its Okabe-Ito color; the percent and the tic
   }
 })
 
-test('color is only a badge background: ahead, far ahead, the spend percent and the context tokens; no text is in color', async ($, on) => {
+test('a fixed color is only a badge background: ahead, far ahead, the spend percent and the context tokens; only the repo and branch text has a named color, on the terminal', async ($, on) => {
   await engine($, on, { usage: {
     ...USAGE,
     context: { tokens: 850_000, window: 1_000_000, percent: 85 },
@@ -222,11 +222,30 @@ test('color is only a badge background: ahead, far ahead, the spend percent and 
     expect(await colors(' 50% '), `${surface} spend`).toEqual(['#E69F00', '#000000', true])
     const texts = await ui.findAll({ type: 'Text' })
     const inColor = texts.filter(t => t.props.color !== undefined && t.props.color !== '#000000').map(t => t.text)
-    expect(inColor, `${surface} text in color`).toEqual([])
+    expect(inColor, `${surface} text in color`).toEqual(surface === 'terminal' ? ['plugins', ' (', 'main', ' +3 ~2', ')'] : [])
     const bare = texts.filter(t => t.props.color === '#000000' && !t.props.backgroundColor).map(t => t.text)
     expect(bare, `${surface} black text without a badge`).toEqual([])
     await ui.unmount()
   }
+})
+
+test("the terminal draws the repo and branch in robbyrussell's named colors; the desktop draws them plain, with dim parentheses", async ($, on) => {
+  await engine($, on)
+  const drawn = async (surface: Surface) => {
+    const ui = await mountBand($, surface)
+    const left = await ui.find({ type: 'Box', key: 'left' })
+    const texts = await ui.findAll({ type: 'Text' })
+    await ui.unmount()
+    return texts.slice(0, 5).map(t => [t.text, t.props.color ?? null, t.props.bold ?? null, t.props.dimColor ?? null]).concat([[left?.text ?? null]])
+  }
+  expect(await drawn('terminal')).toEqual([
+    ['plugins', 'cyan', null, null], [' (', 'blue', true, null], ['main', 'red', null, null], [' +3 ~2', 'yellow', null, null], [')', 'blue', true, null],
+    ['plugins (main +3 ~2) · Opus 5.5 1M'],
+  ])
+  expect(await drawn('desktop')).toEqual([
+    ['plugins', null, null, null], [' (', null, null, true], ['main', null, null, null], [' +3 ~2', null, null, null], [')', null, null, true],
+    ['plugins (main +3 ~2) · Opus 5.5 1M'],
+  ])
 })
 
 test('a band left open redraws its countdowns every 30 seconds', async ($, on) => {

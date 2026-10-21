@@ -11,8 +11,13 @@ export type Window = { label: '5h' | '7d' | '$'; percent: number; resetsAt: numb
 export type BarInput = {
   where: string | null; git: Git | null; agent: string | null; model: string | null; ctx: Ctx | null; windows: Window[]; now: number; resetMark: string
 }
-// a colored tone exists only on a badge, which fills the background behind the text
-export type Run = { text: string; tone: 'plain' | 'dim'; badge?: never } | { text: string; tone: 'yellow' | 'red' | 'blue'; badge: true }
+// the part of the repo and branch a run draws, which a surface may color in robbyrussell's scheme
+export type Ink = 'where' | 'paren' | 'branch' | 'changes'
+// a fixed color exists only on a badge, which fills the background behind the text; an ink run falls back
+// to its tone where the surface draws no ink
+export type Run =
+  | { text: string; tone: 'plain' | 'dim'; badge?: never; ink?: Ink }
+  | { text: string; tone: 'yellow' | 'red' | 'blue'; badge: true; ink?: never }
 export type Segment = Run[]
 // left: what the session is (where, branch, agent, model); right: the gauges, pinned to the band's right edge
 export type Zones = { left: Segment[]; right: Segment[] }
@@ -147,8 +152,8 @@ const meter = (percent: number, tick: number | null): Run[] => {
   }, [])
 }
 
-// Color is only ever a badge's background, behind black text: a colored glyph on the terminal's own
-// background cannot keep its contrast on both light and dark themes.
+// A fixed color is only ever a badge's background, behind black text: a fixed-color glyph on the terminal's
+// own background cannot keep its contrast on both light and dark themes. The gauges have no ink.
 const alert = (text: string, tone: Tone): Run => (tone === 'plain' ? { text, tone } : { text: ` ${text} `, tone, badge: true })
 
 type Detail = { meter: boolean; word: boolean }
@@ -254,14 +259,29 @@ export const segments = (input: BarInput, columns: number): Zones => {
   const right = ladder.find(g => kept + rightWidth(g) <= columns) ?? ladder.at(-1)!
   const room = columns - rightWidth(right)
   const left = SHEDS.reduce((left, key) => shed(left, key, room), names)
-  return { left: joinBranch(left), right }
+  return { left: leftZone(left, input.git), right }
 }
 
-const run = (n: Name): Run => ({ text: n.text, tone: n.tone })
+const inked = (text: string, ink: Ink): Run => ({ text, tone: 'plain', ink })
+
+// the shown text is the git text or a cut of it, so its first cells are the branch and the rest the counts
+const gitRuns = (text: string, branch: string): Run[] => {
+  const chars = [...text]
+  const at = Math.min(chars.length, cells(branch))
+  return [inked(chars.slice(0, at).join(''), 'branch'), ...(chars.length > at ? [inked(chars.slice(at).join(''), 'changes')] : [])]
+}
+
+const runsOf = (n: Name, git: Git | null): Run[] =>
+  n.key === 'where' ? [inked(n.text, 'where')]
+  : n.key === 'branch' && git ? gitRuns(n.text, git.branch)
+  : [{ text: n.text, tone: n.tone }]
+
+const paren = (text: string): Run => ({ text, tone: 'dim', ink: 'paren' })
 
 // the branch sits in parentheses beside the name it belongs to; ' (' and ')' take the cells of a SEP, so the fit holds
-const joinBranch = (names: Name[]): Segment[] => {
-  const [where, branch, ...rest] = names
-  if (where?.key !== 'where' || branch?.key !== 'branch') return names.map(n => [run(n)])
-  return [[run(where), { text: ' (', tone: 'dim' }, run(branch), { text: ')', tone: 'dim' }], ...rest.map(n => [run(n)])]
+const leftZone = (names: Name[], git: Git | null): Segment[] => {
+  const segs = names.map(n => runsOf(n, git))
+  if (names[0]?.key !== 'where' || names[1]?.key !== 'branch') return segs
+  const [where, branch, ...rest] = segs
+  return [[...where!, paren(' ('), ...branch!, paren(')')], ...rest]
 }

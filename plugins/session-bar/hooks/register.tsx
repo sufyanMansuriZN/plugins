@@ -3,7 +3,7 @@ import type { EngineInterface, Register, SessionUsage } from 'claude-code'
 
 import type { AgentReading, Git } from '../types'
 import {
-  type BarInput, type Run, type Segment, GAP, SEP, folderName, modelLabel, parseContext, parseGit, parseWindowSize, parseWindows, segments, stepTokens,
+  type BarInput, type Ink, type Run, type Segment, GAP, SEP, folderName, modelLabel, parseContext, parseGit, parseWindowSize, parseWindows, segments, stepTokens,
 } from './bar'
 
 const agents = atom({ plugin: 'session-bar', key: 'agents' } as const, {} as Record<string, AgentReading>)
@@ -23,8 +23,20 @@ const BADGE: Record<Extract<Run, { badge: true }>['tone'], string> = {
 // Nerd Font symbols. The desktop app draws with its own fonts, so it keeps ↻.
 export const RESET_TERMINAL = ' '
 
-const props = (r: Run) =>
-  r.badge ? { backgroundColor: BADGE[r.tone], color: '#000000', bold: true } : r.tone === 'dim' ? { dimColor: true } : {}
+// oh-my-zsh robbyrussell's prompt colors, as the terminal's named ANSI colors: its theme sets them for light
+// and dark, so they are not fixed colors. A desktop has no such palette and would draw a fixed CSS color
+// (cyan on white is near unreadable), so it draws no ink.
+const INK: Record<Ink, { color: string; bold?: true }> = {
+  where: { color: 'cyan' },
+  paren: { color: 'blue', bold: true },
+  branch: { color: 'red' },
+  changes: { color: 'yellow' },
+}
+
+const props = (r: Run, inks: boolean) =>
+  r.badge ? { backgroundColor: BADGE[r.tone], color: '#000000', bold: true }
+  : inks && r.ink ? INK[r.ink]
+  : r.tone === 'dim' ? { dimColor: true } : {}
 
 const refreshRepo = async ($: EngineInterface) => {
   let next: Git | null = null
@@ -120,7 +132,7 @@ export const register: Register = on => {
     const { Box, Text } = $.ui.resolve(e)
     const zone = (segs: Segment[]) => segs
       .flatMap((seg, i): Run[] => (i ? [{ text: SEP, tone: 'dim' }, ...seg] : seg))
-      .map(r => <Text {...props(r)}>{r.text}</Text>)
+      .map(r => <Text {...props(r, e.surface === 'terminal')}>{r.text}</Text>)
     const below = await next(e)
 
     // the left zone takes the free room, so the right zone sits at the band's right edge

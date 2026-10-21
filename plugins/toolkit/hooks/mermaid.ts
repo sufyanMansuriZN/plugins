@@ -1,5 +1,4 @@
-import { read, update } from 'claude-code'
-import type { Register, RenderElement } from 'claude-code'
+import type { Register } from 'claude-code'
 
 import type { Diagram, Picture } from '../types'
 
@@ -18,7 +17,7 @@ const MIN_ROWS = 3
 // top to bottom is used instead when there is one.
 const SHRINK_LIMIT = 1.15
 // The first run downloads mermaid-cli and Chromium.
-const MMDC_TIMEOUT_MS = 300_000
+export const MMDC_TIMEOUT_MS = 300_000
 const MMDC = '@mermaid-js/mermaid-cli@12.0.0'
 // Part of every diagram's id, bumped when the drawing settings change so old pictures are not reused.
 const LOOK = 'v3'
@@ -77,6 +76,12 @@ export async function diagramId(source: string): Promise<string> {
   return [...new Uint8Array(digest)].slice(0, 5).map(b => b.toString(16).padStart(2, '0')).join('')
 }
 
+/** The mmdc command that draws `<dir>/<name>.mmd` into `<dir>/<name>.part.png`. */
+export function mmdcArgv(dir: string, name: string): string[] {
+  return ['npx', '-y', '--prefer-offline', '-p', MMDC, 'mmdc', '-q', '-p', `${dir}/puppeteer.json`, '-c', `${dir}/mermaid.json`,
+    '-i', `${dir}/${name}.mmd`, '-o', `${dir}/${name}.part.png`, '-s', String(SCALE), '-b', 'white']
+}
+
 /** The same flowchart drawn top to bottom, or undefined when it is not a sideways flowchart. */
 export function upright(source: string): string | undefined {
   const lines = source.split('\n')
@@ -105,6 +110,11 @@ export function pngSize(base64: string): { width: number; height: number } | und
 }
 
 const columnsOf = (picture: Picture) => Math.round(picture.width / SCALE / CELL_W)
+
+/** Whether a picture is wider than a terminal this many columns wide has room for. */
+export function isTooWide(picture: Picture, columns: number): boolean {
+  return columnsOf(picture) > columns - FRAME_COLUMNS
+}
 
 /** The picture for a terminal this many columns wide: the upright one only when the other is far too wide. */
 export function pick(diagram: Extract<Diagram, { status: 'drawn' }>, columns: number): Picture {
@@ -135,11 +145,8 @@ export function drawsPictures(env: TerminalEnv): boolean {
   return env.TERM_PROGRAM === 'ghostty' || env.TERM === 'xterm-ghostty' || env.TERM === 'xterm-kitty' || Boolean(env.KITTY_WINDOW_ID)
 }
 
+// Readies the cache folder. The reply hook in reply.tsx draws the diagrams.
 export const register: Register = on => {
-  // The diagrams this load of the module has asked mmdc for, and the one mmdc run at a time.
-  const started = new Set<string>()
-  let queue: Promise<unknown> = Promise.resolve()
-
   on('session.start', { surface: 'terminal' }, async ($, e, next) => {
     const env: TerminalEnv = {
       TERM_PROGRAM: await $.env.get('TERM_PROGRAM'),
@@ -155,112 +162,5 @@ export const register: Register = on => {
       await $.state.set({ plugin: 'toolkit', key: 'mermaidDir' }, dir)
     }
     return next(e)
-  })
-
-  on('ui.render', { component: 'AssistantMessage' }, async ($, e, next) => {
-    if (e.surface !== 'terminal' || e.props.isSummary || !e.props.text.includes('```mermaid')) return next(e)
-    const parts = split(e.props.text)
-    if (!parts.some(part => part.kind === 'mermaid')) return next(e)
-    const dir = await read($, { plugin: 'toolkit', key: 'mermaidDir' } as const)
-    if (!dir) return next(e)
-
-    const { Box, Button, Image, Markdown, Text } = $.ui.resolve(e)
-    const columns = e.viewport?.columns ?? 80
-
-    const drawn = await Promise.all(
-      parts.map(async (part, index) => {
-        if (part.kind === 'text') return <Markdown text={part.text} />
-        const id = await diagramId(part.source)
-        const diagramRef = { plugin: 'toolkit', key: 'mermaidDiagram', id } as const
-        const sourceRef = { plugin: 'toolkit', key: 'mermaidIsSource', id: `${e.requestId}:${index}` } as const
-
-        // Draws the diagram, and a sideways flowchart too wide for this terminal top to bottom as well,
-        // then stores the outcome.
-        const schedule = () => {
-          if (started.has(id)) return
-          started.add(id)
-          $.clock.after(0, () => {
-            queue = queue.then(async () => {
-              const draw = async (name: string, source: string): Promise<Picture | string> => {
-                const png = `${dir}/${name}.png`
-                if (await $.fs.exists(png)) {
-                  const size = pngSize((await $.fs.read(png, { as: 'bytes' })).base64)
-                  if (size) return { file: png, ...size }
-                }
-                await $.fs.write(`${dir}/${name}.mmd`, source)
-                const run = await $.process.run(
-                  ['npx', '-y', '--prefer-offline', '-p', MMDC, 'mmdc', '-q', '-p', `${dir}/puppeteer.json`, '-c', `${dir}/mermaid.json`,
-                    '-i', `${dir}/${name}.mmd`, '-o', `${dir}/${name}.part.png`, '-s', String(SCALE), '-b', 'white'],
-                  { cwd: dir, timeoutMs: MMDC_TIMEOUT_MS },
-                )
-                if (run.exitCode !== 0) return reasonOf(run.stderr, run.exitCode)
-                // Renamed into place whole, so a run cut short never leaves a picture to reuse.
-                await $.process.run(['mv', '-f', `${dir}/${name}.part.png`, png], { cwd: dir })
-                const size = pngSize((await $.fs.read(png, { as: 'bytes' })).base64)
-                return size ? { file: png, ...size } : 'mmdc wrote no picture'
-              }
-              let outcome: Diagram
-              try {
-                const picture = await draw(id, part.source)
-                const turnedSource = typeof picture === 'string' || columnsOf(picture) <= columns - FRAME_COLUMNS ? undefined : upright(part.source)
-                const turned = turnedSource === undefined ? undefined : await draw(`${id}-td`, turnedSource)
-                outcome = typeof picture === 'string'
-                  ? { status: 'failed', reason: picture }
-                  : { status: 'drawn', picture, ...(turned && typeof turned !== 'string' ? { upright: turned } : {}) }
-              } catch (err) {
-                outcome = { status: 'failed', reason: String(err) }
-              }
-              await $.state.set(diagramRef, outcome)
-            })
-          })
-        }
-
-        const withSource = (note: string, button?: RenderElement) => (
-          <Box flexDirection="column" marginY={1}>
-            <Markdown text={part.fence} />
-            {note ? <Text dimColor>{note}</Text> : null}
-            {button ?? null}
-          </Box>
-        )
-        const diagram = await read($, diagramRef)
-        if (!diagram) {
-          schedule()
-          return withSource('drawing diagram…')
-        }
-        if (diagram.status === 'failed') {
-          const retry = () => {
-            started.delete(id)
-            schedule()
-          }
-          return withSource(`mermaid: ${diagram.reason}`, <Button key={`retry-${index}`} label="Retry" dimColor onPress={retry} />)
-        }
-        const toggle = (label: string) => (
-          <Button key={`toggle-${index}`} label={label} dimColor onPress={() => update($, sourceRef, was => !was)} />
-        )
-        if (await read($, sourceRef)) return withSource('', toggle('Show picture'))
-        const picture = pick(diagram, columns)
-        return (
-          <Box flexDirection="column" marginY={1}>
-            <Box marginLeft={2}>
-              <Image source={{ file: picture.file, format: 'png' }} {...cellsOf(picture, columns)} alt={part.fence} />
-            </Box>
-            {toggle('Show source')}
-          </Box>
-        )
-      }),
-    )
-
-    // The engine's frame for a reply block: a blank row above, a bullet on the first block, every
-    // block indented two columns.
-    return (
-      <Box flexDirection="row" marginTop={1}>
-        <Box width={2} minWidth={2}>
-          <Text>{e.props.isFirstOfReply ? '●' : ' '}</Text>
-        </Box>
-        <Box flexDirection="column" flexGrow={1}>
-          {drawn}
-        </Box>
-      </Box>
-    )
   })
 }

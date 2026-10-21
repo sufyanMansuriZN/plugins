@@ -2,17 +2,19 @@
 
 Session bar above the prompt: git, model, context and usage windows, following the transcript in view.
 
-session-bar draws one row in the band above the prompt, in the terminal and in the desktop app:
+session-bar draws one row in the band above the prompt, in the terminal and in the desktop app. The row has two zones. The left zone tells you where you are: the repo, the branch and the model. The right zone has the meters, at the right edge of the band:
 
 ```
-main +3 ~2 · Opus 5.5 1M · ctx 6% · 5h ━━━━━╾─╂─ 66%  behind  ↻46m · 7d ━━━╾╂──── 43% ↻3d21h
+plugins · main +3 ~2 · Opus 5.5 1M           ctx 6% · 5h ━━━━━╾─╂─ 66%  behind  ↻46m · 7d ━━━╾╂──── 43% ↻3d21h
 ```
 
 When you open a subagent's transcript from the tasks list, the row shows that subagent instead of the main conversation:
 
 ```
-main +3 ~2 · Explore · Haiku 4.5 · ctx 42K · 5h ━━━━━╾─╂─ 66%  behind  ↻46m · 7d ━━━╾╂──── 43% ↻3d21h
+plugins · main +3 ~2 · Explore · Haiku 4.5   ctx 42K · 5h ━━━━━╾─╂─ 66%  behind  ↻46m · 7d ━━━╾╂──── 43% ↻3d21h
 ```
+
+The free room goes between the two zones. There are always at least 3 spaces between them.
 
 ## Install
 
@@ -24,8 +26,9 @@ There is no setup step. The row shows in the next session.
 
 ## What the row shows
 
-Each part is left out when it has no value.
+Each part is left out when it has no value. The left zone has the repo, git, agent and model. The right zone has ctx and the usage windows.
 
+- **repo**: the name of the repo's folder. In a git worktree, it is the name of the main repo, not of the worktree folder. Outside a git repo, it is the name of the session's directory. It is read when git is read.
 - **git**: the branch (a 7-character sha when detached), `+N` new files (untracked or added), `~M` changed files (modified, deleted or renamed). Left out outside a git repo. It is read at the session's start, at the end of each turn and every 30 seconds.
 - **agent**: only while a subagent's transcript is open. Its type, such as `Explore`, in dim text.
 - **model**: the model's name, such as `Opus 5.5`. In the main conversation, the context window size follows it (`1M`, `200K`). For a subagent, it is the model that subagent's requests use. It shows from the subagent's first request.
@@ -109,5 +112,7 @@ When the band is too narrow, the parts go in this order:
 1. The git part is cut, down to 12 characters.
 2. The meters go: `5h 66%  behind  ↻46m`.
 3. The words go: `5h 66% ↻46m`.
+4. The git part is cut more, then it goes.
+5. The repo name is cut.
 
-The other parts are never cut. While a survey shows above the prompt, the row is hidden.
+A cut part ends with `…`. The agent, the model and the parts in the right zone are never cut. While a survey shows above the prompt, the row is hidden.

@@ -3,7 +3,7 @@
 ## 1. The core
 
 - [x] 1.1 Add `pace`, the `PACE` table, the 8-cell meter with half cells and its joined pace tick, the pace badge run and the three-width ladder to `hooks/bar.ts`, and drop the old pace colors and the `green` tone. Verify: `claude plugin test plugins/session-bar` passes the full row, half cells, the tick arms beside a half cell, each badge and its tone, no badge on pace, the 5-point and 20-point edges, the cells for ahead, on, behind and used up, the tick at boundaries 0 and 8, the 7d pace, the spend limit, the ladder and the countdowns.
-- [x] 1.2 Show color only as a badge background: uncolored meter cells, the spend-limit percent badge at 50% and 80%, the context percent badge at 70% and 85%, and the reset mark per surface. Verify: `claude plugin test plugins/session-bar` passes no colored run outside a badge in any state, each percent badge and its edges, no `Text` with a color other than `#000000` on terminal and desktop, and the terminal and desktop reset marks.
+- [x] 1.2 Show color only as a badge background: uncolored meter cells, the spend-limit percent badge at 50% and 80%, the context percent badge at 70% and 85%, and a countdown with no reset mark. Verify: `claude plugin test plugins/session-bar` passes no colored run outside a badge in any state, each percent badge and its edges, no `Text` with a color other than `#000000` on terminal and desktop, and the countdown text on both surfaces.
 
 ## 2. The band
 

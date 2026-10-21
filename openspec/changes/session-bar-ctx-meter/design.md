@@ -34,7 +34,7 @@
 
 ## Risks / Trade-offs
 
-- [`ctx ╾─╂────── 60K` takes 11 more cells than `ctx 6%`] -> The meters go sooner on a narrow band: at 114 columns where they went at 103 before, for the repo `plugins`, the branch at 12 cells and a 1M model.
+- [`ctx ╾─╂────── 60K` takes 11 more cells than `ctx 6%`] -> The meters go sooner on a narrow band: at 112 columns where they went at 101 before (both without the reset mark), for the repo `plugins`, the branch at 12 cells and a 1M model.
 - [Whether `context.window` is the model's window or the user's `/autocompact` window is not verified] -> If it is the auto-compact window, the meter is full at the compaction point, which still reads right. The tick table then applies to that window.
 - [The badge and the tick can differ by rounding] -> 240K on a 1M window rounds its fill to the tick's boundary with no badge. The count says the real number.
 

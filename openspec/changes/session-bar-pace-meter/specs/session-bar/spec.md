@@ -5,7 +5,7 @@ The plugin SHALL draw one row in the `AbovePrompt` band through a hooks module, 
 
 #### Scenario: Every segment has a value
 - **WHEN** the main conversation is in view, the repo is on `main` with 3 new and 2 changed files, the model is `claude-opus-5-5` with a 1,000,000-token window, the context is 6% full, 5h is at 66% resetting in 46m and 7d at 43% resetting in 3d21h
-- **THEN** the row reads `main +3 ~2 · Opus 5.5 1M · ctx 6% · 5h ━━━━━╾─╂─ 66%  behind  ↻46m · 7d ━━━╾╂──── 43% ↻3d21h`
+- **THEN** the row reads `main +3 ~2 · Opus 5.5 1M · ctx 6% · 5h ━━━━━╾─╂─ 66%  behind  46m · 7d ━━━╾╂──── 43% 3d21h`
 
 #### Scenario: Only the model is known
 - **WHEN** the session is outside a git repo, the context has no percent yet and there are no rate limits
@@ -27,7 +27,7 @@ In the main view the context segment SHALL read `ctx <percent>%` from `$.session
 - **THEN** the context segment reads `ctx 42K`
 
 ### Requirement: Usage window segments
-The `$.session.usage()` rate limits of kind `five_hour`, `seven_day` and `spend_limit` SHALL read `5h`, `7d` and `$`, then the meter, then `percentUsed` rounded to a whole number, then the pace badge when there is one, and ` ↻<countdown>` to `resetsAt` (ISO 8601) when it is set. The countdown SHALL use at most two units (`1d7h`, `2h40m`, `12m`, `<1m`). A window whose reset time has passed SHALL be left out. Other kinds SHALL be ignored. The windows SHALL show in every view.
+The `$.session.usage()` rate limits of kind `five_hour`, `seven_day` and `spend_limit` SHALL read `5h`, `7d` and `$`, then the meter, then `percentUsed` rounded to a whole number, then the pace badge when there is one, and ` <countdown>` to `resetsAt` (ISO 8601) when it is set, with no mark before it. The countdown SHALL use at most two units (`1d7h`, `2h40m`, `12m`, `<1m`). A window whose reset time has passed SHALL be left out. Other kinds SHALL be ignored. The windows SHALL show in every view.
 
 #### Scenario: Reset passed
 - **WHEN** a 5h window at 88% has a reset time before now
@@ -79,20 +79,20 @@ Color SHALL show only as a badge's background, behind bold `#000000` text. No ot
 The plugin SHALL fit the row in the band's `bodyColumns`, which already leaves out the engine's own cells. It SHALL show the windows with their meters and badges when they fit beside the git segment at its width up to 12 cells, else with badges only, else bare. The git segment SHALL then be cut to the room left and end with `…`, and left out when fewer than 2 cells are left. The other segments SHALL never be cut.
 
 #### Scenario: Narrow terminal
-- **WHEN** the gauges with meters take 79 cells, the branch is `feature/a-very-long-branch-name` with 1 new file and `bodyColumns` is 94
-- **THEN** the row reads `feature/a-v… · Opus 5.5 1M · ctx 6% · 5h ━━━━━╾─╂─ 66%  behind  ↻46m · 7d ━━━╾╂──── 43% ↻3d21h`
+- **WHEN** the gauges with meters take 77 cells, the branch is `feature/a-very-long-branch-name` with 1 new file and `bodyColumns` is 92
+- **THEN** the row reads `feature/a-v… · Opus 5.5 1M · ctx 6% · 5h ━━━━━╾─╂─ 66%  behind  46m · 7d ━━━╾╂──── 43% 3d21h`
 
 #### Scenario: Narrower still
-- **WHEN** there is no git segment and `bodyColumns` is 78
-- **THEN** the row reads `Opus 5.5 1M · ctx 6% · 5h 66%  behind  ↻46m · 7d 43% ↻3d21h`
+- **WHEN** there is no git segment and `bodyColumns` is 76
+- **THEN** the row reads `Opus 5.5 1M · ctx 6% · 5h 66%  behind  46m · 7d 43% 3d21h`
 
 #### Scenario: Too narrow for the badges
-- **WHEN** there is no git segment and `bodyColumns` is 58
-- **THEN** the row reads `Opus 5.5 1M · ctx 6% · 5h 66% ↻46m · 7d 43% ↻3d21h`
+- **WHEN** there is no git segment and `bodyColumns` is 56
+- **THEN** the row reads `Opus 5.5 1M · ctx 6% · 5h 66% 46m · 7d 43% 3d21h`
 
 #### Scenario: Too narrow for the gauges
 - **WHEN** `bodyColumns` is 20
-- **THEN** the row reads `Opus 5.5 1M · ctx 6% · 5h 66% ↻46m · 7d 43% ↻3d21h` with no git segment
+- **THEN** the row reads `Opus 5.5 1M · ctx 6% · 5h 66% 46m · 7d 43% 3d21h` with no git segment
 
 ## ADDED Requirements
 
@@ -142,15 +142,15 @@ A window with a pace SHALL insert a tick in the default color at cell boundary r
 
 #### Scenario: Ahead
 - **WHEN** 5h is at 70% with 2h30m left
-- **THEN** the segment reads `5h ━━━━╋━╾── 70%  ahead  ↻2h30m`, with `━━━━╋━╾` in the default color and `──` dim
+- **THEN** the segment reads `5h ━━━━╋━╾── 70%  ahead  2h30m`, with `━━━━╋━╾` in the default color and `──` dim
 
 #### Scenario: Behind
 - **WHEN** 5h is at 30% with 2h30m left
-- **THEN** the segment reads `5h ━━╾─╂──── 30%  behind  ↻2h30m`, with `━━╾` and `╂` in the default color and every `─` dim
+- **THEN** the segment reads `5h ━━╾─╂──── 30%  behind  2h30m`, with `━━╾` and `╂` in the default color and every `─` dim
 
 #### Scenario: On pace
 - **WHEN** 5h is at 50% with 2h30m left
-- **THEN** the segment reads `5h ━━━━╉──── 50% ↻2h30m`, with `━━━━╉` in the default color and `────` dim
+- **THEN** the segment reads `5h ━━━━╉──── 50% 2h30m`, with `━━━━╉` in the default color and `────` dim
 
 #### Scenario: A half cell beside the tick
 - **WHEN** 5h is at 46%, then at 54%, with 2h30m left
@@ -158,19 +158,8 @@ A window with a pace SHALL insert a tick in the default color at cell boundary r
 
 #### Scenario: Start of a window
 - **WHEN** 5h is at 20% with 4h50m left
-- **THEN** the segment reads `5h ┣━╾────── 20%  ahead  ↻4h50m`
+- **THEN** the segment reads `5h ┣━╾────── 20%  ahead  4h50m`
 
 #### Scenario: Near the reset
 - **WHEN** 5h is at 91% with 10m left
-- **THEN** the segment reads `5h ━━━━━━━╾┨ 91%  behind  ↻10m`
-
-### Requirement: Reset mark
-A mark SHALL stand just before each countdown. On the terminal it SHALL be the Nerd Font refresh icon (U+F021), which sits in the center of its cell, and a space. On the desktop, which draws with its own fonts, it SHALL be `↻`. The rows in this spec show `↻`.
-
-#### Scenario: Terminal
-- **WHEN** 5h resets in 46m and the band is on the terminal
-- **THEN** the countdown reads U+F021, a space and `46m`
-
-#### Scenario: Desktop
-- **WHEN** 5h resets in 46m and the band is in the desktop app
-- **THEN** the countdown reads `↻46m`
+- **THEN** the segment reads `5h ━━━━━━━╾┨ 91%  behind  10m`

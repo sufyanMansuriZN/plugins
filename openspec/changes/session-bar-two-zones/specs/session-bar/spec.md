@@ -5,7 +5,7 @@ The plugin SHALL draw one row in the `AbovePrompt` band through a hooks module, 
 
 #### Scenario: Every segment has a value
 - **WHEN** the main conversation is in view, the session is in repo `plugins` on `main` with 3 new and 2 changed files, the model is `claude-opus-5-5` with a 1,000,000-token window, the context is 6% full, 5h is at 66% resetting in 46m and 7d at 43% resetting in 3d21h
-- **THEN** the left zone reads `plugins (main +3 ~2) · Opus 5.5 1M` and the right zone reads `ctx 6% · 5h ━━━━━╾─╂─ 66%  behind  ↻46m · 7d ━━━╾╂──── 43% ↻3d21h`
+- **THEN** the left zone reads `plugins (main +3 ~2) · Opus 5.5 1M` and the right zone reads `ctx 6% · 5h ━━━━━╾─╂─ 66%  behind  46m · 7d ━━━╾╂──── 43% 3d21h`
 
 #### Scenario: A subagent in view
 - **WHEN** an `Explore` subagent's last request ran on `claude-haiku-4-5-20251001` with 42,000 input tokens and its transcript is in view
@@ -27,32 +27,32 @@ The plugin SHALL draw one row in the `AbovePrompt` band through a hooks module, 
 The plugin SHALL fit the row in the band's `bodyColumns`, which already leaves out the engine's own cells, counting 3 cells between the zones when the right zone has segments. It SHALL show the windows with their meters and badges when they fit beside the whole left zone with the git segment at its width up to 12 cells, else with badges only, else bare. The git segment SHALL then be cut to the room left and end with `…`, inside its parentheses, and be left out with its parentheses when fewer than 2 cells are left. After that the repo segment SHALL be cut the same way. The agent, the model and the right zone's segments SHALL never be cut.
 
 #### Scenario: Narrow terminal
-- **WHEN** the session is in repo `plugins`, the branch is `feature/a-very-long-branch-name` with 1 new file, and `bodyColumns` is 104
-- **THEN** the left zone reads `plugins (feature/a-v…) · Opus 5.5 1M` and the right zone reads `ctx 6% · 5h ━━━━━╾─╂─ 66%  behind  ↻46m · 7d ━━━╾╂──── 43% ↻3d21h`
+- **WHEN** the session is in repo `plugins`, the branch is `feature/a-very-long-branch-name` with 1 new file, and `bodyColumns` is 102
+- **THEN** the left zone reads `plugins (feature/a-v…) · Opus 5.5 1M` and the right zone reads `ctx 6% · 5h ━━━━━╾─╂─ 66%  behind  46m · 7d ━━━╾╂──── 43% 3d21h`
 
 #### Scenario: Narrower still
-- **WHEN** the same session has `bodyColumns` 84
-- **THEN** the left zone reads `plugins (feature/a-v…) · Opus 5.5 1M` and the right zone reads `ctx 6% · 5h 66%  behind  ↻46m · 7d 43% ↻3d21h`
+- **WHEN** the same session has `bodyColumns` 82
+- **THEN** the left zone reads `plugins (feature/a-v…) · Opus 5.5 1M` and the right zone reads `ctx 6% · 5h 66%  behind  46m · 7d 43% 3d21h`
 
 #### Scenario: Too narrow for the badges
-- **WHEN** the same session has `bodyColumns` 75
-- **THEN** the left zone reads `plugins (feature/a-v…) · Opus 5.5 1M` and the right zone reads `ctx 6% · 5h 66% ↻46m · 7d 43% ↻3d21h`
+- **WHEN** the same session has `bodyColumns` 73
+- **THEN** the left zone reads `plugins (feature/a-v…) · Opus 5.5 1M` and the right zone reads `ctx 6% · 5h 66% 46m · 7d 43% 3d21h`
 
 #### Scenario: The branch is cut further
-- **WHEN** the same session has `bodyColumns` 65
+- **WHEN** the same session has `bodyColumns` 63
 - **THEN** the left zone reads `plugins (f…) · Opus 5.5 1M`
 
 #### Scenario: The branch is left out
-- **WHEN** the same session has `bodyColumns` 60
+- **WHEN** the same session has `bodyColumns` 58
 - **THEN** the left zone reads `plugins · Opus 5.5 1M`
 
 #### Scenario: The repo name is cut
-- **WHEN** the same session has `bodyColumns` 57
+- **WHEN** the same session has `bodyColumns` 55
 - **THEN** the left zone reads `plu… · Opus 5.5 1M`
 
 #### Scenario: Too narrow for the gauges
 - **WHEN** `bodyColumns` is 20
-- **THEN** the left zone reads `Opus 5.5 1M` and the right zone reads `ctx 6% · 5h 66% ↻46m · 7d 43% ↻3d21h`
+- **THEN** the left zone reads `Opus 5.5 1M` and the right zone reads `ctx 6% · 5h 66% 46m · 7d 43% 3d21h`
 
 ## ADDED Requirements
 

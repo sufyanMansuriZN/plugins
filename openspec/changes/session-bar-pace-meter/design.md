@@ -37,7 +37,7 @@
 
 **Fixed Okabe-Ito colors.** Yellow is `#E69F00` (orange), red `#D55E00` (vermillion), blue `#56B4E9` (sky blue). The Okabe-Ito set stays apart for the common color vision deficiencies, and orange and vermillion also differ in lightness. Black on each is 9.3, 5.4 and 9.1 : 1. Fixed hexes, not theme keys, keep that contrast the same in light and dark themes. The theme's `warning`, `error`, `success` and `suggestion` keys and the `green` tone go.
 
-**The reset mark per surface.** `BarInput.resetMark` comes from `register.tsx`. The terminal gets the Nerd Font refresh icon (U+F021), which sits in the center of its cell where `↻` sits off center. Ghostty bundles the Nerd Font symbols. The desktop app draws with its own fonts, so it gets `↻`. `bar.ts` stays free of surface names.
+**No reset mark.** The countdown follows the percent or the badge after one space, on both surfaces: `66% 46m`. A first build put a Nerd Font refresh icon (U+F021) before it on the terminal and `↻` on the desktop. The person found that the mark only took cells, so it went, with the per-surface choice in `register.tsx`.
 
 **Three widths.** `segments` tries the gauges with meters and badges, then with badges only, then bare, and takes the first that fits beside a git segment of up to 12 cells. It then cuts git into the room left as before. A short branch is never cut to keep a meter.
 - *Alternative: drop meters per window, 7d first.* More levels for little gain; the two windows read best alike.
@@ -46,7 +46,7 @@
 
 - [8 cells are 12.5 points each] -> A window on pace can show a used cell just past the tick. No cell is in color, so it does not read as an alert, and on pace there is no badge.
 - [Overspend cells are no longer in color] -> They show the overspend only by their place after the tick. The badge carries the alert.
-- [A terminal font without Nerd Font symbols] -> It shows a box in place of the reset mark. The countdown still reads.
+- [A bare countdown such as `46m` next to a percent] -> It reads as a time by its unit, and it is dim.
 - [The tick rounds to a boundary] -> It is up to 6.25 points from the true mark. The badge uses the exact mark.
 - [A background color on a terminal] -> Some terminals draw it with fewer colors. The word still reads.
 - [The example row is about 30 cells wider] -> The row drops the meters, then the badges, on narrow bands.

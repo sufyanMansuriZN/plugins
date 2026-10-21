@@ -151,19 +151,6 @@ test('session start through tmux leaves every reply to the engine', async ($, on
   expect(await ui.find({ type: 'Text', text: /engine drawing/ })).toBeDefined()
 })
 
-test('with mermaid off, session start writes nothing and a drawn diagram is left to the engine', { options: { mermaid: false } }, async ($, on) => {
-  const host = engine(on, { diagrams: { [await diagramId(SOURCE)]: { status: 'drawn', picture: PICTURE } } })
-  mock.env(on, { HOME: '/home/me', TERM_PROGRAM: 'ghostty' })
-  on('session.start', () => ({ cwd: '/w' }))
-  await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
-  expect(host.files.size).toBe(0)
-  expect(host.state.has('mermaidDir:')).toBe(false)
-  host.state.set('mermaidDir:', { value: DIR, version: 1 })
-  const ui = await mount($, FENCE)
-  expect(await ui.find({ type: 'Text', text: /engine drawing/ })).toBeDefined()
-  expect(await ui.find({ type: 'Image' })).toBeUndefined()
-})
-
 test('a drawn diagram replaces its fence with a picture in the engine frame', async ($, on) => {
   engine(on, { dir: DIR, diagrams: { [await diagramId(SOURCE)]: { status: 'drawn', picture: PICTURE } } })
   const ui = await mount($, 'Before.\n\n' + FENCE + '\n\nAfter.', { viewport: { columns: 100, rows: 40 } })

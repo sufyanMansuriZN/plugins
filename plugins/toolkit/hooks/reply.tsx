@@ -7,16 +7,15 @@ import { cellsOf, diagramId, isTooWide, MMDC_TIMEOUT_MS, mmdcArgv, pick, pngSize
 
 // The one hook that draws a reply. Each tool that draws part of a reply would otherwise take over
 // the whole reply, and a second such hook would draw over the first.
-export const register: Register = (on, options) => {
+export const register: Register = on => {
   // The diagrams this load of the module has asked mmdc for, and the one mmdc run at a time.
   const started = new Set<string>()
   let queue: Promise<unknown> = Promise.resolve()
 
   on('ui.render', { component: 'AssistantMessage' }, async ($, e, next) => {
     if (e.surface !== 'terminal' || e.props.isSummary) return next(e)
-    const wantsMermaid = options.mermaid !== false && e.props.text.includes('```mermaid')
     // Empty until session start finds a terminal that draws pictures; till then fences stay text.
-    const dir = (wantsMermaid ? await read($, { plugin: 'toolkit', key: 'mermaidDir' } as const) : undefined) ?? ''
+    const dir = (e.props.text.includes('```mermaid') ? await read($, { plugin: 'toolkit', key: 'mermaidDir' } as const) : undefined) ?? ''
     const parts = blocks(e.props.text, { mermaid: dir !== '' })
     if (parts.every(part => part.kind === 'text')) return next(e)
 

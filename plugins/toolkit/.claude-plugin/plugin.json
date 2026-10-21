@@ -5,12 +5,6 @@
   "license": "MIT",
   "types": "./types/index.d.ts",
   "userConfig": {
-    "mermaid": {
-      "type": "boolean",
-      "title": "Mermaid preview",
-      "description": "Draw each mermaid block of a reply as a picture, in Ghostty or kitty.",
-      "default": true
-    },
     "cd": {
       "type": "boolean",
       "title": "Change session directory",

@@ -71,23 +71,25 @@ describe('segments', () => {
     expect(alone(spend(6))).toBe('$ ╾─────── 6%')
     expect(alone(spend(19))).toBe('$ ━╾────── 19%')
     expect(alone(spend(3))).toBe('$ ──────── 3%')
-    expect(alone(spend(100))).toBe('$ ━━━━━━━━ 100%')
+    expect(alone(spend(100))).toBe('$ ━━━━━━━━  100% ')
   })
 
-  test('a spend limit has no tick and no word; its cells and percent turn yellow at 50 and red at 80', () => {
+  test('a spend limit has no tick and no word; its percent becomes a yellow badge at 50 and a red one at 80', () => {
     expect(row({ git: null, ...spend(40.4) })).toBe('Opus 5.5 1M · ctx 6% · $ ━━━───── 40%')
+    expect(alone(spend(50))).toBe('$ ━━━━────  50% ')
+    expect(alone(spend(80))).toBe('$ ━━━━━━╾─  80% ')
     expect(meter(spend(40.4))).toEqual([['━━━', 'plain'], ['─────', 'dim']])
-    expect(meter(spend(50))).toEqual([['━━━━', 'yellow'], ['────', 'dim']])
-    expect(meter(spend(80))).toEqual([['━━━━━━╾', 'red'], ['─', 'dim']])
-    for (const [percent, expected] of [[49, 'plain'], [50, 'yellow'], [79, 'yellow'], [80, 'red']] as const) {
-      expect(tone(spend(percent), `${percent}%`), String(percent)).toBe(expected)
-      expect(badges(spend(percent)), String(percent)).toEqual([])
+    expect(meter(spend(50))).toEqual([['━━━━', 'plain'], ['────', 'dim']])
+    expect(meter(spend(80))).toEqual([['━━━━━━╾', 'plain'], ['─', 'dim']])
+    for (const [percent, expected] of [[49, []], [50, [[' 50% ', 'yellow']]], [79, [[' 79% ', 'yellow']]], [80, [[' 80% ', 'red']]]] as const) {
+      expect(badges(spend(percent)), String(percent)).toEqual(expected)
     }
+    expect(tone(spend(49), '49%')).toBe('plain')
   })
 
-  test('ahead: the cells past the tick are yellow and an "ahead" badge follows the plain percent', () => {
+  test('ahead: no cell in color, and an "ahead" badge follows the plain percent', () => {
     expect(alone(half(70))).toBe('5h ━━━━╋━╾── 70%  ahead  ↻2h30m')
-    expect(meter(half(70))).toEqual([['━━━━╋', 'plain'], ['━╾', 'yellow'], ['──', 'dim']])
+    expect(meter(half(70))).toEqual([['━━━━╋━╾', 'plain'], ['──', 'dim']])
     expect(badges(half(70))).toEqual([[' ahead ', 'yellow']])
     expect(tone(half(70), '70%')).toBe('plain')
   })
@@ -117,9 +119,23 @@ describe('segments', () => {
       expect(badges(half(percent)), `${percent}%`).toEqual(expected)
     }
     expect(alone(half(71))).toBe('5h ━━━━╋━╾── 71%  far ahead  ↻2h30m')
-    expect(meter(half(71)), 'far ahead').toEqual([['━━━━╋', 'plain'], ['━╾', 'red'], ['──', 'dim']])
+    expect(meter(half(71)), 'far ahead').toEqual([['━━━━╋━╾', 'plain'], ['──', 'dim']])
     expect(alone(half(100))).toBe('5h ━━━━╋━━━━ 100%  used up  ↻2h30m')
-    expect(meter(half(100)), 'used up').toEqual([['━━━━╋', 'plain'], ['━━━━', 'red']])
+    expect(meter(half(100)), 'used up').toEqual([['━━━━╋━━━━', 'plain']])
+  })
+
+  test('color is only ever a badge background: no other run is in color, in any state', () => {
+    const states: [string, Partial<BarInput>][] = [
+      ['behind', half(30)], ['on', half(50)], ['ahead', half(56)], ['far ahead', half(71)], ['used up', half(100)],
+      ['tick first', five(20, NOW + 5 * HOUR - 10 * MIN)], ['tick last', five(91, NOW + 10 * MIN)],
+      ['spend 49', spend(49)], ['spend 50', spend(50)], ['spend 80', spend(80)], ['spend 100', spend(100)],
+      ['no reset 80', { windows: [{ ...SEVEN, percent: 80, resetsAt: null }] }],
+      ['ctx 70', { ctx: { kind: 'percent', percent: 70 } }], ['ctx 85', { ctx: { kind: 'percent', percent: 85 } }],
+    ]
+    for (const [name, over] of states) {
+      const colored = runs(over).filter(r => !r.badge && r.tone !== 'plain' && r.tone !== 'dim')
+      expect(colored, name).toEqual([])
+    }
   })
 
   test('on pace, no cell is in color, even across the tick', () => {
@@ -129,7 +145,7 @@ describe('segments', () => {
 
   test('the tick stands first at the start of a window and last near its reset', () => {
     expect(alone(five(20, NOW + 5 * HOUR - 10 * MIN))).toBe('5h ┣━╾────── 20%  ahead  ↻4h50m')
-    expect(meter(five(20, NOW + 5 * HOUR - 10 * MIN))).toEqual([['┣', 'plain'], ['━╾', 'yellow'], ['──────', 'dim']])
+    expect(meter(five(20, NOW + 5 * HOUR - 10 * MIN))).toEqual([['┣━╾', 'plain'], ['──────', 'dim']])
     expect(alone(five(91, NOW + 10 * MIN)), 'an even pace is at 96.7%').toBe('5h ━━━━━━━╾┨ 91%  behind  ↻10m')
     expect(meter(five(91, NOW + 10 * MIN))).toEqual([['━━━━━━━╾┨', 'plain']])
   })
@@ -137,24 +153,27 @@ describe('segments', () => {
   test('the 7-day window has a pace around the clock too', () => {
     const seven = (percent: number) => ({ windows: [{ ...SEVEN, percent, resetsAt: NOW + 84 * HOUR }] })
     expect(alone(seven(80))).toBe('7d ━━━━╋━━╾─ 80%  far ahead  ↻3d12h')
-    expect(meter(seven(80))).toEqual([['━━━━╋', 'plain'], ['━━╾', 'red'], ['─', 'dim']])
+    expect(meter(seven(80))).toEqual([['━━━━╋━━╾', 'plain'], ['─', 'dim']])
   })
 
   test('a window whose reset has passed is left out', () => {
     expect(row({ git: null, ...five(88, NOW - 1) })).toBe('Opus 5.5 1M · ctx 6%')
   })
 
-  test('context marks at 70% and 85%', () => {
-    for (const [percent, shown, expected] of [[69, '69%', 'plain'], [70, '70%', 'yellow'], [84.4, '84%', 'yellow'], [85, '85%', 'red']] as const) {
-      expect(tone({ ctx: { kind: 'percent', percent } }, shown), String(percent)).toBe(expected)
+  test('the context percent becomes a yellow badge at 70% and a red one at 85%', () => {
+    for (const [percent, expected] of [
+      [69, []], [70, [[' 70% ', 'yellow']]], [84.4, [[' 84% ', 'yellow']]], [85, [[' 85% ', 'red']]],
+    ] as const) {
+      expect(badges({ ctx: { kind: 'percent', percent }, windows: [] }), String(percent)).toEqual(expected)
     }
+    expect(tone({ ctx: { kind: 'percent', percent: 69 } }, '69%')).toBe('plain')
+    expect(alone({ ctx: { kind: 'percent', percent: 85 }, windows: [] })).toBe('ctx  85% ')
   })
 
-  test('no reset time colors by share alone, with no tick, no word and no countdown', () => {
-    for (const [percent, expected] of [[49, 'plain'], [50, 'yellow'], [79, 'yellow'], [80, 'red']] as const) {
+  test('no reset time badges the percent by share alone, with no tick, no word and no countdown', () => {
+    for (const [percent, expected] of [[49, []], [50, [[' 50% ', 'yellow']]], [79, [[' 79% ', 'yellow']]], [80, [[' 80% ', 'red']]]] as const) {
       const over = { windows: [{ ...SEVEN, percent, resetsAt: null }] }
-      expect(tone(over, `${percent}%`), String(percent)).toBe(expected)
-      expect(badges(over), String(percent)).toEqual([])
+      expect(badges(over), String(percent)).toEqual(expected)
       expect(row(over)).not.toMatch(new RegExp(`[↻${TICKS}]`))
     }
   })

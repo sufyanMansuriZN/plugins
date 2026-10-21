@@ -98,11 +98,9 @@ const pace = (w: Window, now: number): Pace | null => {
   return { kind, delta, tick: Math.round((mark / 100) * CELLS) }
 }
 
-const aheadTone = (delta: number): Tone => (delta > 20 ? 'red' : 'yellow')
-
 // the word carries the pace on its own, so no meaning rests on telling colors apart
 const PACE: Record<Pace['kind'], (p: Pace) => { word: string; tone: Tone }> = {
-  ahead: p => ({ word: p.delta > 20 ? 'far ahead' : 'ahead', tone: aheadTone(p.delta) }),
+  ahead: p => (p.delta > 20 ? { word: 'far ahead', tone: 'red' } : { word: 'ahead', tone: 'yellow' }),
   on: () => ({ word: '', tone: 'plain' }),
   behind: () => ({ word: 'behind', tone: 'blue' }),
   spent: () => ({ word: 'used up', tone: 'red' }),
@@ -118,18 +116,11 @@ const TICK: Record<Arm, Record<Arm, string>> = {
   heavy: { none: '┫', light: '╉', heavy: '╋' },
 }
 
-const FILLED: Run = { text: '━', tone: 'plain' }
-const EMPTY: Run = { text: '─', tone: 'dim' }
-
 // a half-used cell is thick on its left half only
-const HALF = '╾'
-
-const meter = (percent: number, cell: (i: number, filled: boolean) => Run, tick: number | null): Run[] => {
+const meter = (percent: number, tick: number | null): Run[] => {
   const halves = Math.min(CELLS * 2, Math.round((percent / 100) * CELLS * 2))
-  const glyphs = Array.from({ length: CELLS }, (_, i) => {
-    const run = cell(i, halves > i * 2)
-    return halves === i * 2 + 1 && run.text === '━' ? { ...run, text: HALF } : run
-  })
+  const glyphs = Array.from({ length: CELLS }, (_, i): Run =>
+    halves > i * 2 + 1 ? { text: '━', tone: 'plain' } : halves === i * 2 + 1 ? { text: '╾', tone: 'plain' } : { text: '─', tone: 'dim' })
   if (tick !== null) {
     const left = (c?: Run): Arm => (c ? (c.text === '━' ? 'heavy' : 'light') : 'none')
     const right = (c?: Run): Arm => (c ? (c.text === '─' ? 'light' : 'heavy') : 'none')
@@ -143,13 +134,9 @@ const meter = (percent: number, cell: (i: number, filled: boolean) => Run, tick:
   }, [])
 }
 
-// The cells before the rounded tick are exactly those whose center is at or below the mark.
-// A filled cell past it is overspend. On pace, a 12.5-point cell would otherwise flag a gap the word calls fine.
-const paceCell = (p: Pace) => (i: number, filled: boolean): Run => {
-  if (p.kind === 'on') return filled ? FILLED : EMPTY
-  if (filled) return i < p.tick ? FILLED : { text: '━', tone: PACE[p.kind](p).tone }
-  return EMPTY
-}
+// Color is only ever a badge's background, behind black text: a colored glyph on the terminal's own
+// background cannot keep its contrast on both light and dark themes.
+const alert = (text: string, tone: Tone): Run => (tone === 'plain' ? { text, tone } : { text: ` ${text} `, tone, badge: true })
 
 type Detail = { meter: boolean; word: boolean }
 
@@ -166,19 +153,18 @@ const ctxSegment = (ctx: Ctx): Segment => {
   const dim: Run = { text: 'ctx ', tone: 'dim' }
   if (ctx.kind === 'tokens') return [dim, { text: sizeLabel(ctx.tokens), tone: 'plain' }]
   const percent = Math.round(ctx.percent)
-  return [dim, { text: `${percent}%`, tone: threshold(percent, 70, 85) }]
+  return [dim, alert(`${percent}%`, threshold(percent, 70, 85))]
 }
 
 const windowSegment = (w: Window, now: number, resetMark: string, detail: Detail): Segment => {
   const p = pace(w, now)
   const shown = p ? PACE[p.kind](p) : null
-  const tone = shown ? shown.tone : threshold(w.percent, 50, 80)
-  const cell = p ? paceCell(p) : (_: number, filled: boolean): Run => (filled ? { text: '━', tone } : EMPTY)
+  const percent = `${Math.round(w.percent)}%`
   return [
     { text: `${w.label} `, tone: 'dim' },
-    ...(detail.meter ? [...meter(w.percent, cell, p?.tick ?? null), { text: ' ', tone: 'dim' } as const] : []),
-    { text: `${Math.round(w.percent)}%`, tone: shown ? 'plain' : tone },
-    ...(detail.word && shown?.word ? [{ text: ' ', tone: 'dim' } as const, { text: ` ${shown.word} `, tone, badge: true } as const] : []),
+    ...(detail.meter ? [...meter(w.percent, p?.tick ?? null), { text: ' ', tone: 'dim' } as const] : []),
+    shown ? { text: percent, tone: 'plain' } : alert(percent, threshold(w.percent, 50, 80)),
+    ...(detail.word && shown?.word ? [{ text: ' ', tone: 'dim' } as const, alert(shown.word, shown.tone)] : []),
     ...(w.resetsAt === null ? [] : [{ text: ` ${resetMark}${countdown(w.resetsAt - now)}`, tone: 'dim' } as const]),
   ]
 }

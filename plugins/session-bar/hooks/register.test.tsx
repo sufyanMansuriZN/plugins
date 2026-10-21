@@ -111,9 +111,10 @@ test('a badge is black bold text on its Okabe-Ito color; the percent and the tic
   }
 })
 
-test('ahead cells are orange, far ahead vermillion, and a spend limit takes them as text colors', async ($, on) => {
+test('color is only a badge background: ahead, far ahead, the spend and the context percents; no text is in color', async ($, on) => {
   await engine($, on, PORCELAIN, {
     ...USAGE,
+    context: { tokens: 850_000, window: 1_000_000, percent: 85 },
     rateLimits: [
       { kind: 'five_hour', percentUsed: 70, resetsAt: new Date(NOW + 150 * MIN).toISOString() },
       { kind: 'seven_day', percentUsed: 80, resetsAt: new Date(NOW + 84 * 60 * MIN).toISOString() },
@@ -122,17 +123,19 @@ test('ahead cells are orange, far ahead vermillion, and a spend limit takes them
   })
   for (const surface of SURFACES) {
     const ui = await mountBand($, surface)
-    const props = async (text: string) => (await ui.find({ type: 'Text', text: new RegExp(`^${text}$`) }))?.props
     const colors = async (text: string) => {
-      const p = await props(text)
-      return [p?.color, p?.backgroundColor, p?.bold]
+      const p = (await ui.find({ type: 'Text', text: new RegExp(`^${text}$`) }))?.props
+      return [p?.backgroundColor, p?.color, p?.bold]
     }
-    expect(await colors('━╾'), `${surface} 5h ahead cells`).toEqual(['#E69F00', undefined, undefined])
-    expect(await colors(' ahead '), surface).toEqual(['#000000', '#E69F00', true])
-    expect(await colors('━━╾'), `${surface} 7d far ahead cells`).toEqual(['#D55E00', undefined, undefined])
-    expect(await colors(' far ahead '), surface).toEqual(['#000000', '#D55E00', true])
-    expect(await colors('━━━━'), `${surface} spend cells`).toEqual(['#E69F00', undefined, undefined])
-    expect(await colors('50%'), `${surface} spend percent`).toEqual(['#E69F00', undefined, undefined])
+    expect(await colors(' 85% '), `${surface} context`).toEqual(['#D55E00', '#000000', true])
+    expect(await colors(' ahead '), surface).toEqual(['#E69F00', '#000000', true])
+    expect(await colors(' far ahead '), surface).toEqual(['#D55E00', '#000000', true])
+    expect(await colors(' 50% '), `${surface} spend`).toEqual(['#E69F00', '#000000', true])
+    const texts = await ui.findAll({ type: 'Text' })
+    const inColor = texts.filter(t => t.props.color !== undefined && t.props.color !== '#000000').map(t => t.text)
+    expect(inColor, `${surface} text in color`).toEqual([])
+    const bare = texts.filter(t => t.props.color === '#000000' && !t.props.backgroundColor).map(t => t.text)
+    expect(bare, `${surface} black text without a badge`).toEqual([])
     await ui.unmount()
   }
 })

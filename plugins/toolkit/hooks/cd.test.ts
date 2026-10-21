@@ -87,7 +87,7 @@ test('an approved move runs /cd on the real path, then submits the task', async 
   expect(call.deny).toBeUndefined()
   expect(host.asked).toMatchObject([[{
     question: `Move this session to ${APP}?\nClaude's plan there: Run the tests.`,
-    options: [{ label: 'Move' }, { label: 'Stay' }],
+    options: [{ label: 'Stay' }, { label: 'Move' }],
   }]])
   await settle(clock)
   expect(host.commands).toEqual([{ command: 'cd', args: APP }])

@@ -48,8 +48,10 @@ export const register: Register = on => {
     const dir = target.realPath
     const plan = typeof task === 'string' && task !== '' ? task : 'Continue the task you were on.'
     // Every move waits for the person: permission rules and auto mode let a tool call through unasked.
+    // Stay is listed first so a dialog that answers itself while the person is away picks it; the engine
+    // refuses a plugin's direct AskUserQuestion call, so that case cannot be told apart here.
     const answer = await $.ui
-      .ask(`Move this session to ${dir}?\nClaude's plan there: ${plan}`, ['Move', 'Stay'])
+      .ask(`Move this session to ${dir}?\nClaude's plan there: ${plan}`, ['Stay', 'Move'])
       .catch(() => undefined)
     if (answer === undefined) return { deny: "The move needs the person's approval, and none was given." }
     if (answer === 'Stay') return { deny: 'The person chose to stay in the current directory.' }

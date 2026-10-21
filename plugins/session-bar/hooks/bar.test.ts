@@ -24,6 +24,7 @@ const input = (over: Partial<BarInput> = {}): BarInput => ({
   ctx: { kind: 'percent', percent: 6 },
   windows: [FIVE, SEVEN],
   now: NOW,
+  resetMark: '↻',
   ...over,
 })
 

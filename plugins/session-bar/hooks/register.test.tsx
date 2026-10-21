@@ -22,6 +22,9 @@ const USAGE: SessionUsage = {
 }
 const GAUGES = '5h ━━━━━╾─╂─ 66%  behind  ↻46m · 7d ━━━╾╂──── 43% ↻3d21h'
 const SURFACES = ['terminal', 'desktop'] as const
+// the terminal marks a countdown with the Nerd Font refresh icon, the desktop app with ↻
+const MARK = { terminal: ' ', desktop: '↻' } as const
+const marked = (surface: (typeof SURFACES)[number], row: string) => row.replaceAll('↻', MARK[surface])
 
 // the engine beneath the plugin: a session in repo `main`, two subagents, one of them yet to make a request
 const engine = async ($: Engine, on: On, porcelain = PORCELAIN, usage = USAGE) => {
@@ -64,7 +67,7 @@ const rowOn = async ($: Engine, surface: (typeof SURFACES)[number], agentId?: st
 test('main view: git, the main model with its window, context and the windows', async ($, on) => {
   await engine($, on)
   for (const surface of SURFACES) {
-    expect(await rowOn($, surface), surface).toBe(`main +3 ~2 · Opus 5.5 1M · ctx 6% · ${GAUGES}`)
+    expect(await rowOn($, surface), surface).toBe(marked(surface, `main +3 ~2 · Opus 5.5 1M · ctx 6% · ${GAUGES}`))
   }
 })
 
@@ -73,10 +76,10 @@ test('a subagent in view after a Haiku step: its type and model, its tokens, no 
   await step($, 'a1', 'claude-haiku-4-5-20251001')
   for (const surface of SURFACES) {
     const row = await rowOn($, surface, 'a1')
-    expect(row, surface).toBe(`main +3 ~2 · Explore · Haiku 4.5 · ctx 42K · ${GAUGES}`)
+    expect(row, surface).toBe(marked(surface, `main +3 ~2 · Explore · Haiku 4.5 · ctx 42K · ${GAUGES}`))
     expect(row, surface).not.toContain('Opus')
   }
-  expect(await rowOn($, 'terminal')).toBe(`main +3 ~2 · Opus 5.5 1M · ctx 6% · ${GAUGES}`)
+  expect(await rowOn($, 'terminal')).toBe(marked('terminal', `main +3 ~2 · Opus 5.5 1M · ctx 6% · ${GAUGES}`))
 })
 
 test('a subagent with no step yet: its type, no model and no context', async ($, on) => {
@@ -84,7 +87,7 @@ test('a subagent with no step yet: its type, no model and no context', async ($,
   await step($, 'a1', 'claude-haiku-4-5-20251001')
   await step($, undefined, 'claude-fable-5-1')
   for (const surface of SURFACES) {
-    expect(await rowOn($, surface, 'a2'), surface).toBe(`main +3 ~2 · Plan · ${GAUGES}`)
+    expect(await rowOn($, surface, 'a2'), surface).toBe(marked(surface, `main +3 ~2 · Plan · ${GAUGES}`))
   }
 })
 
@@ -136,12 +139,12 @@ test('ahead cells are orange, far ahead vermillion, and a spend limit takes them
 
 test('a narrow band cuts git, then drops the meters, then the words', async ($, on) => {
   await engine($, on, '# branch.oid 0123456789abcdef\n# branch.head feature/a-very-long-branch-name\n? new.txt\n')
-  const gauges = `Opus 5.5 1M · ctx 6% · ${GAUGES}`
-  const words = 'Opus 5.5 1M · ctx 6% · 5h 66%  behind  ↻46m · 7d 43% ↻3d21h'
   for (const surface of SURFACES) {
+    const gauges = marked(surface, `Opus 5.5 1M · ctx 6% · ${GAUGES}`)
+    const words = marked(surface, 'Opus 5.5 1M · ctx 6% · 5h 66%  behind  ↻46m · 7d 43% ↻3d21h')
     expect(await rowOn($, surface, undefined, [...gauges].length + 3 + 12), surface).toBe(`feature/a-v… · ${gauges}`)
     expect(await rowOn($, surface, undefined, [...words].length + 3 + 12), surface).toBe(`feature/a-v… · ${words}`)
-    expect(await rowOn($, surface, undefined, 20), surface).toBe('Opus 5.5 1M · ctx 6% · 5h 66% ↻46m · 7d 43% ↻3d21h')
+    expect(await rowOn($, surface, undefined, 20), surface).toBe(marked(surface, 'Opus 5.5 1M · ctx 6% · 5h 66% ↻46m · 7d 43% ↻3d21h'))
   }
 })
 
@@ -151,7 +154,7 @@ test('a band left open redraws its countdowns every 30 seconds', async ($, on) =
     plugin: 'session-bar', surface: 'terminal', component: 'AbovePrompt',
     props: { hasSurvey: false, isWorking: false, maxRows: 3, bodyColumns: 200, scroll: { offset: 0, bodyRows: 3 }, view: {} },
   })
-  const fiveHour = async () => (await ui.find({ type: 'Text', text: /^ ↻/ }))?.text
+  const fiveHour = async () => (await ui.find({ type: 'Text', text: /^  / }))?.text
   const before = await fiveHour()
   await clock.advance(29_000)
   const early = await fiveHour()
@@ -159,7 +162,7 @@ test('a band left open redraws its countdowns every 30 seconds', async ($, on) =
   const after = await fiveHour()
   await ui.unmount()
   // the last tick inside 149 s is at 120 s, so the band shows 46m less two minutes
-  expect([before, early, after]).toEqual([' ↻46m', ' ↻46m', ' ↻44m'])
+  expect([before, early, after]).toEqual(['  46m', '  46m', '  44m'])
 })
 
 test('a survey has the band to itself', async ($, on) => {

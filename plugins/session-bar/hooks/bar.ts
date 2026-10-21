@@ -5,7 +5,8 @@ import type { Git } from '../types'
 export type { Git }
 export type Ctx = { kind: 'percent'; percent: number } | { kind: 'tokens'; tokens: number }
 export type Window = { label: '5h' | '7d' | '$'; percent: number; resetsAt: number | null; length: number | null }
-export type BarInput = { git: Git | null; agent: string | null; model: string | null; ctx: Ctx | null; windows: Window[]; now: number }
+// resetMark: what stands before a reset countdown, chosen by the surface's fonts
+export type BarInput = { git: Git | null; agent: string | null; model: string | null; ctx: Ctx | null; windows: Window[]; now: number; resetMark: string }
 // badge: the tone fills the background behind the text instead of coloring it
 export type Run = { text: string; tone: 'plain' | 'dim' | 'yellow' | 'red' | 'blue'; badge?: true }
 export type Segment = Run[]
@@ -168,7 +169,7 @@ const ctxSegment = (ctx: Ctx): Segment => {
   return [dim, { text: `${percent}%`, tone: threshold(percent, 70, 85) }]
 }
 
-const windowSegment = (w: Window, now: number, detail: Detail): Segment => {
+const windowSegment = (w: Window, now: number, resetMark: string, detail: Detail): Segment => {
   const p = pace(w, now)
   const shown = p ? PACE[p.kind](p) : null
   const tone = shown ? shown.tone : threshold(w.percent, 50, 80)
@@ -178,7 +179,7 @@ const windowSegment = (w: Window, now: number, detail: Detail): Segment => {
     ...(detail.meter ? [...meter(w.percent, cell, p?.tick ?? null), { text: ' ', tone: 'dim' } as const] : []),
     { text: `${Math.round(w.percent)}%`, tone: shown ? 'plain' : tone },
     ...(detail.word && shown?.word ? [{ text: ' ', tone: 'dim' } as const, { text: ` ${shown.word} `, tone, badge: true } as const] : []),
-    ...(w.resetsAt === null ? [] : [{ text: ` ↻${countdown(w.resetsAt - now)}`, tone: 'dim' } as const]),
+    ...(w.resetsAt === null ? [] : [{ text: ` ${resetMark}${countdown(w.resetsAt - now)}`, tone: 'dim' } as const]),
   ]
 }
 
@@ -195,7 +196,7 @@ const gaugesAt = (input: BarInput, detail: Detail): Segment[] => {
   if (input.model) gauges.push([{ text: input.model, tone: 'plain' }])
   if (input.ctx) gauges.push(ctxSegment(input.ctx))
   for (const w of input.windows) {
-    if (w.resetsAt === null || w.resetsAt > input.now) gauges.push(windowSegment(w, input.now, detail))
+    if (w.resetsAt === null || w.resetsAt > input.now) gauges.push(windowSegment(w, input.now, input.resetMark, detail))
   }
   return gauges
 }

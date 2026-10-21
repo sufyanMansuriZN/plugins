@@ -18,6 +18,10 @@ const TONE: Record<Run['tone'], { dimColor?: boolean; color?: string }> = {
   blue: { color: '#56B4E9' },
 }
 
+// Nerd Font "refresh" (U+F021), centered in its cell where ↻ sits off center; Ghostty bundles the
+// Nerd Font symbols. The desktop app draws with its own fonts, so it keeps ↻.
+export const RESET_TERMINAL = ' '
+
 const props = (r: Run) =>
   r.badge && TONE[r.tone].color ? { backgroundColor: TONE[r.tone].color, color: '#000000', bold: true } : TONE[r.tone]
 
@@ -104,7 +108,8 @@ export const register: Register = on => {
     const [g, now, usage] = await Promise.all([read($, git), $.clock.now(), $.session.usage(), read($, tick)])
     const agentId = e.props.view?.agentId
     const shown = agentId ? await agentView($, agentId) : await mainView($, usage)
-    const row = segments({ git: g, ...shown, windows: parseWindows(usage.rateLimits), now }, e.props.bodyColumns)
+    const resetMark = e.surface === 'terminal' ? RESET_TERMINAL : '↻'
+    const row = segments({ git: g, ...shown, windows: parseWindows(usage.rateLimits), now, resetMark }, e.props.bodyColumns)
     const runs = row.flatMap((seg, i): Run[] => (i ? [{ text: SEP, tone: 'dim' }, ...seg] : seg))
     const { Box, Text } = $.ui.resolve(e)
     const below = await next(e)

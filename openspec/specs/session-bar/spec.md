@@ -6,8 +6,8 @@ session-bar is a mod that draws one row in the band above the prompt, for the tr
 
 ## Requirements
 
-### Requirement: One status line under the prompt
-The plugin SHALL draw one row in the `AbovePrompt` band through a hooks module, on the terminal and desktop surfaces, with segments in the order git, agent, model, context, 5h, 7d, spend limit, joined by a dim ` · `. A segment with no value SHALL be left out. Calm values SHALL use the surface's own color and labels SHALL be dim. While a survey holds the band (`hasSurvey`), the plugin SHALL draw nothing and leave the band to the engine. The plugin SHALL NOT draw through Claude Code's `statusLine` setting.
+### Requirement: One row above the prompt
+The plugin SHALL draw one row in the `AbovePrompt` band through a hooks module, on the terminal and desktop surfaces, with segments in the order git, agent, model, context, 5h, 7d, spend limit, joined by a dim ` · `. A segment with no value SHALL be left out. Calm values SHALL use the surface's own color and labels SHALL be dim. The plugin SHALL NOT draw through Claude Code's `statusLine` setting.
 
 #### Scenario: Every segment has a value
 - **WHEN** the main conversation is in view, the repo is on `main` with 3 new and 2 changed files, the model is `claude-opus-5-5` with a 1,000,000-token window, the context is 6% full, 5h is at 66% resetting in 46m and 7d at 43% resetting in 3d21h
@@ -17,12 +17,15 @@ The plugin SHALL draw one row in the `AbovePrompt` band through a hooks module, 
 - **WHEN** the session is outside a git repo, the context has no percent yet and there are no rate limits
 - **THEN** the row reads `Opus 5.5 1M`
 
+### Requirement: A survey keeps the band
+While a survey holds the band (`hasSurvey`), the plugin SHALL draw nothing and leave the band to the engine.
+
 #### Scenario: A survey shows
 - **WHEN** `hasSurvey` is true
 - **THEN** the band shows what the engine draws and no session-bar row
 
 ### Requirement: Git segment
-The git segment SHALL be the branch, then `+N` for untracked and added files and `~M` for modified, deleted and renamed files, each count left out at zero. A detached HEAD SHALL show the short commit sha, or `HEAD` when there is none. Outside a git repo the segment SHALL be left out. The plugin SHALL read it with `$.process.run` of `git --no-optional-locks status --porcelain=v2 --branch` in the session's directory, giving up after 2 seconds, at session start, at each turn's end and every 30 seconds.
+The git segment SHALL be the branch, then `+N` for untracked and added files and `~M` for modified, deleted and renamed files, each count left out at zero. A detached HEAD SHALL show the short commit sha, or `HEAD` when there is none. Outside a git repo the segment SHALL be left out.
 
 #### Scenario: Clean tree
 - **WHEN** the tree has no changes on branch `main`
@@ -35,6 +38,13 @@ The git segment SHALL be the branch, then `+N` for untracked and added files and
 #### Scenario: Not a repo
 - **WHEN** `git status` exits with an error or cannot run
 - **THEN** the row has no git segment
+
+### Requirement: Git reading
+The plugin SHALL read the git segment with `$.process.run` of `git --no-optional-locks status --porcelain=v2 --branch` in the session's directory, giving up after 2 seconds, at session start, at each turn's end and every 30 seconds.
+
+#### Scenario: A slow repo
+- **WHEN** `git status` takes longer than 2 seconds
+- **THEN** the row has no git segment and the band still draws
 
 ### Requirement: Model segment
 The model segment SHALL be a label made from the model id: `claude-<name>-<major>-<minor>`, with an optional `-<8-digit date>` and `[1m]`, SHALL read `<Name> <major>.<minor>`. In the main view, `$.session.model()` gives the id and the context window from `$.session.usage()` SHALL follow it as ` 1M` (a whole number of millions) or ` <n>K`. An id ending in `[1m]` SHALL read ` 1M` when no window is known. An id of any other shape SHALL show as given.

@@ -1,0 +1,45 @@
+# Design
+
+## Context
+
+`hooks/bar.ts` is a pure core. `segments(input, columns)` returned one `Segment[]`: git, agent, model, ctx, then the windows. It took the first rung of the `DETAILS` ladder (meters and words, words only, bare) whose gauges fit beside up to 12 cells of git, then cut git into the room left. `hooks/register.tsx` joined the segments with dim ` · ` runs in one row `Box`. The archived change `2026-10-16-session-bar-tui-two-zones` had a two-zone row with the same render layout. A later rebuild dropped it.
+
+## Goals / Non-Goals
+
+**Goals:**
+- Name the repo, so two sessions on the same branch in two repos look different.
+- Keep what names the session apart from what counts usage, with the meters at a fixed place on the right edge.
+- Keep `segments` pure and the shedding order in tables, not in a chain of conditions.
+
+**Non-Goals:**
+- No change to what a gauge shows, to the badges or to their colors.
+- No owner or remote in the repo name. The folder name of the repo root is enough.
+- No padding computed from `bodyColumns` in the render.
+
+## Decisions
+
+**`where` is plugin state, read with git.** A new atom `where: string | null` holds the name. `refreshRepo` (renamed from `refreshGit`, since it now reads both) runs at session start, at each turn's end and every 30 seconds. It reads `$.session.repo()`. When that is non-null, the name is the last part of `repo.root`, which is the main working tree for a worktree. When it is null, the name is the last part of `$.session.cwd()`. The atom is written only when the name changes, as git is. When either call fails, the atom keeps its last value, which starts as null.
+- *Why not `$.session.root()`.* Its typings say a worktree move takes it to the worktree, so in a worktree it names the worktree folder, not the repo.
+- *Why keep the last value on an error.* A repo's name does not change in a session. Clearing it on one failed read would make the left zone jump.
+
+**`segments` returns `{ left, right }`.** `BarInput` gains `where`. The left zone is a list of names, each `{ key, text, tone }`, in the order where, branch, agent (dim), model. The right zone is ctx and the windows, made as before. The render draws each zone's segments joined by dim ` · ` runs.
+
+**One `GAP` for the fit and the render.** `GAP = SEP.length` (3). The fit counts `GAP` before a non-empty right zone. The render draws the right zone in a `Box` with `marginLeft={GAP}`, and only when it has segments. The left zone is in a `Box` with `flexGrow={1}`, so it takes the free room and the right zone sits at the band's right edge. Both use the same constant, so a row that the fit accepts at exactly `bodyColumns` does not wrap.
+- *Alternative: a run of spaces of `columns - width(left) - width(right)`.* Rejected, as in the archived change: it needs a known width in the pure core, and a resize between render and paint makes the row too long.
+
+**The fit is two tables.** `KEEPS` says how many cells a name keeps while the right zone still has meters or words to give up: the branch keeps 12, the others keep all. `SHEDS` lists the names that give up cells after the last rung, first one first: branch, then where.
+1. The right zone takes the first `DETAILS` rung whose width, plus `GAP`, fits beside the left zone at its `KEEPS` widths.
+2. The left zone gets the room that is left. For each name in `SHEDS`, while the left zone is too wide, that name is cut to fit and ends with `…`. A name with fewer than 2 cells of room is left out, with its ` · `.
+- The agent and the model are not in `SHEDS`, so they are never cut, like the gauges.
+- *Alternative: per-name `if` branches.* Rejected: a new name or a new step in the order is one table entry here.
+
+## Risks / Trade-offs
+
+- [The repo name takes about 10 more cells on the left] -> On a narrow band, the meters go sooner than before. The order still keeps the meters over a long branch name.
+- [A band narrower than the agent, the model and the bare gauges] -> The row is wider than the band and wraps, as before. Nothing more can be shed.
+- [`flexGrow` and `marginLeft` on the desktop surface] -> The test kit accepts the tree on both surfaces. How the desktop app paints it is still to check live.
+- [A worktree outside the repo's folder tree] -> `repo.root` still names the main working tree, so the name is right.
+
+## Migration Plan
+
+No release yet: version 3.1.0 is still unreleased and ships with `session-bar-pace-meter`. The new `where` state starts as null and fills on the first refresh. Rollback is the previous release.

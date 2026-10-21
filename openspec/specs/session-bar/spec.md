@@ -55,7 +55,7 @@ The git segment SHALL be the branch, then `+N` for untracked and added files and
 - **THEN** the row has no git segment
 
 ### Requirement: Git reading
-The plugin SHALL read the git segment with `$.process.run` of `git --no-optional-locks status --porcelain=v2 --branch` in the session's directory, giving up after 2 seconds, at session start, at each turn's end and every 30 seconds.
+The plugin SHALL read the git segment with `$.process.run` of `git --no-optional-locks status --porcelain=v2 --branch` in `$.session.root()`, giving up after 2 seconds, at session start, at each turn's end, on `classic.CwdChanged` and every 30 seconds. A `cd` in a Bash call SHALL NOT change what the bar reads.
 
 #### Scenario: A slow repo
 - **WHEN** `git status` takes longer than 2 seconds
@@ -278,7 +278,7 @@ A window with a pace SHALL insert a tick in the default color at cell boundary r
 - **THEN** the segment reads `5h ━━━━━━━╾┨ 91%  behind  10m`
 
 ### Requirement: Repo segment
-The repo segment SHALL be the last part of the path of `$.session.repo()`'s `root`, which for a git worktree is the main working tree. When `$.session.repo()` returns null, it SHALL be the last part of the path of `$.session.cwd()`. The plugin SHALL read it at session start, at each turn's end and every 30 seconds, and SHALL write it to state only when it changes. When a read fails, the segment SHALL keep its last value, and SHALL be left out while it has none.
+The repo segment SHALL be the last part of the path of the first tree `git worktree list --porcelain` names in `$.session.root()`, which for a git worktree is the main working tree. Outside a repo, it SHALL be the last part of `$.session.root()`. The plugin SHALL read it when it reads git, and SHALL write it to state only when it changes. When a read fails, the segment SHALL keep its last value, and SHALL be left out while it has none.
 
 #### Scenario: A worktree
 - **WHEN** the session runs in `/home/me/plugins/.claude/worktrees/feat-x`, a worktree of the repo at `/home/me/plugins`
@@ -289,8 +289,16 @@ The repo segment SHALL be the last part of the path of `$.session.repo()`'s `roo
 - **THEN** the repo segment reads `scratch`
 
 #### Scenario: A failed read
-- **WHEN** `$.session.repo()` fails before the name was ever read
+- **WHEN** `git worktree list` fails before the name was ever read
 - **THEN** the row has no repo segment
+
+#### Scenario: The shell moved
+- **WHEN** the session's root is `/home/me/plugins` and a Bash call ran `cd /tmp/scratch`
+- **THEN** the repo segment reads `plugins`
+
+#### Scenario: A `/cd`
+- **WHEN** `/cd /tmp` moves the session's root
+- **THEN** the repo segment reads `tmp` without waiting for a turn's end
 
 ### Requirement: Repo and branch colors
 On the terminal surface, the parentheses and the branch name SHALL be drawn in the oh-my-zsh robbyrussell colors, as the terminal's named ANSI colors. The repo name and the counts SHALL be in the default color, since robbyrussell's cyan and yellow measure about 2:1 on the light theme. On the desktop surface all of them SHALL be in the default color, with dim parentheses. No other text SHALL have a color of its own.

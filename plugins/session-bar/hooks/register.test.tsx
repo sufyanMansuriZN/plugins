@@ -1,4 +1,4 @@
-import type { On, SessionRepo, SessionUsage } from 'claude-code'
+import type { On, SessionUsage } from 'claude-code'
 import { type Engine, expect, mock, test } from 'claude-code/testing'
 
 const NOW = 1_792_162_404_000
@@ -29,26 +29,35 @@ const SURFACES = ['terminal', 'desktop'] as const
 type Surface = (typeof SURFACES)[number]
 const cells = (s: string) => [...s].length
 // a worktree of the repo: the repo's root is the main working tree, not the session's directory
-const REPO: SessionRepo = { root: '/home/me/plugins', remote: 'git@github.com:me/plugins.git', internal: false, name: null }
-const CWD = '/home/me/plugins/.claude/worktrees/feat-x'
+const ROOT = '/home/me/plugins/.claude/worktrees/feat-x'
+const WORKTREES = 'worktree /home/me/plugins\nHEAD 0123\nbranch refs/heads/main\n\nworktree /home/me/plugins/.claude/worktrees/feat-x\nHEAD 0123\nbranch refs/heads/feat-x\n'
+// a Bash call's `cd` took the shell out of the repo
+const SHELL = '/tmp/scratch'
 
-type Setup = { porcelain?: string; usage?: SessionUsage; repo?: SessionRepo | null | Error }
+// worktrees: `git worktree list` in the session's root; null outside a repo
+type Setup = { porcelain?: string; usage?: SessionUsage; worktrees?: string | null | Error; place?: { root: string } }
+
+const ran = (exitCode: number, stdout: string) => ({ value: { exitCode, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
 
 // the engine beneath the plugin: a session in a worktree of repo `plugins` on `main`, two subagents,
 // one of them yet to make a request
-const engine = async ($: Engine, on: On, { porcelain = PORCELAIN, usage = USAGE, repo = REPO }: Setup = {}) => {
+const engine = async ($: Engine, on: On, { porcelain = PORCELAIN, usage = USAGE, worktrees = WORKTREES, place = { root: ROOT } }: Setup = {}) => {
   const clock = mock.clock(on, { now: NOW })
   on('ui.render', () => h('Box', {}) as never)
   on('session.start', (_, e) => ({ cwd: e.cwd }))
-  on('session.repo', () => {
-    if (repo instanceof Error) throw repo
-    return { value: repo }
-  })
-  on('session.cwd', () => ({ value: CWD }))
+  on('session.root', () => ({ value: place.root }))
+  on('classic.CwdChanged', () => ({}))
+  on('session.cwd', () => ({ value: SHELL }))
+  on('session.repo', () => ({ value: null }))
   on('session.model', () => ({ value: 'claude-opus-5-5' }))
   on('session.usage', () => ({ value: usage }))
   on('session.measure', (_, e) => ({ changed: e.changed }))
-  on('process.run', () => ({ value: { exitCode: 0, stdout: porcelain, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
+  on('process.run', (_, e) => {
+    if (e.init?.cwd !== ROOT || worktrees === null) return ran(128, '')
+    if (!e.argv.includes('worktree')) return ran(0, porcelain)
+    if (worktrees instanceof Error) throw worktrees
+    return ran(0, worktrees)
+  })
   on('agent.list', () => ({ value: [
     { id: 'a1', type: 'Explore', description: 'look', status: 'running' },
     { id: 'a2', type: 'Plan', description: 'plan', status: 'running' },
@@ -59,7 +68,7 @@ const engine = async ($: Engine, on: On, { porcelain = PORCELAIN, usage = USAGE,
       usage: { model: e.model, input_tokens: 2_000, cache_read_input_tokens: 30_000, cache_creation_input_tokens: 10_000, output_tokens: 10 },
     }
   })
-  await $.session.start({ source: 'startup', cwd: CWD, surface: 'terminal', isInteractive: true } as never)
+  await $.session.start({ source: 'startup', cwd: ROOT, surface: 'terminal', isInteractive: true } as never)
   await clock.settle()
   return clock
 }
@@ -81,7 +90,7 @@ const zonesOn = async ($: Engine, surface: Surface, agentId?: string, bodyColumn
   return { left: left?.text, right: right?.text, gap: right?.props.marginLeft }
 }
 
-test('main view: repo, git and the main model on the left; context and the windows on the right', async ($, on) => {
+test("main view, the shell elsewhere: the session root's repo, git and the main model on the left; context and the windows on the right", async ($, on) => {
   await engine($, on)
   for (const surface of SURFACES) {
     const { left, right } = await zonesOn($, surface)
@@ -117,15 +126,24 @@ for (const [tokens, window, shown, badge] of [
   })
 }
 
-test('outside a git repo, the left zone starts with the directory name', async ($, on) => {
-  await engine($, on, { porcelain: '', repo: null })
+test("outside a git repo, the left zone starts with the session root's directory name", async ($, on) => {
+  await engine($, on, { worktrees: null })
   for (const surface of SURFACES) {
     expect((await zonesOn($, surface)).left, surface).toBe('feat-x · Opus 5.5 1M')
   }
 })
 
+test('a `/cd` out of the repo names the new root at once', async ($, on) => {
+  const place = { root: ROOT }
+  const clock = await engine($, on, { place })
+  place.root = '/tmp'
+  await $.classic.CwdChanged({ old_cwd: ROOT, new_cwd: '/tmp' })
+  await clock.settle()
+  expect((await zonesOn($, 'terminal')).left).toBe('tmp · Opus 5.5 1M')
+})
+
 test('a repo that cannot be read leaves the name out', async ($, on) => {
-  await engine($, on, { repo: new Error('no repo') })
+  await engine($, on, { worktrees: new Error('git timed out') })
   expect((await zonesOn($, 'terminal')).left).toBe('main +3 ~2 · Opus 5.5 1M')
 })
 

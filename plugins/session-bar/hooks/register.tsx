@@ -32,17 +32,21 @@ const props = (r: Run, inks: boolean) =>
   : inks && r.ink ? INK[r.ink]
   : r.tone === 'dim' ? { dimColor: true } : {}
 
+// the session's root, not its cwd or repo(): both follow a Bash call's `cd`, the root does not
 const refreshRepo = async ($: EngineInterface) => {
+  const root = await $.session.root()
+  const inRoot = (...args: string[]) => $.process.run(['git', '--no-optional-locks', ...args], { cwd: root, timeoutMs: 2000 })
   let next: Git | null = null
   try {
-    const r = await $.process.run(['git', '--no-optional-locks', 'status', '--porcelain=v2', '--branch'], { timeoutMs: 2000 })
+    const r = await inRoot('status', '--porcelain=v2', '--branch')
     if (r.exitCode === 0) next = parseGit(r.stdout)
   } catch {} // git missing or too slow: no git segment
   if (JSON.stringify(await read($, git)) !== JSON.stringify(next)) await update($, git, () => next)
   try {
-    // a worktree's repo root is its main working tree, so a worktree shows the repo's own name
-    const repo = await $.session.repo()
-    const name = folderName(repo ? repo.root : await $.session.cwd())
+    // the list starts with the main working tree, so a worktree shows the repo's own name
+    const r = await inRoot('worktree', 'list', '--porcelain')
+    const main = r.exitCode === 0 ? /^worktree (.+)$/m.exec(r.stdout)?.[1] : undefined
+    const name = folderName(main ?? root)
     if ((await read($, where)) !== name) await update($, where, () => name)
   } catch {} // the name stays as it was
 }
@@ -97,6 +101,12 @@ export const register: Register = on => {
     startTicking($)
     void refreshRepo($)
     return done
+  })
+
+  // `/cd` moves the root; without this the bar names the old one until the next tick or turn
+  on('classic.CwdChanged', async ($, e, next) => {
+    void refreshRepo($)
+    return next(e)
   })
 
   // a render reading $.session.usage() is not subscribed to it; the tick redraws the band with the new figures

@@ -28,7 +28,7 @@ There is no setup step. The row shows in the next session.
 
 Each part is left out when it has no value. The left zone has the repo, git, agent and model. The right zone has ctx and the usage windows.
 
-- **repo**: the name of the repo's folder. In a git worktree, it is the name of the main repo, not of the worktree folder. Outside a git repo, it is the name of the session's directory. It is read when git is read.
+- **repo**: the name of the repo's folder. In a git worktree, it is the name of the main repo, not of the worktree folder. Outside a git repo, it is the name of the session's directory. The session's directory is where the session started, or where `/cd` moved it. A `cd` that the agent runs in its shell does not change it. It is read when git is read, and again right after a `/cd`.
 - **git**: the branch (a 7-character sha when detached), `+N` new files (untracked or added), `~M` changed files (modified, deleted or renamed). It is in parentheses right after the repo name: `plugins (main +3 ~2)`. Without a repo name, it shows with no parentheses. Left out outside a git repo. It is read at the session's start, at the end of each turn and every 30 seconds.
 - **agent**: only while a subagent's transcript is open. Its type, such as `Explore`, in dim text.
 - **model**: the model's name, such as `Opus 5.5`. In the main conversation, the context window size follows it (`1M`, `200K`). For a subagent, it is the model that subagent's requests use. It shows from the subagent's first request.

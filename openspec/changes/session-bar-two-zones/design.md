@@ -12,7 +12,7 @@
 - Keep `segments` pure and the shedding order in tables, not in a chain of conditions.
 
 **Non-Goals:**
-- No change to what a gauge shows, to the badges or to their colors.
+- No change to what a gauge shows, to the badges or to their colors. The gauges get no ink.
 - No owner or remote in the repo name. The folder name of the repo root is enough.
 - No padding computed from `bodyColumns` in the render.
 
@@ -26,6 +26,10 @@
 
 **The branch sits in parentheses beside the repo name.** After the fit, `joinBranch` puts where and branch in one segment, `plugins (main +3 ~2)`, with ` (` and `)` as dim runs. The two runs take 3 cells, the same as the ` · ` they replace, so the fit counts names and separators as before and needs no change. A cut branch stays inside the parentheses (`plugins (f…)`). A branch that is left out takes them with it. A branch without a where shows bare.
 - *Why after the fit.* The cut and shed work on plain names. Joining before them would make the branch's cut reach into the parentheses.
+
+**The repo and branch carry an ink, in robbyrussell's colors.** A `Run` may name an `Ink`: `where`, `paren`, `branch` or `changes`. The git name is split after the fit, so its first cells (the branch's length, or less after a cut) are `branch` and the rest `changes`. The render maps each ink on the terminal to a named ANSI color: cyan, bold blue, red, yellow. The terminal's theme sets those colors for light and dark, so the rule that fixed colors live only on badges still holds. On the desktop, the render draws no ink and uses the run's tone: plain names and dim parentheses.
+- *Why an ink and not a color in the core.* The core says what a run is. Each surface decides what that looks like, so the desktop can refuse the colors without a second code path in `segments`.
+- *Why no ink on the desktop.* The desktop has no theme palette behind a name such as `cyan`, so it would draw a fixed color, and cyan on a light background is close to unreadable. This is from the typings ("what a surface draws for one it does not know is its own"), not from a live check.
 
 **One `GAP` for the fit and the render.** `GAP = SEP.length` (3). The fit counts `GAP` before a non-empty right zone. The render draws the right zone in a `Box` with `marginLeft={GAP}`, and only when it has segments. The left zone is in a `Box` with `flexGrow={1}`, so it takes the free room and the right zone sits at the band's right edge. Both use the same constant, so a row that the fit accepts at exactly `bodyColumns` does not wrap.
 - *Alternative: a run of spaces of `columns - width(left) - width(right)`.* Rejected, as in the archived change: it needs a known width in the pure core, and a resize between render and paint makes the row too long.

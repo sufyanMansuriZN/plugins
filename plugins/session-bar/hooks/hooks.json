@@ -1,16 +1,1 @@
-{
-  "hooks": {
-    "SessionStart": [
-      {
-        "matcher": "startup",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/setup.py\" --hint 2>/dev/null || true",
-            "timeout": 5
-          }
-        ]
-      }
-    ]
-  }
-}
+{ "modules": ["./register.tsx"] }

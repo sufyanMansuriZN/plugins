@@ -20,16 +20,16 @@ const USAGE: SessionUsage = {
     { kind: 'seven_day', percentUsed: 43, resetsAt: new Date(NOW + (3 * 24 + 21) * 60 * MIN).toISOString() },
   ],
 }
-const GAUGES = '5h ━━━━━──╂─ 66% ↻46m · 7d ━━━─╂──── 43% ↻3d21h'
+const GAUGES = '5h ━━━━━╾─╂─ 66%  behind  ↻46m · 7d ━━━╾╂──── 43% ↻3d21h'
 const SURFACES = ['terminal', 'desktop'] as const
 
 // the engine beneath the plugin: a session in repo `main`, two subagents, one of them yet to make a request
-const engine = async ($: Engine, on: On, porcelain = PORCELAIN) => {
+const engine = async ($: Engine, on: On, porcelain = PORCELAIN, usage = USAGE) => {
   const clock = mock.clock(on, { now: NOW })
   on('ui.render', () => h('Box', {}) as never)
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('session.model', () => ({ value: 'claude-opus-5-5' }))
-  on('session.usage', () => ({ value: USAGE }))
+  on('session.usage', () => ({ value: usage }))
   on('session.measure', (_, e) => ({ changed: e.changed }))
   on('process.run', () => ({ value: { exitCode: 0, stdout: porcelain, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
   on('agent.list', () => ({ value: [
@@ -88,26 +88,59 @@ test('a subagent with no step yet: its type, no model and no context', async ($,
   }
 })
 
-test('the band draws pace in theme colors: behind blue, on pace green, the tick plain', async ($, on) => {
+const mountBand = ($: Engine, surface: (typeof SURFACES)[number]) => $.ui.mount({
+  plugin: 'session-bar', surface, component: 'AbovePrompt',
+  props: { hasSurvey: false, isWorking: false, maxRows: 3, bodyColumns: 200, scroll: { offset: 0, bodyRows: 3 }, view: {} },
+})
+
+test('a badge is black bold text on its Okabe-Ito color; the percent and the tick stay plain', async ($, on) => {
   await engine($, on)
   for (const surface of SURFACES) {
-    const ui = await $.ui.mount({
-      plugin: 'session-bar', surface, component: 'AbovePrompt',
-      props: { hasSurvey: false, isWorking: false, maxRows: 3, bodyColumns: 200, scroll: { offset: 0, bodyRows: 3 }, view: {} },
-    })
+    const ui = await mountBand($, surface)
     const props = async (text: string) => (await ui.find({ type: 'Text', text }))?.props
-    expect([(await props('66%'))?.color, (await props('──'))?.color, (await props('43%'))?.color], surface).toEqual(['suggestion', 'suggestion', 'success'])
-    const tick = await props('╂')
-    expect([tick?.color, tick?.dimColor], surface).toEqual([undefined, undefined])
+    const behind = await props(' behind ')
+    expect([behind?.backgroundColor, behind?.color, behind?.bold], surface).toEqual(['#56B4E9', '#000000', true])
+    for (const plain of ['66%', '43%', '╂']) {
+      const p = await props(plain)
+      expect([p?.color, p?.backgroundColor, p?.dimColor], `${surface} ${plain}`).toEqual([undefined, undefined, undefined])
+    }
     await ui.unmount()
   }
 })
 
-test('a narrow band cuts git, then drops the meters', async ($, on) => {
+test('ahead cells are orange, far ahead vermillion, and a spend limit takes them as text colors', async ($, on) => {
+  await engine($, on, PORCELAIN, {
+    ...USAGE,
+    rateLimits: [
+      { kind: 'five_hour', percentUsed: 70, resetsAt: new Date(NOW + 150 * MIN).toISOString() },
+      { kind: 'seven_day', percentUsed: 80, resetsAt: new Date(NOW + 84 * 60 * MIN).toISOString() },
+      { kind: 'spend_limit', percentUsed: 50 },
+    ],
+  })
+  for (const surface of SURFACES) {
+    const ui = await mountBand($, surface)
+    const props = async (text: string) => (await ui.find({ type: 'Text', text: new RegExp(`^${text}$`) }))?.props
+    const colors = async (text: string) => {
+      const p = await props(text)
+      return [p?.color, p?.backgroundColor, p?.bold]
+    }
+    expect(await colors('━╾'), `${surface} 5h ahead cells`).toEqual(['#E69F00', undefined, undefined])
+    expect(await colors(' ahead '), surface).toEqual(['#000000', '#E69F00', true])
+    expect(await colors('━━╾'), `${surface} 7d far ahead cells`).toEqual(['#D55E00', undefined, undefined])
+    expect(await colors(' far ahead '), surface).toEqual(['#000000', '#D55E00', true])
+    expect(await colors('━━━━'), `${surface} spend cells`).toEqual(['#E69F00', undefined, undefined])
+    expect(await colors('50%'), `${surface} spend percent`).toEqual(['#E69F00', undefined, undefined])
+    await ui.unmount()
+  }
+})
+
+test('a narrow band cuts git, then drops the meters, then the words', async ($, on) => {
   await engine($, on, '# branch.oid 0123456789abcdef\n# branch.head feature/a-very-long-branch-name\n? new.txt\n')
   const gauges = `Opus 5.5 1M · ctx 6% · ${GAUGES}`
+  const words = 'Opus 5.5 1M · ctx 6% · 5h 66%  behind  ↻46m · 7d 43% ↻3d21h'
   for (const surface of SURFACES) {
     expect(await rowOn($, surface, undefined, [...gauges].length + 3 + 12), surface).toBe(`feature/a-v… · ${gauges}`)
+    expect(await rowOn($, surface, undefined, [...words].length + 3 + 12), surface).toBe(`feature/a-v… · ${words}`)
     expect(await rowOn($, surface, undefined, 20), surface).toBe('Opus 5.5 1M · ctx 6% · 5h 66% ↻46m · 7d 43% ↻3d21h')
   }
 })

@@ -7,12 +7,13 @@ const MIN = 60_000
 const HOUR = 60 * MIN
 const FIVE: Window = { label: '5h', percent: 66, resetsAt: NOW + 46 * MIN, length: 5 * HOUR }
 const SEVEN: Window = { label: '7d', percent: 43, resetsAt: NOW + (3 * 24 + 21) * HOUR, length: 168 * HOUR }
-// 5h: an even pace is at 84.7% with 46m left, so 66% is behind and the tick sits after cell 7;
-// 7d: 44.6% with 3d21h left, so 43% is on pace and the tick sits after cell 4
-const FIVE_ROW = '5h ━━━━━──╂─ 66% ↻46m'
-const SEVEN_ROW = '7d ━━━─╂──── 43% ↻3d21h'
+// 5h: an even pace is at 84.7% with 46m left, so 66% (10.56 half cells, 11) is behind and the tick sits after cell 7;
+// 7d: 44.6% with 3d21h left, so 43% (6.88 half cells, 7) is on pace and the tick sits after cell 4
+const FIVE_ROW = '5h ━━━━━╾─╂─ 66%  behind  ↻46m'
+const SEVEN_ROW = '7d ━━━╾╂──── 43% ↻3d21h'
 const TICKS = '┃┠┣┨╂╊┫╉╋'
 const GAUGES = `Opus 5.5 1M · ctx 6% · ${FIVE_ROW} · ${SEVEN_ROW}`
+const WORDS = 'Opus 5.5 1M · ctx 6% · 5h 66%  behind  ↻46m · 7d 43% ↻3d21h'
 const BARE = 'Opus 5.5 1M · ctx 6% · 5h 66% ↻46m · 7d 43% ↻3d21h'
 const cells = (s: string) => [...s].length
 
@@ -28,15 +29,17 @@ const input = (over: Partial<BarInput> = {}): BarInput => ({
 
 const row = (over: Partial<BarInput> = {}, columns = 500) => text(segments(input(over), columns))
 const text = (segs: Segment[]) => segs.map(s => s.map(r => r.text).join('')).join(SEP)
-const tone = (over: Partial<BarInput>, shown: string) =>
-  segments(input(over), 500).flat().find(r => r.text.trim() === shown)?.tone
+const runs = (over: Partial<BarInput>) => segments(input({ git: null, ...over }), 500).flat()
+const tone = (over: Partial<BarInput>, shown: string) => runs(over).find(r => r.text.trim() === shown)?.tone
 const meter = (over: Partial<BarInput>) =>
-  segments(input({ git: null, ...over }), 500).flat().filter(r => new RegExp(`^[━─${TICKS}]+$`).test(r.text)).map(r => [r.text, r.tone])
+  runs(over).filter(r => new RegExp(`^[━╾─${TICKS}]+$`).test(r.text)).map(r => [r.text, r.tone])
+const badges = (over: Partial<BarInput>) => runs(over).filter(r => r.badge).map(r => [r.text, r.tone])
 
 const five = (percent: number, resetsAt: number | null): Partial<BarInput> =>
   ({ windows: [{ ...FIVE, percent, resetsAt }] })
 // half of 5h gone: an even pace stands at 50%, so the tick sits after cell 4
 const half = (percent: number) => five(percent, NOW + 2.5 * HOUR)
+const spend = (percent: number): Partial<BarInput> => ({ windows: [{ label: '$', percent, resetsAt: null, length: null }] })
 const alone = (over: Partial<BarInput>) => row({ git: null, model: null, ctx: null, ...over })
 
 describe('segments', () => {
@@ -44,9 +47,11 @@ describe('segments', () => {
     expect(row()).toBe(`main +3 ~2 · ${GAUGES}`)
   })
 
-  test('a calm row has no alert color', () => {
-    const tones = segments(input(), 500).flat().map(r => r.tone)
-    expect(tones.some(t => t === 'yellow' || t === 'red')).toBe(false)
+  test('on pace: no word, and no cell or percent in color', () => {
+    const over = { windows: [SEVEN] }
+    expect(alone(over)).toBe(SEVEN_ROW)
+    expect(badges(over)).toEqual([])
+    expect(runs(over).some(r => r.tone !== 'plain' && r.tone !== 'dim')).toBe(false)
   })
 
   test('only the model is known', () => {
@@ -61,58 +66,77 @@ describe('segments', () => {
     expect(row({ git: null, windows: [SEVEN] })).toBe(`Opus 5.5 1M · ctx 6% · ${SEVEN_ROW}`)
   })
 
-  test('a spend limit has 8 cells in its share color and no tick', () => {
-    const spend = (percent: number): Partial<BarInput> => ({ windows: [{ label: '$', percent, resetsAt: null, length: null }] })
+  test('a cell fills in halves: a thick left half is half a cell', () => {
+    expect(alone(spend(6))).toBe('$ ╾─────── 6%')
+    expect(alone(spend(19))).toBe('$ ━╾────── 19%')
+    expect(alone(spend(3))).toBe('$ ──────── 3%')
+    expect(alone(spend(100))).toBe('$ ━━━━━━━━ 100%')
+  })
+
+  test('a spend limit has no tick and no word; its cells and percent turn yellow at 50 and red at 80', () => {
     expect(row({ git: null, ...spend(40.4) })).toBe('Opus 5.5 1M · ctx 6% · $ ━━━───── 40%')
     expect(meter(spend(40.4))).toEqual([['━━━', 'plain'], ['─────', 'dim']])
-    expect(meter(spend(80))).toEqual([['━━━━━━', 'red'], ['──', 'dim']])
-  })
-
-  test('the tick marks an even pace; overspend past it is yellow, allowance before it blue', () => {
-    expect(alone(half(70))).toBe('5h ━━━━╋━━── 70% ↻2h30m')
-    expect(meter(half(70)), 'ahead').toEqual([['━━━━╋', 'plain'], ['━━', 'yellow'], ['──', 'dim']])
-    expect(tone(half(70), '70%')).toBe('yellow')
-    expect(alone(half(30))).toBe('5h ━━──╂──── 30% ↻2h30m')
-    expect(meter(half(30)), 'behind').toEqual([['━━', 'plain'], ['──', 'blue'], ['╂', 'plain'], ['────', 'dim']])
-    expect(tone(half(30), '30%')).toBe('blue')
-    expect(alone(half(50)), 'a fill that stops at the tick has no heavy arm past it').toBe('5h ━━━━╉──── 50% ↻2h30m')
-    expect(meter(half(50)), 'on pace').toEqual([['━━━━╉', 'plain'], ['────', 'dim']])
-    expect(tone(half(50), '50%')).toBe('green')
-  })
-
-  test('the main row: behind, with two blue cells before the tick', () => {
-    expect(meter({}).slice(0, 4)).toEqual([['━━━━━', 'plain'], ['──', 'blue'], ['╂', 'plain'], ['─', 'dim']])
-    expect(tone({}, '66%')).toBe('blue')
-    expect(tone({}, '43%')).toBe('green')
-  })
-
-  test('within 5 points of an even pace is on pace; ahead turns red past 20 or used up', () => {
-    for (const [percent, expected] of [
-      [55, 'green'], [56, 'yellow'], [45, 'green'], [44, 'blue'], [70, 'yellow'], [71, 'red'], [100, 'red'],
-    ] as const) {
-      expect(tone(half(percent), `${percent}%`), `${percent}%`).toBe(expected)
+    expect(meter(spend(50))).toEqual([['━━━━', 'yellow'], ['────', 'dim']])
+    expect(meter(spend(80))).toEqual([['━━━━━━╾', 'red'], ['─', 'dim']])
+    for (const [percent, expected] of [[49, 'plain'], [50, 'yellow'], [79, 'yellow'], [80, 'red']] as const) {
+      expect(tone(spend(percent), `${percent}%`), String(percent)).toBe(expected)
+      expect(badges(spend(percent)), String(percent)).toEqual([])
     }
-    expect(meter(half(71)), 'far ahead').toEqual([['━━━━╋', 'plain'], ['━━', 'red'], ['──', 'dim']])
+  })
+
+  test('ahead: the cells past the tick are yellow and an "ahead" badge follows the plain percent', () => {
+    expect(alone(half(70))).toBe('5h ━━━━╋━╾── 70%  ahead  ↻2h30m')
+    expect(meter(half(70))).toEqual([['━━━━╋', 'plain'], ['━╾', 'yellow'], ['──', 'dim']])
+    expect(badges(half(70))).toEqual([[' ahead ', 'yellow']])
+    expect(tone(half(70), '70%')).toBe('plain')
+  })
+
+  test('behind: no cell in color, and a "behind" badge', () => {
+    expect(alone(half(30))).toBe('5h ━━╾─╂──── 30%  behind  ↻2h30m')
+    expect(meter(half(30))).toEqual([['━━╾', 'plain'], ['─', 'dim'], ['╂', 'plain'], ['────', 'dim']])
+    expect(badges(half(30))).toEqual([[' behind ', 'blue']])
+    expect(tone(half(30), '30%')).toBe('plain')
+  })
+
+  test('on pace: a fill that stops at the tick has no heavy arm past it', () => {
+    expect(alone(half(50))).toBe('5h ━━━━╉──── 50% ↻2h30m')
+    expect(meter(half(50))).toEqual([['━━━━╉', 'plain'], ['────', 'dim']])
+  })
+
+  test('a half cell gives the tick a light arm on its left and a heavy arm on its right', () => {
+    expect(alone(half(46)), 'half cell before the tick').toBe('5h ━━━╾╂──── 46% ↻2h30m')
+    expect(alone(half(54)), 'half cell after the tick').toBe('5h ━━━━╋╾─── 54% ↻2h30m')
+  })
+
+  test('within 5 points of an even pace has no word; past 20 ahead, or used up, is red', () => {
+    for (const [percent, expected] of [
+      [55, []], [56, [[' ahead ', 'yellow']]], [45, []], [44, [[' behind ', 'blue']]],
+      [70, [[' ahead ', 'yellow']]], [71, [[' far ahead ', 'red']]], [100, [[' used up ', 'red']]],
+    ] as const) {
+      expect(badges(half(percent)), `${percent}%`).toEqual(expected)
+    }
+    expect(alone(half(71))).toBe('5h ━━━━╋━╾── 71%  far ahead  ↻2h30m')
+    expect(meter(half(71)), 'far ahead').toEqual([['━━━━╋', 'plain'], ['━╾', 'red'], ['──', 'dim']])
+    expect(alone(half(100))).toBe('5h ━━━━╋━━━━ 100%  used up  ↻2h30m')
     expect(meter(half(100)), 'used up').toEqual([['━━━━╋', 'plain'], ['━━━━', 'red']])
   })
 
-  test('on pace, no cell is yellow, red or blue, even across the tick', () => {
-    expect(meter(five(57, NOW + 138 * MIN)), 'mark at 54').toEqual([['━━━━╋━', 'plain'], ['───', 'dim']])
-    expect(meter(five(54, NOW + 126 * MIN)), 'mark at 58').toEqual([['━━━━', 'plain'], ['─', 'dim'], ['╂', 'plain'], ['───', 'dim']])
+  test('on pace, no cell is in color, even across the tick', () => {
+    expect(meter(five(57, NOW + 138 * MIN)), 'mark at 54').toEqual([['━━━━╋╾', 'plain'], ['───', 'dim']])
+    expect(meter(five(54, NOW + 126 * MIN)), 'mark at 58').toEqual([['━━━━╾╂', 'plain'], ['───', 'dim']])
   })
 
   test('the tick stands first at the start of a window and last near its reset', () => {
-    expect(alone(five(20, NOW + 5 * HOUR - 10 * MIN))).toBe('5h ┣━━────── 20% ↻4h50m')
-    expect(meter(five(20, NOW + 5 * HOUR - 10 * MIN))).toEqual([['┣', 'plain'], ['━━', 'yellow'], ['──────', 'dim']])
-    expect(alone(five(91, NOW + 10 * MIN))).toBe('5h ━━━━━━━─┨ 91% ↻10m')
-    expect(meter(five(91, NOW + 10 * MIN))).toEqual([['━━━━━━━', 'plain'], ['─', 'blue'], ['┨', 'plain']])
-    expect(tone(five(91, NOW + 10 * MIN), '91%'), 'an even pace is at 96.7%').toBe('blue')
+    expect(alone(five(20, NOW + 5 * HOUR - 10 * MIN))).toBe('5h ┣━╾────── 20%  ahead  ↻4h50m')
+    expect(meter(five(20, NOW + 5 * HOUR - 10 * MIN))).toEqual([['┣', 'plain'], ['━╾', 'yellow'], ['──────', 'dim']])
+    expect(alone(five(91, NOW + 10 * MIN)), 'an even pace is at 96.7%').toBe('5h ━━━━━━━╾┨ 91%  behind  ↻10m')
+    expect(meter(five(91, NOW + 10 * MIN))).toEqual([['━━━━━━━╾┨', 'plain']])
   })
 
   test('the 7-day window has a pace around the clock too', () => {
     const seven = (percent: number) => ({ windows: [{ ...SEVEN, percent, resetsAt: NOW + 84 * HOUR }] })
-    expect(alone(seven(80))).toBe('7d ━━━━╋━━── 80% ↻3d12h')
-    expect(meter(seven(80))).toEqual([['━━━━╋', 'plain'], ['━━', 'red'], ['──', 'dim']])
+    expect(alone(seven(80))).toBe('7d ━━━━╋━━╾─ 80%  far ahead  ↻3d12h')
+    expect(meter(seven(80))).toEqual([['━━━━╋', 'plain'], ['━━╾', 'red'], ['─', 'dim']])
   })
 
   test('a window whose reset has passed is left out', () => {
@@ -125,10 +149,11 @@ describe('segments', () => {
     }
   })
 
-  test('no reset time colors by share alone, with no tick and no countdown', () => {
+  test('no reset time colors by share alone, with no tick, no word and no countdown', () => {
     for (const [percent, expected] of [[49, 'plain'], [50, 'yellow'], [79, 'yellow'], [80, 'red']] as const) {
       const over = { windows: [{ ...SEVEN, percent, resetsAt: null }] }
       expect(tone(over, `${percent}%`), String(percent)).toBe(expected)
+      expect(badges(over), String(percent)).toEqual([])
       expect(row(over)).not.toMatch(new RegExp(`[↻${TICKS}]`))
     }
   })
@@ -146,11 +171,13 @@ describe('segments', () => {
     expect(tone(over, '42K')).toBe('plain')
   })
 
-  test('a narrow row drops the meters', () => {
+  test('a narrow row drops the meters, then the words', () => {
     expect(row({ git: null }, cells(GAUGES))).toBe(GAUGES)
-    expect(row({ git: null }, cells(GAUGES) - 1)).toBe(BARE)
-    const bare = segments(input({ git: null }), cells(BARE)).flat()
-    expect(bare.find(r => r.text === '66%')?.tone, 'the bare percent keeps its pace color').toBe('blue')
+    expect(row({ git: null }, cells(GAUGES) - 1)).toBe(WORDS)
+    expect(row({ git: null }, cells(WORDS))).toBe(WORDS)
+    expect(row({ git: null }, cells(WORDS) - 1)).toBe(BARE)
+    const words = segments(input({ git: null }), cells(WORDS)).flat()
+    expect(words.find(r => r.badge)?.tone, 'the word keeps its badge').toBe('blue')
   })
 
   test('a narrow row cuts git to 12 cells before it drops a meter', () => {
@@ -158,7 +185,7 @@ describe('segments', () => {
     const full = row({ git })
     expect(row({ git }, cells(full))).toBe(full)
     expect(row({ git }, cells(GAUGES) + SEP.length + 12)).toBe(`feature/a-v… · ${GAUGES}`)
-    expect(row({ git }, cells(GAUGES) + SEP.length + 11)).toBe(`feature/a-very-long-branch-nam… · ${BARE}`)
+    expect(row({ git }, cells(GAUGES) + SEP.length + 11)).toBe(`feature/a-very-long-branch-nam… · ${WORDS}`)
   })
 
   test('the gauges are never cut', () => {

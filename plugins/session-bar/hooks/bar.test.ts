@@ -9,8 +9,9 @@ const FIVE: Window = { label: '5h', percent: 66, resetsAt: NOW + 46 * MIN, lengt
 const SEVEN: Window = { label: '7d', percent: 43, resetsAt: NOW + (3 * 24 + 21) * HOUR, length: 168 * HOUR }
 // 5h: an even pace is at 84.7% with 46m left, so 66% is behind and the tick sits after cell 7;
 // 7d: 44.6% with 3d21h left, so 43% is on pace and the tick sits after cell 4
-const FIVE_ROW = '5h ━━━━━──┃─ 66% ↻46m'
-const SEVEN_ROW = '7d ━━━─┃──── 43% ↻3d21h'
+const FIVE_ROW = '5h ━━━━━──╂─ 66% ↻46m'
+const SEVEN_ROW = '7d ━━━─╂──── 43% ↻3d21h'
+const TICKS = '┃┠┣┨╂╊┫╉╋'
 const GAUGES = `Opus 5.5 1M · ctx 6% · ${FIVE_ROW} · ${SEVEN_ROW}`
 const BARE = 'Opus 5.5 1M · ctx 6% · 5h 66% ↻46m · 7d 43% ↻3d21h'
 const cells = (s: string) => [...s].length
@@ -30,7 +31,7 @@ const text = (segs: Segment[]) => segs.map(s => s.map(r => r.text).join('')).joi
 const tone = (over: Partial<BarInput>, shown: string) =>
   segments(input(over), 500).flat().find(r => r.text.trim() === shown)?.tone
 const meter = (over: Partial<BarInput>) =>
-  segments(input({ git: null, ...over }), 500).flat().filter(r => /^[━─┃]+$/.test(r.text)).map(r => [r.text, r.tone])
+  segments(input({ git: null, ...over }), 500).flat().filter(r => new RegExp(`^[━─${TICKS}]+$`).test(r.text)).map(r => [r.text, r.tone])
 
 const five = (percent: number, resetsAt: number | null): Partial<BarInput> =>
   ({ windows: [{ ...FIVE, percent, resetsAt }] })
@@ -68,19 +69,19 @@ describe('segments', () => {
   })
 
   test('the tick marks an even pace; overspend past it is yellow, allowance before it blue', () => {
-    expect(alone(half(70))).toBe('5h ━━━━┃━━── 70% ↻2h30m')
-    expect(meter(half(70)), 'ahead').toEqual([['━━━━┃', 'plain'], ['━━', 'yellow'], ['──', 'dim']])
+    expect(alone(half(70))).toBe('5h ━━━━╋━━── 70% ↻2h30m')
+    expect(meter(half(70)), 'ahead').toEqual([['━━━━╋', 'plain'], ['━━', 'yellow'], ['──', 'dim']])
     expect(tone(half(70), '70%')).toBe('yellow')
-    expect(alone(half(30))).toBe('5h ━━──┃──── 30% ↻2h30m')
-    expect(meter(half(30)), 'behind').toEqual([['━━', 'plain'], ['──', 'blue'], ['┃', 'plain'], ['────', 'dim']])
+    expect(alone(half(30))).toBe('5h ━━──╂──── 30% ↻2h30m')
+    expect(meter(half(30)), 'behind').toEqual([['━━', 'plain'], ['──', 'blue'], ['╂', 'plain'], ['────', 'dim']])
     expect(tone(half(30), '30%')).toBe('blue')
-    expect(alone(half(50))).toBe('5h ━━━━┃──── 50% ↻2h30m')
-    expect(meter(half(50)), 'on pace').toEqual([['━━━━┃', 'plain'], ['────', 'dim']])
+    expect(alone(half(50)), 'a fill that stops at the tick has no heavy arm past it').toBe('5h ━━━━╉──── 50% ↻2h30m')
+    expect(meter(half(50)), 'on pace').toEqual([['━━━━╉', 'plain'], ['────', 'dim']])
     expect(tone(half(50), '50%')).toBe('green')
   })
 
   test('the main row: behind, with two blue cells before the tick', () => {
-    expect(meter({}).slice(0, 4)).toEqual([['━━━━━', 'plain'], ['──', 'blue'], ['┃', 'plain'], ['─', 'dim']])
+    expect(meter({}).slice(0, 4)).toEqual([['━━━━━', 'plain'], ['──', 'blue'], ['╂', 'plain'], ['─', 'dim']])
     expect(tone({}, '66%')).toBe('blue')
     expect(tone({}, '43%')).toBe('green')
   })
@@ -91,27 +92,27 @@ describe('segments', () => {
     ] as const) {
       expect(tone(half(percent), `${percent}%`), `${percent}%`).toBe(expected)
     }
-    expect(meter(half(71)), 'far ahead').toEqual([['━━━━┃', 'plain'], ['━━', 'red'], ['──', 'dim']])
-    expect(meter(half(100)), 'used up').toEqual([['━━━━┃', 'plain'], ['━━━━', 'red']])
+    expect(meter(half(71)), 'far ahead').toEqual([['━━━━╋', 'plain'], ['━━', 'red'], ['──', 'dim']])
+    expect(meter(half(100)), 'used up').toEqual([['━━━━╋', 'plain'], ['━━━━', 'red']])
   })
 
   test('on pace, no cell is yellow, red or blue, even across the tick', () => {
-    expect(meter(five(57, NOW + 138 * MIN)), 'mark at 54').toEqual([['━━━━┃━', 'plain'], ['───', 'dim']])
-    expect(meter(five(54, NOW + 126 * MIN)), 'mark at 58').toEqual([['━━━━', 'plain'], ['─', 'dim'], ['┃', 'plain'], ['───', 'dim']])
+    expect(meter(five(57, NOW + 138 * MIN)), 'mark at 54').toEqual([['━━━━╋━', 'plain'], ['───', 'dim']])
+    expect(meter(five(54, NOW + 126 * MIN)), 'mark at 58').toEqual([['━━━━', 'plain'], ['─', 'dim'], ['╂', 'plain'], ['───', 'dim']])
   })
 
   test('the tick stands first at the start of a window and last near its reset', () => {
-    expect(alone(five(20, NOW + 5 * HOUR - 10 * MIN))).toBe('5h ┃━━────── 20% ↻4h50m')
-    expect(meter(five(20, NOW + 5 * HOUR - 10 * MIN))).toEqual([['┃', 'plain'], ['━━', 'yellow'], ['──────', 'dim']])
-    expect(alone(five(91, NOW + 10 * MIN))).toBe('5h ━━━━━━━─┃ 91% ↻10m')
-    expect(meter(five(91, NOW + 10 * MIN))).toEqual([['━━━━━━━', 'plain'], ['─', 'blue'], ['┃', 'plain']])
+    expect(alone(five(20, NOW + 5 * HOUR - 10 * MIN))).toBe('5h ┣━━────── 20% ↻4h50m')
+    expect(meter(five(20, NOW + 5 * HOUR - 10 * MIN))).toEqual([['┣', 'plain'], ['━━', 'yellow'], ['──────', 'dim']])
+    expect(alone(five(91, NOW + 10 * MIN))).toBe('5h ━━━━━━━─┨ 91% ↻10m')
+    expect(meter(five(91, NOW + 10 * MIN))).toEqual([['━━━━━━━', 'plain'], ['─', 'blue'], ['┨', 'plain']])
     expect(tone(five(91, NOW + 10 * MIN), '91%'), 'an even pace is at 96.7%').toBe('blue')
   })
 
   test('the 7-day window has a pace around the clock too', () => {
     const seven = (percent: number) => ({ windows: [{ ...SEVEN, percent, resetsAt: NOW + 84 * HOUR }] })
-    expect(alone(seven(80))).toBe('7d ━━━━┃━━── 80% ↻3d12h')
-    expect(meter(seven(80))).toEqual([['━━━━┃', 'plain'], ['━━', 'red'], ['──', 'dim']])
+    expect(alone(seven(80))).toBe('7d ━━━━╋━━── 80% ↻3d12h')
+    expect(meter(seven(80))).toEqual([['━━━━╋', 'plain'], ['━━', 'red'], ['──', 'dim']])
   })
 
   test('a window whose reset has passed is left out', () => {
@@ -128,7 +129,7 @@ describe('segments', () => {
     for (const [percent, expected] of [[49, 'plain'], [50, 'yellow'], [79, 'yellow'], [80, 'red']] as const) {
       const over = { windows: [{ ...SEVEN, percent, resetsAt: null }] }
       expect(tone(over, `${percent}%`), String(percent)).toBe(expected)
-      expect(row(over)).not.toMatch(/↻|┃/)
+      expect(row(over)).not.toMatch(new RegExp(`[↻${TICKS}]`))
     }
   })
 

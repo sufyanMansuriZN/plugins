@@ -20,7 +20,7 @@ const USAGE: SessionUsage = {
     { kind: 'seven_day', percentUsed: 43, resetsAt: new Date(NOW + (3 * 24 + 21) * 60 * MIN).toISOString() },
   ],
 }
-const GAUGES = '5h ━━━━━──┃─ 66% ↻46m · 7d ━━━─┃──── 43% ↻3d21h'
+const GAUGES = '5h ━━━━━──╂─ 66% ↻46m · 7d ━━━─╂──── 43% ↻3d21h'
 const SURFACES = ['terminal', 'desktop'] as const
 
 // the engine beneath the plugin: a session in repo `main`, two subagents, one of them yet to make a request
@@ -97,7 +97,7 @@ test('the band draws pace in theme colors: behind blue, on pace green, the tick 
     })
     const props = async (text: string) => (await ui.find({ type: 'Text', text }))?.props
     expect([(await props('66%'))?.color, (await props('──'))?.color, (await props('43%'))?.color], surface).toEqual(['suggestion', 'suggestion', 'success'])
-    const tick = await props('┃')
+    const tick = await props('╂')
     expect([tick?.color, tick?.dimColor], surface).toEqual([undefined, undefined])
     await ui.unmount()
   }

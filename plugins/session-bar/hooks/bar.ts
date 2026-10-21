@@ -105,12 +105,25 @@ const PACE_TONE: Record<Pace['kind'], (p: Pace) => Tone> = {
   spent: () => 'red',
 }
 
+type Arm = 'none' | 'light' | 'heavy'
+
+// the tick takes each side's arm from the cell beside it, so the line stays unbroken
+// and a fill that stops at the tick does not seem to run past it
+const TICK: Record<Arm, Record<Arm, string>> = {
+  none: { none: '┃', light: '┠', heavy: '┣' },
+  light: { none: '┨', light: '╂', heavy: '╊' },
+  heavy: { none: '┫', light: '╉', heavy: '╋' },
+}
+
 const meter = (percent: number, cellTone: (i: number, filled: boolean) => Tone, tick: number | null): Run[] => {
   const glyphs: Run[] = Array.from({ length: CELLS }, (_, i) => {
     const filled = ((i + 0.5) / CELLS) * 100 <= percent
     return { text: filled ? '━' : '─', tone: cellTone(i, filled) }
   })
-  if (tick !== null) glyphs.splice(tick, 0, { text: '┃', tone: 'plain' })
+  if (tick !== null) {
+    const arm = (cell?: Run) => (cell ? (cell.text === '━' ? 'heavy' : 'light') : 'none')
+    glyphs.splice(tick, 0, { text: TICK[arm(glyphs[tick - 1])][arm(glyphs[tick])], tone: 'plain' })
+  }
   return glyphs.reduce<Run[]>((runs, g) => {
     const last = runs.at(-1)
     if (last?.tone === g.tone) last.text += g.text

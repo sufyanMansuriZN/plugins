@@ -5,7 +5,7 @@ The plugin SHALL draw one row in the `AbovePrompt` band through a hooks module, 
 
 #### Scenario: Every segment has a value
 - **WHEN** the main conversation is in view, the repo is on `main` with 3 new and 2 changed files, the model is `claude-opus-5-5` with a 1,000,000-token window, the context is 6% full, 5h is at 66% resetting in 46m and 7d at 43% resetting in 3d21h
-- **THEN** the row reads `main +3 ~2 · Opus 5.5 1M · ctx 6% · 5h ━━━━━──┃─ 66% ↻46m · 7d ━━━─┃──── 43% ↻3d21h`
+- **THEN** the row reads `main +3 ~2 · Opus 5.5 1M · ctx 6% · 5h ━━━━━──╂─ 66% ↻46m · 7d ━━━─╂──── 43% ↻3d21h`
 
 #### Scenario: Only the model is known
 - **WHEN** the session is outside a git repo, the context has no percent yet and there are no rate limits
@@ -65,7 +65,7 @@ The plugin SHALL fit the row in the band's `bodyColumns`, which already leaves o
 
 #### Scenario: Narrow terminal
 - **WHEN** the gauges with meters take 70 cells, the branch is `feature/a-very-long-branch-name` with 1 new file and `bodyColumns` is 85
-- **THEN** the row reads `feature/a-v… · Opus 5.5 1M · ctx 6% · 5h ━━━━━──┃─ 66% ↻46m · 7d ━━━─┃──── 43% ↻3d21h`
+- **THEN** the row reads `feature/a-v… · Opus 5.5 1M · ctx 6% · 5h ━━━━━──╂─ 66% ↻46m · 7d ━━━─╂──── 43% ↻3d21h`
 
 #### Scenario: Narrower still
 - **WHEN** there is no git segment and `bodyColumns` is 69
@@ -100,28 +100,28 @@ Each window SHALL show an 8-cell meter between its label and its percent. Cell i
 - **THEN** the meter is `━━━━━━` red and `──` dim, with no tick
 
 ### Requirement: Pace tick
-A window with a pace SHALL insert a `┃` in the default color at cell boundary round(mark / 12.5), 0 to 8, so its meter is 9 glyphs. A filled cell after the tick SHALL be in the ahead color, an empty cell before it blue, other filled cells default and the rest dim. On pace, no cell SHALL be yellow, red or blue.
+A window with a pace SHALL insert a tick in the default color at cell boundary round(mark / 12.5), 0 to 8, so its meter is 9 glyphs. Each side of the tick SHALL take the weight of the cell beside it (`━` heavy, `─` light, none at an end). A filled cell after the tick SHALL be in the ahead color, an empty cell before it blue, other filled cells default and the rest dim. On pace, no cell SHALL be yellow, red or blue.
 
 #### Scenario: Ahead
 - **WHEN** 5h is at 70% with 2h30m left
-- **THEN** the segment reads `5h ━━━━┃━━── 70% ↻2h30m`, with `━━━━┃` in the default color, `━━` yellow and `──` dim
+- **THEN** the segment reads `5h ━━━━╋━━── 70% ↻2h30m`, with `━━━━╋` in the default color, `━━` yellow and `──` dim
 
 #### Scenario: Behind
 - **WHEN** 5h is at 30% with 2h30m left
-- **THEN** the segment reads `5h ━━──┃──── 30% ↻2h30m`, with `━━` in the default color, `──` blue, `┃` default and `────` dim
+- **THEN** the segment reads `5h ━━──╂──── 30% ↻2h30m`, with `━━` in the default color, `──` blue, `╂` default and `────` dim
 
 #### Scenario: On pace
 - **WHEN** 5h is at 50% with 2h30m left
-- **THEN** the segment reads `5h ━━━━┃──── 50% ↻2h30m`, with `━━━━┃` in the default color and `────` dim
+- **THEN** the segment reads `5h ━━━━╉──── 50% ↻2h30m`, with `━━━━╉` in the default color and `────` dim
 
 #### Scenario: On pace across the tick
 - **WHEN** 5h is at 57% with 2h18m left, so an even pace is at 54%
-- **THEN** the meter is `━━━━┃━` in the default color and `───` dim
+- **THEN** the meter is `━━━━╋━` in the default color and `───` dim
 
 #### Scenario: Start of a window
 - **WHEN** 5h is at 20% with 4h50m left
-- **THEN** the segment reads `5h ┃━━────── 20% ↻4h50m`
+- **THEN** the segment reads `5h ┣━━────── 20% ↻4h50m`
 
 #### Scenario: Near the reset
 - **WHEN** 5h is at 91% with 10m left
-- **THEN** the segment reads `5h ━━━━━━━─┃ 91% ↻10m`, with the empty cell blue
+- **THEN** the segment reads `5h ━━━━━━━─┨ 91% ↻10m`, with the empty cell blue

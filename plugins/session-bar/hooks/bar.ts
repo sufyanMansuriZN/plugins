@@ -3,7 +3,8 @@ import type { SessionContextUsage, SessionRateLimit, TurnUsage } from 'claude-co
 import type { Git } from '../types'
 
 export type { Git }
-export type Ctx = { kind: 'percent'; percent: number } | { kind: 'tokens'; tokens: number }
+// window: the main view knows the model's window; a subagent's view knows only its tokens
+export type Ctx = { kind: 'window'; tokens: number; window: number } | { kind: 'tokens'; tokens: number }
 export type Window = { label: '5h' | '7d' | '$'; percent: number; resetsAt: number | null; length: number | null }
 // where: the repo's name, or the directory's outside a repo; resetMark: what stands before a reset
 // countdown, chosen by the surface's fonts
@@ -40,7 +41,9 @@ export const parseWindows = (limits: readonly SessionRateLimit[]): Window[] =>
   })
 
 export const parseContext = (context: SessionContextUsage): Ctx | null =>
-  finite(context.percent) ? { kind: 'percent', percent: context.percent } : null
+  finite(context.tokens) && finite(context.window) && context.window > 0
+    ? { kind: 'window', tokens: context.tokens, window: context.window }
+    : null
 
 export const parseWindowSize = (context: SessionContextUsage): number | undefined =>
   finite(context.window) && context.window > 0 ? context.window : undefined
@@ -156,11 +159,25 @@ const DETAILS: readonly Detail[] = [
   { meter: false, word: false },
 ]
 
-const ctxSegment = (ctx: Ctx): Segment => {
-  const dim: Run = { text: 'ctx ', tone: 'dim' }
-  if (ctx.kind === 'tokens') return [dim, { text: sizeLabel(ctx.tokens), tone: 'plain' }]
-  const percent = Math.round(ctx.percent)
-  return [dim, alert(`${percent}%`, threshold(percent, 70, 85))]
+// [largest window, tokens]: the ctx tick, from research-context-size.md (openspec archive 2026-10-03).
+// Long-context scores drop past 256K on a 1M window; a 200K window compacts at its edge, so it marks 160K.
+const CTX_TICKS: readonly (readonly [number, number])[] = [
+  [200_000, 160_000],
+  [Infinity, 250_000],
+]
+
+const ctxSegment = (ctx: Ctx, detail: Detail): Segment => {
+  const label: Run = { text: 'ctx ', tone: 'dim' }
+  const tokens = sizeLabel(ctx.tokens)
+  if (ctx.kind === 'tokens') return [label, { text: tokens, tone: 'plain' }]
+  const ideal = CTX_TICKS.find(([upTo]) => ctx.window <= upTo)![1]
+  // a window smaller than the mark has no place for the tick
+  const tick = ideal <= ctx.window ? Math.round((ideal / ctx.window) * CELLS) : null
+  return [
+    label,
+    ...(detail.meter ? [...meter((ctx.tokens / ctx.window) * 100, tick), { text: ' ', tone: 'dim' } as const] : []),
+    alert(tokens, ctx.tokens >= ideal ? 'red' : 'plain'),
+  ]
 }
 
 const windowSegment = (w: Window, now: number, resetMark: string, detail: Detail): Segment => {
@@ -224,7 +241,7 @@ const shed = (names: Name[], key: Key, room: number): Name[] => {
 }
 
 const gaugesAt = (input: BarInput, detail: Detail): Segment[] => [
-  ...(input.ctx ? [ctxSegment(input.ctx)] : []),
+  ...(input.ctx ? [ctxSegment(input.ctx, detail)] : []),
   ...input.windows
     .filter(w => w.resetsAt === null || w.resetsAt > input.now)
     .map(w => windowSegment(w, input.now, input.resetMark, detail)),

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { type BarInput, type Segment, type Window, GAP, SEP, folderName, modelLabel, parseGit, parseWindows, segments, stepTokens } from './bar'
+import { type BarInput, type Segment, type Window, GAP, SEP, folderName, modelLabel, parseContext, parseGit, parseWindows, segments, stepTokens } from './bar'
 
 const NOW = 1_792_162_404_000
 const MIN = 60_000
@@ -13,9 +13,12 @@ const FIVE_ROW = '5h ━━━━━╾─╂─ 66%  behind  ↻46m'
 const SEVEN_ROW = '7d ━━━╾╂──── 43% ↻3d21h'
 const TICKS = '┃┠┣┨╂╊┫╉╋'
 const LEFT = 'plugins · main +3 ~2 · Opus 5.5 1M'
-const GAUGES = `ctx 6% · ${FIVE_ROW} · ${SEVEN_ROW}`
-const WORDS = 'ctx 6% · 5h 66%  behind  ↻46m · 7d 43% ↻3d21h'
-const BARE = 'ctx 6% · 5h 66% ↻46m · 7d 43% ↻3d21h'
+// 60K of 1M is 6% (0.96 half cells, 1); the 250K tick on a 1M window sits after cell 2
+const CTX = { kind: 'window', tokens: 60_000, window: 1_000_000 } as const
+const CTX_ROW = 'ctx ╾─╂────── 60K'
+const GAUGES = `${CTX_ROW} · ${FIVE_ROW} · ${SEVEN_ROW}`
+const WORDS = 'ctx 60K · 5h 66%  behind  ↻46m · 7d 43% ↻3d21h'
+const BARE = 'ctx 60K · 5h 66% ↻46m · 7d 43% ↻3d21h'
 const LONG = { branch: 'feature/a-very-long-branch-name', added: 1, changed: 0 }
 const cells = (s: string) => [...s].length
 // the row's width when both zones are drawn: the left, the gap, the right
@@ -26,7 +29,7 @@ const input = (over: Partial<BarInput> = {}): BarInput => ({
   git: { branch: 'main', added: 3, changed: 2 },
   agent: null,
   model: 'Opus 5.5 1M',
-  ctx: { kind: 'percent', percent: 6 },
+  ctx: CTX,
   windows: [FIVE, SEVEN],
   now: NOW,
   resetMark: '↻',
@@ -40,7 +43,7 @@ const zones = (over: Partial<BarInput> = {}, columns = 500) => {
 }
 const right = (over: Partial<BarInput> = {}, columns = 500) => zones(over, columns)[1]
 const runs = (over: Partial<BarInput>, columns = 500) => {
-  const { left, right } = segments(input({ git: null, ...over }), columns)
+  const { left, right } = segments(input({ git: null, ctx: null, ...over }), columns)
   return [...left, ...right].flat()
 }
 const tone = (over: Partial<BarInput>, shown: string) => runs(over).find(r => r.text.trim() === shown)?.tone
@@ -76,8 +79,8 @@ describe('segments', () => {
     expect(zones({ git: { branch: 'main', added: 0, changed: 0 } })).toEqual(['plugins · main · Opus 5.5 1M', GAUGES])
     expect(zones({ where: null })).toEqual(['main +3 ~2 · Opus 5.5 1M', GAUGES])
     expect(zones({ git: null, model: null })).toEqual(['plugins', GAUGES])
-    expect(zones({ windows: [] })).toEqual([LEFT, 'ctx 6%'])
-    expect(right({ windows: [SEVEN] })).toBe(`ctx 6% · ${SEVEN_ROW}`)
+    expect(zones({ windows: [] })).toEqual([LEFT, CTX_ROW])
+    expect(right({ windows: [SEVEN] })).toBe(`${CTX_ROW} · ${SEVEN_ROW}`)
   })
 
   test('a cell fills in halves: a thick left half is half a cell', () => {
@@ -88,7 +91,7 @@ describe('segments', () => {
   })
 
   test('a spend limit has no tick and no word; its percent becomes a yellow badge at 50 and a red one at 80', () => {
-    expect(right(spend(40.4))).toBe('ctx 6% · $ ━━━───── 40%')
+    expect(right(spend(40.4))).toBe(`${CTX_ROW} · $ ━━━───── 40%`)
     expect(alone(spend(50))).toBe('$ ━━━━────  50% ')
     expect(alone(spend(80))).toBe('$ ━━━━━━╾─  80% ')
     expect(meter(spend(40.4))).toEqual([['━━━', 'plain'], ['─────', 'dim']])
@@ -143,7 +146,9 @@ describe('segments', () => {
       ['tick first', five(20, NOW + 5 * HOUR - 10 * MIN)], ['tick last', five(91, NOW + 10 * MIN)],
       ['spend 49', spend(49)], ['spend 50', spend(50)], ['spend 80', spend(80)], ['spend 100', spend(100)],
       ['no reset 80', { windows: [{ ...SEVEN, percent: 80, resetsAt: null }] }],
-      ['ctx 70', { ctx: { kind: 'percent', percent: 70 } }], ['ctx 85', { ctx: { kind: 'percent', percent: 85 } }],
+      ['ctx below the tick', { ctx: { kind: 'window', tokens: 249_000, window: 1_000_000 } }],
+      ['ctx at the tick', { ctx: { kind: 'window', tokens: 250_000, window: 1_000_000 } }],
+      ['ctx full', { ctx: { kind: 'window', tokens: 200_000, window: 200_000 } }],
     ]
     for (const [name, over] of states) {
       const colored = runs(over).filter(r => !r.badge && r.tone !== 'plain' && r.tone !== 'dim')
@@ -170,24 +175,44 @@ describe('segments', () => {
   })
 
   test('a window whose reset has passed is left out', () => {
-    expect(right(five(88, NOW - 1))).toBe('ctx 6%')
+    expect(right(five(88, NOW - 1))).toBe(CTX_ROW)
   })
 
-  test('the context percent becomes a yellow badge at 70% and a red one at 85%', () => {
-    for (const [percent, expected] of [
-      [69, []], [70, [[' 70% ', 'yellow']]], [84.4, [[' 84% ', 'yellow']]], [85, [[' 85% ', 'red']]],
+  test('the context meter fills over the whole window, with its tick at 250K on a 1M window', () => {
+    const ctx = (tokens: number): Partial<BarInput> => ({ ctx: { kind: 'window', tokens, window: 1_000_000 }, windows: [] })
+    expect(alone(ctx(60_000))).toBe('ctx ╾─╂────── 60K')
+    expect(meter(ctx(60_000))).toEqual([['╾', 'plain'], ['─', 'dim'], ['╂', 'plain'], ['──────', 'dim']])
+    expect(alone(ctx(300_000)), '30% is 4.8 half cells, 5').toBe('ctx ━━╋╾─────  300K ')
+    expect(meter(ctx(300_000))).toEqual([['━━╋╾', 'plain'], ['─────', 'dim']])
+    expect(alone(ctx(1_000_000)), 'a full window').toBe('ctx ━━╋━━━━━━  1M ')
+  })
+
+  test('on a 200K window the tick is at 160K, 6.4 cells, so after cell 6', () => {
+    const ctx = (tokens: number): Partial<BarInput> => ({ ctx: { kind: 'window', tokens, window: 200_000 }, windows: [] })
+    expect(alone(ctx(120_000))).toBe('ctx ━━━━━─╂── 120K')
+    expect(meter(ctx(120_000))).toEqual([['━━━━━', 'plain'], ['─', 'dim'], ['╂', 'plain'], ['──', 'dim']])
+    expect(alone(ctx(170_000))).toBe('ctx ━━━━━━╋━─  170K ')
+  })
+
+  test('the context tokens become a red badge from the tick, and are plain below it', () => {
+    for (const [tokens, window, expected] of [
+      [249_000, 1_000_000, []], [250_000, 1_000_000, [[' 250K ', 'red']]],
+      [159_000, 200_000, []], [160_000, 200_000, [[' 160K ', 'red']]],
     ] as const) {
-      expect(badges({ ctx: { kind: 'percent', percent }, windows: [] }), String(percent)).toEqual(expected)
+      expect(badges({ ctx: { kind: 'window', tokens, window }, windows: [] }), `${tokens} of ${window}`).toEqual(expected)
     }
-    expect(tone({ ctx: { kind: 'percent', percent: 69 } }, '69%')).toBe('plain')
-    expect(alone({ ctx: { kind: 'percent', percent: 85 }, windows: [] })).toBe('ctx  85% ')
+    expect(tone({ ctx: { kind: 'window', tokens: 249_000, window: 1_000_000 } }, '249K')).toBe('plain')
+  })
+
+  test('a window smaller than the tick has no tick and no badge', () => {
+    expect(alone({ ctx: { kind: 'window', tokens: 140_000, window: 150_000 }, windows: [] })).toBe('ctx ━━━━━━━╾ 140K')
   })
 
   test('no reset time badges the percent by share alone, with no tick, no word and no countdown', () => {
     for (const [percent, expected] of [[49, []], [50, [[' 50% ', 'yellow']]], [79, [[' 79% ', 'yellow']]], [80, [[' 80% ', 'red']]]] as const) {
       const over = { windows: [{ ...SEVEN, percent, resetsAt: null }] }
       expect(badges(over), String(percent)).toEqual(expected)
-      expect(right(over)).not.toMatch(new RegExp(`[↻${TICKS}]`))
+      expect(alone(over)).not.toMatch(new RegExp(`[↻${TICKS}]`))
     }
   })
 
@@ -218,7 +243,7 @@ describe('segments', () => {
     expect(zones({ git: LONG }, fitted(full[0], GAUGES))).toEqual(full)
     const kept = 'plugins · feature/a-v… · Opus 5.5 1M'
     expect(zones({ git: LONG }, fitted(kept, GAUGES))).toEqual([kept, GAUGES])
-    expect(zones({ git: LONG }, fitted(kept, GAUGES) - 1)).toEqual(['plugins · feature/a-very-long-branch-nam… · Opus 5.5 1M', WORDS])
+    expect(zones({ git: LONG }, fitted(kept, GAUGES) - 1), 'the meters give the branch its room back').toEqual([full[0], WORDS])
   })
 
   test('past the last step on the right, the branch is cut, then left out, then the name is cut', () => {
@@ -256,6 +281,13 @@ describe('boundary parsing', () => {
     expect(parseWindows([{ kind: 'five_hour', percentUsed: NaN }])).toEqual([])
     expect(parseWindows([{ kind: 'five_hour', percentUsed: 20, resetsAt: 'soon' }]))
       .toEqual([{ label: '5h', percent: 20, resetsAt: null, length: 5 * HOUR }])
+  })
+
+  test('the context needs its tokens and a window above 0', () => {
+    expect(parseContext({ tokens: 60_000, window: 1_000_000, percent: 6 })).toEqual(CTX)
+    expect(parseContext({ window: 1_000_000 })).toBe(null)
+    expect(parseContext({ tokens: NaN, window: 1_000_000 })).toBe(null)
+    expect(parseContext({ tokens: 60_000, window: 0 })).toBe(null)
   })
 
   test('step tokens are the input sides summed', () => {

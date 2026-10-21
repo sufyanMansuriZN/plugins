@@ -22,6 +22,9 @@ const USAGE: SessionUsage = {
   ],
 }
 const WINDOWS = '5h ━━━━━╾─╂─ 66%  behind  ↻46m · 7d ━━━╾╂──── 43% ↻3d21h'
+// 60K of a 1M window: half a cell used, and the tick for 250K after cell 2
+const CTX = 'ctx ╾─╂────── 60K'
+const context = (tokens: number, window: number): SessionUsage => ({ ...USAGE, context: { tokens, window, percent: Math.round((tokens / window) * 100) } })
 const SURFACES = ['terminal', 'desktop'] as const
 type Surface = (typeof SURFACES)[number]
 // the terminal marks a countdown with the Nerd Font refresh icon (U+F021), the desktop app with ↻
@@ -85,9 +88,37 @@ test('main view: repo, git and the main model on the left; context and the windo
   await engine($, on)
   for (const surface of SURFACES) {
     const { left, right } = await zonesOn($, surface)
-    expect([left, right], surface).toEqual(['plugins · main +3 ~2 · Opus 5.5 1M', marked(surface, `ctx 6% · ${WINDOWS}`)])
+    expect([left, right], surface).toEqual(['plugins · main +3 ~2 · Opus 5.5 1M', marked(surface, `${CTX} · ${WINDOWS}`)])
   }
 })
+
+test('a 200K window: the context meter fills over 200K, its tick for 160K after cell 6', async ($, on) => {
+  await engine($, on, { usage: context(120_000, 200_000) })
+  for (const surface of SURFACES) {
+    const { left, right } = await zonesOn($, surface)
+    expect([left, right], surface).toEqual(['plugins · main +3 ~2 · Opus 5.5 200K', marked(surface, `ctx ━━━━━─╂── 120K · ${WINDOWS}`)])
+  }
+})
+
+for (const [tokens, window, shown, badge] of [
+  [249_000, 1_000_000, 'ctx ━━╉────── 249K', null], [250_000, 1_000_000, 'ctx ━━╉──────  250K ', ' 250K '],
+  [300_000, 1_000_000, 'ctx ━━╋╾─────  300K ', ' 300K '],
+  [159_000, 200_000, 'ctx ━━━━━━╋╾─ 159K', null], [160_000, 200_000, 'ctx ━━━━━━╋╾─  160K ', ' 160K '],
+  [170_000, 200_000, 'ctx ━━━━━━╋━─  170K ', ' 170K '],
+] as const) {
+  test(`${tokens / 1000}K of ${window / 1000}K: ${badge ? 'a vermillion badge from the tick' : 'plain below the tick'}`, async ($, on) => {
+    await engine($, on, { usage: context(tokens, window) })
+    for (const surface of SURFACES) {
+      const ui = await mountBand($, surface)
+      const right = (await ui.find({ type: 'Box', key: 'right' }))?.text
+      const ctx = await ui.find({ type: 'Text', text: new RegExp(`^ ?${tokens / 1000}K ?$`) })
+      await ui.unmount()
+      expect(right, surface).toBe(marked(surface, `${shown} · ${WINDOWS}`))
+      expect([ctx?.text, ctx?.props.backgroundColor, ctx?.props.color], surface)
+        .toEqual(badge ? [badge, '#D55E00', '#000000'] : [`${tokens / 1000}K`, undefined, undefined])
+    }
+  })
+}
 
 test('outside a git repo, the left zone starts with the directory name', async ($, on) => {
   await engine($, on, { porcelain: '', repo: null })
@@ -136,9 +167,9 @@ test('a row at exactly its width keeps every part, and its zones and gap add up 
 test('a narrow band drops the meters, then the words, then cuts the branch, then the repo name', async ($, on) => {
   await engine($, on, { porcelain: LONG_BRANCH })
   for (const surface of SURFACES) {
-    const meters = marked(surface, `ctx 6% · ${WINDOWS}`)
-    const words = marked(surface, 'ctx 6% · 5h 66%  behind  ↻46m · 7d 43% ↻3d21h')
-    const bare = marked(surface, 'ctx 6% · 5h 66% ↻46m · 7d 43% ↻3d21h')
+    const meters = marked(surface, `${CTX} · ${WINDOWS}`)
+    const words = marked(surface, 'ctx 60K · 5h 66%  behind  ↻46m · 7d 43% ↻3d21h')
+    const bare = marked(surface, 'ctx 60K · 5h 66% ↻46m · 7d 43% ↻3d21h')
     const kept = 'plugins · feature/a-v… · Opus 5.5 1M'
     const at = async (left: string, right: string) => {
       const { left: l, right: r } = await zonesOn($, surface, undefined, cells(left) + 3 + cells(right))
@@ -169,7 +200,7 @@ test('a badge is black bold text on its Okabe-Ito color; the percent and the tic
   }
 })
 
-test('color is only a badge background: ahead, far ahead, the spend and the context percents; no text is in color', async ($, on) => {
+test('color is only a badge background: ahead, far ahead, the spend percent and the context tokens; no text is in color', async ($, on) => {
   await engine($, on, { usage: {
     ...USAGE,
     context: { tokens: 850_000, window: 1_000_000, percent: 85 },
@@ -185,7 +216,7 @@ test('color is only a badge background: ahead, far ahead, the spend and the cont
       const p = (await ui.find({ type: 'Text', text: new RegExp(`^${text}$`) }))?.props
       return [p?.backgroundColor, p?.color, p?.bold]
     }
-    expect(await colors(' 85% '), `${surface} context`).toEqual(['#D55E00', '#000000', true])
+    expect(await colors(' 850K '), `${surface} context`).toEqual(['#D55E00', '#000000', true])
     expect(await colors(' ahead '), surface).toEqual(['#E69F00', '#000000', true])
     expect(await colors(' far ahead '), surface).toEqual(['#D55E00', '#000000', true])
     expect(await colors(' 50% '), `${surface} spend`).toEqual(['#E69F00', '#000000', true])

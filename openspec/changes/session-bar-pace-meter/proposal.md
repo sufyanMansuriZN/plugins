@@ -6,12 +6,13 @@ The person wants to use all of each usage window by its reset: 100% of 5h when 5
 
 ## What Changes
 
-- Each usage window gets an 8-cell meter between its label and its percent. A filled cell (`━`) is used, an empty cell (`─`) is not.
-- A window with a reset time also gets a tick in its meter, at the cell boundary nearest an even pace through the window: `5h ━━━━━──╂─ 66% ↻46m`. Each side of the tick takes the weight of the cell beside it, so a fill that stops at the tick does not seem to pass it (`━━━━╉────`). The pace counts around the clock, for 5h and 7d alike.
-- Filled cells after the tick are overspend: yellow, red when more than 20 points ahead. Empty cells before the tick are allowance still to use: blue. Within 5 points of an even pace, the meter shows neither.
-- The percent takes the pace's color: green on pace, blue behind, yellow ahead, red when more than 20 points ahead or used up. The old rule (yellow over 15 ahead, red over 30 ahead or from 90%) goes.
-- The spend limit keeps its 50%/80% colors and gets a meter with no tick.
-- When the band is narrow, the git segment is cut to 12 cells first, then the meters go. The gauges are still never cut.
+- Each usage window gets an 8-cell meter between its label and its percent. A cell fills in halves: `━` is a used cell, `╾` a half-used cell and `─` an unused one.
+- A window with a reset time also gets a tick in its meter, at the cell boundary nearest an even pace through the window: `5h ━━━━━╾─╂─ 66%  behind  ↻46m`. The tick joins the meter: each arm is heavy when the cell beside it is used on that side, so a fill that stops at the tick does not seem to pass it (`━━━━╉────`). The pace counts around the clock, for 5h and 7d alike.
+- Used cells after the tick are overspend: orange, vermillion when more than 20 points ahead or used up. Unused cells stay dim, before or after the tick. Within 5 points of an even pace, no cell is in color.
+- The percent stays in the default color. A badge after it names the pace: ` ahead `, ` far ahead `, ` behind ` or ` used up `, in black bold text on orange, vermillion or sky blue. On pace has no badge. The old rule (yellow over 15 ahead, red over 30 ahead or from 90%) goes.
+- The colors are fixed Okabe-Ito hexes, chosen to stay apart for the common kinds of color blindness. Black text on each keeps a contrast of 5:1 or more, in light and dark themes alike. The word carries the meaning, so no one has to tell the colors apart.
+- The spend limit keeps its 50%/80% colors on its percent and used cells, and gets a meter with no tick and no badge.
+- When the band is narrow, the git segment is cut to 12 cells first, then the meters go, then the badges. The gauges are still never cut.
 - Version 3.1.0.
 
 ## Capabilities
@@ -22,10 +23,10 @@ None.
 
 ### Modified Capabilities
 
-- `session-bar`: the usage windows show a meter with a pace tick, colored against the goal of 100% at the reset, and the row drops the meters before it would cut a gauge.
+- `session-bar`: the usage windows show a meter with half cells and a pace tick, and a pace badge, against the goal of 100% at the reset. The row drops the meters, then the badges, before it would cut a gauge.
 
 ## Impact
 
-- `hooks/bar.ts` (pace, meter, tick), `hooks/register.tsx` (two new tones), both test files.
+- `hooks/bar.ts` (pace, meter, tick, badge), `hooks/register.tsx` (fixed colors and badge drawing), both test files.
 - `plugin.json`, the root `README.md` and the plugin README carry 3.1.0 and the new row.
 - No new state, events or permissions.

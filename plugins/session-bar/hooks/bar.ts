@@ -6,8 +6,9 @@ export type { Git }
 export type Ctx = { kind: 'percent'; percent: number } | { kind: 'tokens'; tokens: number }
 export type Window = { label: '5h' | '7d' | '$'; percent: number; resetsAt: number | null; length: number | null }
 export type BarInput = { git: Git | null; agent: string | null; model: string | null; ctx: Ctx | null; windows: Window[]; now: number }
-export type Run = { text: string; tone: 'plain' | 'dim' | 'yellow' | 'red' }
+export type Run = { text: string; tone: 'plain' | 'dim' | 'yellow' | 'red' | 'green' | 'blue' }
 export type Segment = Run[]
+type Tone = Run['tone']
 
 export const SEP = ' · '
 
@@ -77,16 +78,63 @@ export const countdown = (ms: number) => {
   return `${m}m`
 }
 
-const threshold = (value: number, yellow: number, red: number): Run['tone'] =>
+const threshold = (value: number, yellow: number, red: number): Tone =>
   value >= red ? 'red' : value >= yellow ? 'yellow' : 'plain'
 
-// against an even pace through the window: 61% on day 6 is calm, 71% an hour into 5h is not
-const paceTone = (w: Window, now: number): Run['tone'] => {
-  if (w.resetsAt === null || w.length === null) return threshold(w.percent, 50, 80)
-  const elapsed = Math.min(1, Math.max(0, 1 - (w.resetsAt - now) / w.length))
-  const ahead = w.percent - elapsed * 100
-  return ahead > 30 || w.percent >= 90 ? 'red' : ahead > 15 ? 'yellow' : 'plain'
+// mark: where an even pace stands now, in percent; delta: percent - mark; byMs: delta as time on that pace
+type Pace = { kind: 'ahead' | 'on' | 'behind' | 'spent'; mark: number; delta: number; byMs: number }
+
+// the goal is 100% at the reset: ahead runs out before it, behind leaves usage unspent
+const pace = (w: Window, now: number): Pace | null => {
+  if (w.resetsAt === null || w.length === null) return null
+  const elapsedMs = Math.min(w.length, Math.max(0, w.length - (w.resetsAt - now)))
+  const mark = (elapsedMs / w.length) * 100
+  const delta = w.percent - mark
+  // from whole milliseconds, so 18.67 points of 5h is exactly 56m and not 55m59.99s
+  const byMs = Math.abs((w.percent * w.length) / 100 - elapsedMs)
+  const kind = w.percent >= 100 ? 'spent' : Math.abs(delta) <= 5 ? 'on' : delta > 0 ? 'ahead' : 'behind'
+  return { kind, mark, delta, byMs }
 }
+
+const aheadTone = (delta: number): Tone => (delta > 20 ? 'red' : 'yellow')
+
+const PACE: Record<Pace['kind'], { word: (by: string) => string; tone: (p: Pace) => Tone }> = {
+  ahead: { word: by => `${by} ahead`, tone: p => aheadTone(p.delta) },
+  on: { word: () => 'on pace', tone: () => 'green' },
+  behind: { word: by => `${by} behind`, tone: () => 'blue' },
+  spent: { word: () => 'used up', tone: () => 'red' },
+}
+
+const CELLS = 8
+
+const meter = (percent: number, cellTone: (center: number, filled: boolean) => Tone): Run[] => {
+  const runs: Run[] = []
+  for (let i = 0; i < CELLS; i++) {
+    const center = ((i + 0.5) / CELLS) * 100
+    const filled = center <= percent
+    const tone = cellTone(center, filled)
+    const glyph = filled ? '━' : '─'
+    const last = runs.at(-1)
+    if (last?.tone === tone) last.text += glyph
+    else runs.push({ text: glyph, tone })
+  }
+  return runs
+}
+
+// a filled cell past the mark is overspend; an empty cell before it is allowance not yet used
+const paceCell = (p: Pace) => (center: number, filled: boolean): Tone =>
+  filled ? (center <= p.mark ? 'plain' : aheadTone(p.delta)) : center <= p.mark ? 'blue' : 'dim'
+
+type Detail = { meter: boolean; word: boolean }
+
+const DETAILS: readonly Detail[] = [
+  { meter: true, word: true },
+  { meter: false, word: true },
+  { meter: false, word: false },
+]
+
+// the branch keeps this many cells before the gauges give up their meters and words
+const GIT_KEEPS = 12
 
 const ctxSegment = (ctx: Ctx): Segment => {
   const dim: Run = { text: 'ctx ', tone: 'dim' }
@@ -95,28 +143,44 @@ const ctxSegment = (ctx: Ctx): Segment => {
   return [dim, { text: `${percent}%`, tone: threshold(percent, 70, 85) }]
 }
 
-const windowSegment = (w: Window, now: number): Segment => [
-  { text: `${w.label} `, tone: 'dim' },
-  { text: `${Math.round(w.percent)}%`, tone: paceTone(w, now) },
-  ...(w.resetsAt === null ? [] : [{ text: ` ↻${countdown(w.resetsAt - now)}`, tone: 'dim' } as const]),
-]
+const windowSegment = (w: Window, now: number, detail: Detail): Segment => {
+  const p = pace(w, now)
+  const tone = p ? PACE[p.kind].tone(p) : threshold(w.percent, 50, 80)
+  const cell = p ? paceCell(p) : (_: number, filled: boolean): Tone => (filled ? tone : 'dim')
+  return [
+    { text: `${w.label} `, tone: 'dim' },
+    ...(detail.meter ? [...meter(w.percent, cell), { text: ' ', tone: 'dim' } as const] : []),
+    { text: `${Math.round(w.percent)}%`, tone },
+    ...(detail.word && p ? [{ text: ` ${PACE[p.kind].word(countdown(p.byMs))}`, tone }] : []),
+    ...(w.resetsAt === null ? [] : [{ text: ` ↻${countdown(w.resetsAt - now)}`, tone: 'dim' } as const]),
+  ]
+}
 
 export const width = (segment: Segment) => segment.reduce((n, run) => n + [...run.text].length, 0)
+
+const rowWidth = (row: Segment[]) => row.reduce((n, s) => n + width(s), 0) + SEP.length * Math.max(0, row.length - 1)
 
 const gitText = ({ branch, added, changed }: Git) =>
   branch + (added ? ` +${added}` : '') + (changed ? ` ~${changed}` : '')
 
-export const segments = (input: BarInput, columns: number): Segment[] => {
+const gaugesAt = (input: BarInput, detail: Detail): Segment[] => {
   const gauges: Segment[] = []
   if (input.agent) gauges.push([{ text: input.agent, tone: 'dim' }])
   if (input.model) gauges.push([{ text: input.model, tone: 'plain' }])
   if (input.ctx) gauges.push(ctxSegment(input.ctx))
   for (const w of input.windows) {
-    if (w.resetsAt === null || w.resetsAt > input.now) gauges.push(windowSegment(w, input.now))
+    if (w.resetsAt === null || w.resetsAt > input.now) gauges.push(windowSegment(w, input.now, detail))
   }
+  return gauges
+}
+
+export const segments = (input: BarInput, columns: number): Segment[] => {
+  const text = input.git ? [...gitText(input.git)] : []
+  const kept = input.git ? Math.min(text.length, GIT_KEEPS) + SEP.length : 0
+  const ladder = DETAILS.map(detail => gaugesAt(input, detail))
+  const gauges = ladder.find(g => rowWidth(g) + kept <= columns) ?? ladder.at(-1)!
   if (!input.git) return gauges
-  const room = columns - gauges.reduce((n, s) => n + width(s), 0) - SEP.length * gauges.length
-  const text = [...gitText(input.git)]
+  const room = columns - rowWidth(gauges) - (gauges.length ? SEP.length : 0)
   if (text.length <= room) return [[{ text: text.join(''), tone: 'plain' }], ...gauges]
   return room >= 2 ? [[{ text: `${text.slice(0, room - 1).join('')}…`, tone: 'plain' }], ...gauges] : gauges
 }

@@ -7,7 +7,13 @@ const MIN = 60_000
 const HOUR = 60 * MIN
 const FIVE: Window = { label: '5h', percent: 66, resetsAt: NOW + 46 * MIN, length: 5 * HOUR }
 const SEVEN: Window = { label: '7d', percent: 43, resetsAt: NOW + (3 * 24 + 21) * HOUR, length: 168 * HOUR }
-const GAUGES = 'Opus 5.5 1M · ctx 6% · 5h 66% ↻46m · 7d 43% ↻3d21h'
+// 5h: even pace is at 84.7% with 46m left, so 66% is 56m behind; 7d: 44.6% with 3d21h left, so 43% is on pace
+const FIVE_ROW = '5h ━━━━━─── 66% 56m behind ↻46m'
+const SEVEN_ROW = '7d ━━━───── 43% on pace ↻3d21h'
+const GAUGES = `Opus 5.5 1M · ctx 6% · ${FIVE_ROW} · ${SEVEN_ROW}`
+const WORDS = 'Opus 5.5 1M · ctx 6% · 5h 66% 56m behind ↻46m · 7d 43% on pace ↻3d21h'
+const BARE = 'Opus 5.5 1M · ctx 6% · 5h 66% ↻46m · 7d 43% ↻3d21h'
+const cells = (s: string) => [...s].length
 
 const input = (over: Partial<BarInput> = {}): BarInput => ({
   git: { branch: 'main', added: 3, changed: 2 },
@@ -22,10 +28,14 @@ const input = (over: Partial<BarInput> = {}): BarInput => ({
 const row = (over: Partial<BarInput> = {}, columns = 500) => text(segments(input(over), columns))
 const text = (segs: Segment[]) => segs.map(s => s.map(r => r.text).join('')).join(SEP)
 const tone = (over: Partial<BarInput>, shown: string) =>
-  segments(input(over), 500).flat().find(r => r.text === shown)?.tone
+  segments(input(over), 500).flat().find(r => r.text.trim() === shown)?.tone
+const meter = (over: Partial<BarInput>) =>
+  segments(input({ git: null, ...over }), 500).flat().filter(r => /^[━─]+$/.test(r.text)).map(r => [r.text, r.tone])
 
 const five = (percent: number, resetsAt: number | null): Partial<BarInput> =>
   ({ windows: [{ ...FIVE, percent, resetsAt }] })
+// half of 5h gone: an even pace stands at 50%, and each point is 3 minutes
+const half = (percent: number) => five(percent, NOW + 2.5 * HOUR)
 
 describe('segments', () => {
   test('every segment has a value', () => {
@@ -44,14 +54,55 @@ describe('segments', () => {
   test('each part is left out without a value', () => {
     expect(row({ git: null })).toBe(GAUGES)
     expect(row({ git: { branch: 'main', added: 0, changed: 0 } })).toBe(`main · ${GAUGES}`)
-    expect(row({ git: null, model: null })).toBe('ctx 6% · 5h 66% ↻46m · 7d 43% ↻3d21h')
+    expect(row({ git: null, model: null })).toBe(`ctx 6% · ${FIVE_ROW} · ${SEVEN_ROW}`)
     expect(row({ git: null, windows: [] })).toBe('Opus 5.5 1M · ctx 6%')
-    expect(row({ git: null, windows: [SEVEN] })).toBe('Opus 5.5 1M · ctx 6% · 7d 43% ↻3d21h')
+    expect(row({ git: null, windows: [SEVEN] })).toBe(`Opus 5.5 1M · ctx 6% · ${SEVEN_ROW}`)
   })
 
-  test('a spend limit with no reset time', () => {
-    const spend: Window = { label: '$', percent: 40.4, resetsAt: null, length: null }
-    expect(row({ git: null, windows: [spend] })).toBe('Opus 5.5 1M · ctx 6% · $ 40%')
+  test('a spend limit has a meter in its share color and no pace word', () => {
+    const spend = (percent: number): Partial<BarInput> => ({ windows: [{ label: '$', percent, resetsAt: null, length: null }] })
+    expect(row({ git: null, ...spend(40.4) })).toBe('Opus 5.5 1M · ctx 6% · $ ━━━───── 40%')
+    expect(meter(spend(40.4))).toEqual([['━━━', 'plain'], ['─────', 'dim']])
+    expect(meter(spend(80))).toEqual([['━━━━━━', 'red'], ['──', 'dim']])
+  })
+
+  test('each pace has its word and color', () => {
+    for (const [percent, word, expected] of [
+      [75, '1h15m ahead', 'red'],
+      [60, '30m ahead', 'yellow'],
+      [50, 'on pace', 'green'],
+      [30, '1h behind', 'blue'],
+      [100, 'used up', 'red'],
+    ] as const) {
+      expect(row({ git: null, model: null, ctx: null, ...half(percent) }), word).toContain(`${percent}% ${word} ↻2h30m`)
+      expect(tone(half(percent), `${percent}%`), word).toBe(expected)
+      expect(tone(half(percent), word), word).toBe(expected)
+    }
+  })
+
+  test('within 5 points of an even pace is on pace; ahead turns red past 20', () => {
+    for (const [percent, word, expected] of [
+      [55, 'on pace', 'green'],
+      [56, '18m ahead', 'yellow'],
+      [45, 'on pace', 'green'],
+      [44, '18m behind', 'blue'],
+      [70, '1h ahead', 'yellow'],
+      [71, '1h3m ahead', 'red'],
+    ] as const) {
+      expect(tone(half(percent), word), `${percent}%`).toBe(expected)
+    }
+  })
+
+  test('near the reset, a high share can still be behind', () => {
+    expect(tone(five(91, NOW + 10 * MIN), '17m behind')).toBe('blue')
+  })
+
+  test('the meter shows overspend past the even pace and allowance left before it', () => {
+    expect(row({ git: null, model: null, ctx: null, ...half(75) })).toBe('5h ━━━━━━── 75% 1h15m ahead ↻2h30m')
+    expect(meter(half(75)), 'far ahead').toEqual([['━━━━', 'plain'], ['━━', 'red'], ['──', 'dim']])
+    expect(meter(half(60)), 'ahead').toEqual([['━━━━', 'plain'], ['━', 'yellow'], ['───', 'dim']])
+    expect(meter(half(50)), 'on pace').toEqual([['━━━━', 'plain'], ['────', 'dim']])
+    expect(meter(half(30)), 'behind').toEqual([['━━', 'plain'], ['──', 'blue'], ['────', 'dim']])
   })
 
   test('a window whose reset has passed is left out', () => {
@@ -64,18 +115,11 @@ describe('segments', () => {
     }
   })
 
-  test('pace colors', () => {
-    expect(tone(five(40, NOW + 4 * HOUR), '40%'), '20 ahead').toBe('yellow')
-    expect(tone(five(40, NOW + 2 * HOUR), '40%'), 'behind pace').toBe('plain')
-    expect(tone(five(55, NOW + 4.5 * HOUR), '55%'), '45 ahead').toBe('red')
-    expect(tone(five(91, NOW + 10 * MIN), '91%'), '90 or more').toBe('red')
-  })
-
-  test('no reset time colors by share alone, with no countdown', () => {
+  test('no reset time colors by share alone, with no pace word and no countdown', () => {
     for (const [percent, expected] of [[49, 'plain'], [50, 'yellow'], [79, 'yellow'], [80, 'red']] as const) {
       const over = { windows: [{ ...SEVEN, percent, resetsAt: null }] }
       expect(tone(over, `${percent}%`), String(percent)).toBe(expected)
-      expect(row(over)).not.toContain('↻')
+      expect(row(over)).not.toMatch(/↻|ahead|behind|on pace|used up/)
     }
   })
 
@@ -87,20 +131,27 @@ describe('segments', () => {
 
   test('a subagent: dim type, its model, tokens in the default color', () => {
     const over: Partial<BarInput> = { git: null, agent: 'Explore', model: 'Haiku 4.5', ctx: { kind: 'tokens', tokens: 42_000 } }
-    expect(row(over)).toBe('Explore · Haiku 4.5 · ctx 42K · 5h 66% ↻46m · 7d 43% ↻3d21h')
+    expect(row(over)).toBe(`Explore · Haiku 4.5 · ctx 42K · ${FIVE_ROW} · ${SEVEN_ROW}`)
     expect(tone(over, 'Explore')).toBe('dim')
     expect(tone(over, '42K')).toBe('plain')
   })
 
-  test('a narrow row cuts git first', () => {
+  test('a narrow row drops the meters, then the pace words', () => {
+    expect(row({ git: null }, cells(GAUGES))).toBe(GAUGES)
+    expect(row({ git: null }, cells(GAUGES) - 1)).toBe(WORDS)
+    expect(row({ git: null }, cells(WORDS) - 1)).toBe(BARE)
+  })
+
+  test('a narrow row cuts git to 12 cells before it drops a meter', () => {
     const git = { branch: 'feature/a-very-long-branch-name', added: 1, changed: 0 }
     const full = row({ git })
-    expect(row({ git }, GAUGES.length + SEP.length + 10)).toBe(`feature/a… · ${GAUGES}`)
-    expect(row({ git }, [...full].length)).toBe(full)
+    expect(row({ git }, cells(full))).toBe(full)
+    expect(row({ git }, cells(GAUGES) + SEP.length + 12)).toBe(`feature/a-v… · ${GAUGES}`)
+    expect(row({ git }, cells(GAUGES) + SEP.length + 11)).toBe(`feature/a-very-long-branch-n… · ${WORDS}`)
   })
 
   test('the gauges are never cut', () => {
-    expect(row({}, 20)).toBe(GAUGES)
+    expect(row({}, 20)).toBe(BARE)
   })
 })
 

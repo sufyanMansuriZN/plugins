@@ -20,7 +20,7 @@ const USAGE: SessionUsage = {
     { kind: 'seven_day', percentUsed: 43, resetsAt: new Date(NOW + (3 * 24 + 21) * 60 * MIN).toISOString() },
   ],
 }
-const GAUGES = '5h 66% ↻46m · 7d 43% ↻3d21h'
+const GAUGES = '5h ━━━━━─── 66% 56m behind ↻46m · 7d ━━━───── 43% on pace ↻3d21h'
 const SURFACES = ['terminal', 'desktop'] as const
 
 // the engine beneath the plugin: a session in repo `main`, two subagents, one of them yet to make a request
@@ -88,12 +88,25 @@ test('a subagent with no step yet: its type, no model and no context', async ($,
   }
 })
 
-test('a narrow band cuts git only', async ($, on) => {
+test('the band draws pace in theme colors: behind blue, on pace green', async ($, on) => {
+  await engine($, on)
+  for (const surface of SURFACES) {
+    const ui = await $.ui.mount({
+      plugin: 'session-bar', surface, component: 'AbovePrompt',
+      props: { hasSurvey: false, isWorking: false, maxRows: 3, bodyColumns: 200, scroll: { offset: 0, bodyRows: 3 }, view: {} },
+    })
+    const color = async (text: string) => (await ui.find({ type: 'Text', text }))?.props.color
+    expect([await color(' 56m behind'), await color('──'), await color(' on pace')], surface).toEqual(['suggestion', 'suggestion', 'success'])
+    await ui.unmount()
+  }
+})
+
+test('a narrow band cuts git, then drops the meters and the pace words', async ($, on) => {
   await engine($, on, '# branch.oid 0123456789abcdef\n# branch.head feature/a-very-long-branch-name\n? new.txt\n')
   const gauges = `Opus 5.5 1M · ctx 6% · ${GAUGES}`
   for (const surface of SURFACES) {
-    expect(await rowOn($, surface, undefined, [...gauges].length + 3 + 10), surface).toBe(`feature/a… · ${gauges}`)
-    expect(await rowOn($, surface, undefined, 20), surface).toBe(gauges)
+    expect(await rowOn($, surface, undefined, [...gauges].length + 3 + 12), surface).toBe(`feature/a-v… · ${gauges}`)
+    expect(await rowOn($, surface, undefined, 20), surface).toBe('Opus 5.5 1M · ctx 6% · 5h 66% ↻46m · 7d 43% ↻3d21h')
   }
 })
 

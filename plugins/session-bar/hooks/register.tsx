@@ -13,6 +13,8 @@ const TONE: Record<Run['tone'], { dimColor?: boolean; color?: string }> = {
   dim: { dimColor: true },
   yellow: { color: 'warning' },
   red: { color: 'error' },
+  green: { color: 'success' },
+  blue: { color: 'suggestion' },
 }
 
 const refreshGit = async ($: EngineInterface) => {

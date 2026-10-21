@@ -262,6 +262,10 @@ describe('segments', () => {
     expect(zones({ git: LONG, ctx: null, windows: [] }, 26)).toEqual(['plugins (f…) · Opus 5.5 1M', ''])
   })
 
+  test('a cut that ends on a space drops it before the …', () => {
+    expect(zones({ git: LONG, ctx: null, windows: [] }, 57)).toEqual(['plugins (feature/a-very-long-branch-name…) · Opus 5.5 1M', ''])
+  })
+
   test('the branch sits in dim parentheses beside the repo name, in one segment', () => {
     const { left } = segments(input(), 500)
     expect(left.map(s => s.map(r => r.text).join(''))).toEqual(['plugins (main +3 ~2)', 'Opus 5.5 1M'])

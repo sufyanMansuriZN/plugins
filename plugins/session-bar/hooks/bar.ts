@@ -231,9 +231,9 @@ const SHEDS: readonly Key[] = ['branch', 'where']
 const namesWidth = (names: Name[], keeps: Partial<Record<Key, number>> = {}) =>
   names.reduce((n, x) => n + Math.min(cells(x.text), keeps[x.key] ?? Infinity), 0) + SEP.length * Math.max(0, names.length - 1)
 
-// a cut name ends with …; one with fewer than 2 cells of room is left out
+// a cut name ends with …, never a space then …; one with fewer than 2 cells of room is left out
 const cut = (text: string, room: number): string | null =>
-  cells(text) <= room ? text : room >= 2 ? `${[...text].slice(0, room - 1).join('')}…` : null
+  cells(text) <= room ? text : room >= 2 ? `${[...text].slice(0, room - 1).join('').trimEnd()}…` : null
 
 const shed = (names: Name[], key: Key, room: number): Name[] => {
   const over = namesWidth(names) - room

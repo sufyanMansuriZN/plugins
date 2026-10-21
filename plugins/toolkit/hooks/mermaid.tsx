@@ -140,7 +140,7 @@ export const register: Register = on => {
   const started = new Set<string>()
   let queue: Promise<unknown> = Promise.resolve()
 
-  on('session.start', async ($, e, next) => {
+  on('session.start', { surface: 'terminal' }, async ($, e, next) => {
     const env: TerminalEnv = {
       TERM_PROGRAM: await $.env.get('TERM_PROGRAM'),
       TERM: await $.env.get('TERM'),

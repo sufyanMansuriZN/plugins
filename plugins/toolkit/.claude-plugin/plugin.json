@@ -10,6 +10,12 @@
       "title": "Mermaid preview",
       "description": "Draw each mermaid block of a reply as a picture, in Ghostty or kitty.",
       "default": true
+    },
+    "cd": {
+      "type": "boolean",
+      "title": "Change session directory",
+      "description": "Let Claude move the session to another folder, as /cd does. It asks you to approve each move.",
+      "default": true
     }
   }
 }

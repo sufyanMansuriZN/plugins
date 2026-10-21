@@ -152,7 +152,7 @@ export const register: Register = on => {
       await $.fs.write(`${dir}/puppeteer.json`, JSON.stringify(PUPPETEER_CONFIG))
       await $.fs.write(`${dir}/mermaid.json`, JSON.stringify(MERMAID_CONFIG))
       // Set last: a reply drawn before it reads no dir, is left to the engine, and redraws once set.
-      await $.state.set({ plugin: 'mermaid-preview', key: 'dir' }, dir)
+      await $.state.set({ plugin: 'toolkit', key: 'mermaidDir' }, dir)
     }
     return next(e)
   })
@@ -161,7 +161,7 @@ export const register: Register = on => {
     if (e.surface !== 'terminal' || e.props.isSummary || !e.props.text.includes('```mermaid')) return next(e)
     const parts = split(e.props.text)
     if (!parts.some(part => part.kind === 'mermaid')) return next(e)
-    const dir = await read($, { plugin: 'mermaid-preview', key: 'dir' } as const)
+    const dir = await read($, { plugin: 'toolkit', key: 'mermaidDir' } as const)
     if (!dir) return next(e)
 
     const { Box, Button, Image, Markdown, Text } = $.ui.resolve(e)
@@ -171,8 +171,8 @@ export const register: Register = on => {
       parts.map(async (part, index) => {
         if (part.kind === 'text') return <Markdown text={part.text} />
         const id = await diagramId(part.source)
-        const diagramRef = { plugin: 'mermaid-preview', key: 'diagram', id } as const
-        const sourceRef = { plugin: 'mermaid-preview', key: 'isSource', id: `${e.requestId}:${index}` } as const
+        const diagramRef = { plugin: 'toolkit', key: 'mermaidDiagram', id } as const
+        const sourceRef = { plugin: 'toolkit', key: 'mermaidIsSource', id: `${e.requestId}:${index}` } as const
 
         // Draws the diagram, and a sideways flowchart too wide for this terminal top to bottom as well,
         // then stores the outcome.

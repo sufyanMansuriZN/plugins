@@ -6,6 +6,6 @@ export type Diagram =
 
 declare module 'claude-code' {
   interface PluginState {
-    'mermaid-preview': { dir: string; diagram: StateFamily<Diagram>; isSource: StateFamily<boolean> }
+    toolkit: { mermaidDir: string; mermaidDiagram: StateFamily<Diagram>; mermaidIsSource: StateFamily<boolean> }
   }
 }

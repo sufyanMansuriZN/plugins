@@ -2,7 +2,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 import type { On, RenderViewport } from 'claude-code'
 
-import { cellsOf, diagramId, drawsPictures, pick, pngSize, reasonOf, split, upright } from './register'
+import { cellsOf, diagramId, drawsPictures, pick, pngSize, reasonOf, split, upright } from './mermaid'
 import type { Diagram, Picture } from '../types'
 
 const DIR = '/home/me/.cache/claude-mermaid'
@@ -22,8 +22,8 @@ type Host = { state: Map<string, { value: unknown; version: number }>; files: Ma
 function engine(on: On, setup: { dir?: string; diagrams?: Record<string, Diagram>; width?: number; exitCode?: number; stderr?: string } = {}): Host {
   const host: Host = { state: new Map(), files: new Map(), runs: [] }
   const at = (e: { key: string; id?: string }) => `${e.key}:${e.id ?? ''}`
-  if (setup.dir) host.state.set('dir:', { value: setup.dir, version: 1 })
-  for (const [id, diagram] of Object.entries(setup.diagrams ?? {})) host.state.set(`diagram:${id}`, { value: diagram, version: 1 })
+  if (setup.dir) host.state.set('mermaidDir:', { value: setup.dir, version: 1 })
+  for (const [id, diagram] of Object.entries(setup.diagrams ?? {})) host.state.set(`mermaidDiagram:${id}`, { value: diagram, version: 1 })
   on('ui.render', ($, e) => {
     const { Text } = $.ui.resolve(e)
     return <Text>engine drawing</Text>
@@ -59,7 +59,7 @@ function engine(on: On, setup: { dir?: string; diagrams?: Record<string, Diagram
 
 function mount($: Engine, text: string, options: { first?: boolean; viewport?: RenderViewport } = {}) {
   return $.ui.mount({
-    plugin: 'mermaid-preview',
+    plugin: 'toolkit',
     surface: 'terminal',
     component: 'AssistantMessage',
     props: { text, isFirstOfReply: options.first ?? true },
@@ -138,7 +138,7 @@ test('session start in Ghostty writes the drawing settings with the network bloc
   await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
   expect(host.files.get(`${DIR}/puppeteer.json`)).toContain('--proxy-server=http://127.0.0.1:9')
   expect(host.files.get(`${DIR}/mermaid.json`)).toContain('"htmlLabels":false')
-  expect(host.state.get('dir:')?.value).toBe(DIR)
+  expect(host.state.get('mermaidDir:')?.value).toBe(DIR)
 })
 
 test('session start through tmux leaves every reply to the engine', async ($, on) => {
@@ -146,9 +146,22 @@ test('session start through tmux leaves every reply to the engine', async ($, on
   mock.env(on, { HOME: '/home/me', TERM_PROGRAM: 'ghostty', TMUX: '/tmp/tmux-1/default,1,0' })
   on('session.start', () => ({ cwd: '/w' }))
   await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
-  expect(host.state.has('dir:')).toBe(false)
+  expect(host.state.has('mermaidDir:')).toBe(false)
   const ui = await mount($, FENCE)
   expect(await ui.find({ type: 'Text', text: /engine drawing/ })).toBeDefined()
+})
+
+test('with mermaid off, session start writes nothing and a drawn diagram is left to the engine', { options: { mermaid: false } }, async ($, on) => {
+  const host = engine(on, { diagrams: { [await diagramId(SOURCE)]: { status: 'drawn', picture: PICTURE } } })
+  mock.env(on, { HOME: '/home/me', TERM_PROGRAM: 'ghostty' })
+  on('session.start', () => ({ cwd: '/w' }))
+  await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
+  expect(host.files.size).toBe(0)
+  expect(host.state.has('mermaidDir:')).toBe(false)
+  host.state.set('mermaidDir:', { value: DIR, version: 1 })
+  const ui = await mount($, FENCE)
+  expect(await ui.find({ type: 'Text', text: /engine drawing/ })).toBeDefined()
+  expect(await ui.find({ type: 'Image' })).toBeUndefined()
 })
 
 test('a drawn diagram replaces its fence with a picture in the engine frame', async ($, on) => {
@@ -179,7 +192,7 @@ test('a new diagram is drawn once by a pinned mmdc in the cache dir, then shown'
   expect(npx[0]?.argv).toContain('@mermaid-js/mermaid-cli@12.0.0')
   expect(npx[0]?.cwd).toBe(DIR)
   const id = await diagramId(SOURCE)
-  expect(host.state.get(`diagram:${id}`)?.value).toEqual({ status: 'drawn', picture: { file: `${DIR}/${id}.png`, width: 360, height: 180 } })
+  expect(host.state.get(`mermaidDiagram:${id}`)?.value).toEqual({ status: 'drawn', picture: { file: `${DIR}/${id}.png`, width: 360, height: 180 } })
   await ui.redraw()
   expect(await ui.find({ type: 'Image' })).toBeDefined()
 })
@@ -190,7 +203,7 @@ test('a sideways flowchart too wide for the terminal is also drawn upright, and 
   const ui = await mount($, FENCE, { viewport: { columns: 100, rows: 40 } })
   await settle(clock)
   const id = await diagramId(SOURCE)
-  expect(host.state.get(`diagram:${id}`)?.value).toMatchObject({ upright: { file: `${DIR}/${id}-td.png`, width: 400 } })
+  expect(host.state.get(`mermaidDiagram:${id}`)?.value).toMatchObject({ upright: { file: `${DIR}/${id}-td.png`, width: 400 } })
   await ui.redraw()
   expect((await ui.find({ type: 'Image' }))?.props).toMatchObject({ source: { file: `${DIR}/${id}-td.png` } })
 })

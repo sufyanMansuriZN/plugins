@@ -3,7 +3,9 @@ import type { Register, RenderElement } from 'claude-code'
 
 import type { Diagram, Picture } from '../types'
 import { blocks } from './blocks'
+import { X11_CLIPBOARD_PY } from './clipboard'
 import { cellsOf, diagramId, isTooWide, MMDC_TIMEOUT_MS, mmdcArgv, pick, pngSize, reasonOf, upright } from './mermaid'
+import { toHtml, toTsv } from './tables'
 
 // The one hook that draws a reply. Each tool that draws part of a reply would otherwise take over
 // the whole reply, and a second such hook would draw over the first.
@@ -13,6 +15,7 @@ export const register: Register = on => {
   let queue: Promise<unknown> = Promise.resolve()
 
   on('ui.render', { component: 'AssistantMessage' }, async ($, e, next) => {
+    // $.ui.copy has no path to a remote surface's clipboard yet, and only a terminal draws pictures.
     if (e.surface !== 'terminal' || e.props.isSummary) return next(e)
     // Empty until session start finds a terminal that draws pictures; till then fences stay text.
     const dir = (e.props.text.includes('```mermaid') ? await read($, { plugin: 'toolkit', key: 'mermaidDir' } as const) : undefined) ?? ''
@@ -21,10 +24,49 @@ export const register: Register = on => {
 
     const { Box, Button, Image, Markdown, Text } = $.ui.resolve(e)
     const columns = e.viewport?.columns ?? 80
+    const tableCount = parts.filter(part => part.kind === 'table').length
 
     const drawn = await Promise.all(
       parts.map(async (part, index) => {
         if (part.kind === 'text') return <Markdown text={part.text} />
+        if (part.kind === 'table') {
+          const { table } = part
+          const tableNo = parts.slice(0, index).filter(earlier => earlier.kind === 'table').length + 1
+          const which = tableCount === 1 ? 'table' : `table ${tableNo}`
+          const rows = `(${table.rows.length} rows)`
+
+          const copyPlain = async (text: string, as: string) => {
+            const copied = await $.ui.copy({ text, surface: 'terminal' })
+            $.ui.toast(copied.isCopied ? `Copied ${which} as ${as} ${rows}` : `Could not copy ${which}: ${copied.reason}`)
+          }
+          // $.ui.copy holds plain text only. The X11 script offers HTML and the cells at once, so
+          // Teams and spreadsheets get a table and plain-text apps still paste the cells. Without
+          // X11 (Wayland only, macOS, no python3), the cells alone.
+          const copyRich = async () => {
+            const tsv = toTsv(table)
+            const { exitCode } = await $.process
+              .run(['python3', '-I', '-c', X11_CLIPBOARD_PY], { stdin: JSON.stringify({ text: tsv, html: toHtml(table) }), timeoutMs: 5000 })
+              .catch(() => ({ exitCode: -1 }))
+            if (exitCode === 0) $.ui.toast(`Copied ${which} ${rows}`)
+            else await copyPlain(tsv, 'tab-separated cells (a formatted copy needs an X11 desktop)')
+          }
+          // hover underlines the nearest keyed Box, so each button gets its own.
+          const link = (key: string, label: string, onPress: () => Promise<void>) => (
+            <Box key={`hover:${key}`}>
+              <Button key={key} plain dimColor hover={{ underline: true }} label={label} onPress={onPress} />
+            </Box>
+          )
+          return (
+            <Box flexDirection="column" marginY={1}>
+              <Markdown text={table.markdown} />
+              <Box key={`buttons:${tableNo}`} flexDirection="row">
+                {link(`md:${tableNo}`, 'copy as markdown', () => copyPlain(table.markdown, 'markdown'))}
+                <Text dimColor>{'  ·  '}</Text>
+                {link(`rich:${tableNo}`, 'copy table', copyRich)}
+              </Box>
+            </Box>
+          )
+        }
         const id = await diagramId(part.source)
         const diagramRef = { plugin: 'toolkit', key: 'mermaidDiagram', id } as const
         const sourceRef = { plugin: 'toolkit', key: 'mermaidIsSource', id: `${e.requestId}:${index}` } as const

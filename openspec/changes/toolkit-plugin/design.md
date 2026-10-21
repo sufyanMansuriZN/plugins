@@ -32,14 +32,14 @@ The engine loads one hooks module per plugin (`hooks/hooks.json` names one path)
 
 **The tool is named `change_session_directory`.** The model picks tools by name and description, and `cd` reads like a shell command. The name, the description (what it does, when to use it, when not to), the input schema and the texts come verbatim from the live-tested dev copy. Tools a plugin registers are listed to the model as `mcp__<plugin>__<name>`, so it becomes `mcp__toolkit__change_session_directory`. The option key stays `cd`.
 
-**The tool asks the person itself.** In a live test, auto mode let the call through with no prompt, so permission rules cannot be the gate. After the directory check, the hook calls `$.ui.ask` with `Move` and `Stay`. Only the exact answer `Move` queues the move. `Stay`, text typed under Other, and a rejected ask (a closed dialog, or a `-p` run) all return `{ deny }` with a reason the model reads, and queue nothing. There is no "don't ask again".
+**The tool asks the person itself.** In a live test, auto mode let the call through with no prompt, so permission rules cannot be the gate. After the directory check, the hook calls `$.ui.ask` with `Stay` first, then `Move`. Only the exact answer `Move` queues the move. `Stay`, text typed under Other, and a rejected ask (a closed dialog, or a `-p` run) all return `{ deny }` with a reason the model reads, and queue nothing. There is no "don't ask again".
 
 **Diagram pictures are reused.** A picture's file name is a hash of the drawing settings and the source, and the cache folder is still `~/.cache/claude-mermaid`. So pictures drawn by `mermaid-preview` are found on disk and not drawn again.
 
 ## Risks / Trade-offs
 
 - [The dev mod and `toolkit` both loaded] → The model sees two tools that move the session. The README says to remove the dev mod.
-- [The dialog resolves with nobody there] → `AskUserQuestion` results can carry `afkTimeoutMs` when the dialog auto-resolves after idle, and `$.ui.ask` returns only the label. Whether an idle dialog can resolve to `Move` is not known. The live check (task 4.1) leaves the dialog open past the idle time and confirms the session stays.
+- [The dialog resolves with nobody there] → `AskUserQuestion` results can carry `afkTimeoutMs` when the dialog auto-resolves after idle, and `$.ui.ask` returns only the label. The engine refuses a plugin's direct `AskUserQuestion` call ("that is $.ui.ask (host check)"), so the hook cannot read that marker. `Stay` is listed first, so an idle dialog that takes the first option keeps the session. Whether an idle dialog can pick another option is not known. The live check (task 4.1) leaves the dialog open past the idle time and confirms the session stays.
 - [A user had `mermaid-preview` installed] → It no longer updates. They install `toolkit@plugins` and uninstall `mermaid-preview@plugins`.
 - [The root module grows one line per tool] → Accepted. The loader rule leaves no shorter form, and each line is the same shape.
 

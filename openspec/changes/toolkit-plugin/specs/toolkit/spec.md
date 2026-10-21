@@ -56,7 +56,7 @@ The `cd` tool SHALL register a model tool named `change_session_directory`, call
 - **THEN** the tool `change_session_directory` is registered with `path` and `task` required
 
 ### Requirement: Every move needs the person's approval
-For a directory, the tool SHALL ask the person in a dialog `Move this session to <realPath>?` with `Claude's plan there: <task>`, and the options `Move` and `Stay`. Only `Move` SHALL queue the move: `/cd <realPath>` from a timer, then a prompt that names the directory and the task. Every other outcome SHALL deny the call and run no command. No option, setting, permission rule or auto mode SHALL skip the dialog.
+For a directory, the tool SHALL ask the person in a dialog `Move this session to <realPath>?` with `Claude's plan there: <task>`, and the options `Stay` then `Move`, `Stay` first. Only `Move` SHALL queue the move: `/cd <realPath>` from a timer, then a prompt that names the directory and the task. Every other outcome SHALL deny the call and run no command. No option, setting, permission rule or auto mode SHALL skip the dialog.
 
 #### Scenario: Approve
 - **WHEN** the model calls the tool with a link that resolves to `/w/app` and task `Run the tests.`, and the person chooses `Move`

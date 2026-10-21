@@ -110,7 +110,7 @@ const meter = (percent: number, cellTone: (i: number, filled: boolean) => Tone, 
     const filled = ((i + 0.5) / CELLS) * 100 <= percent
     return { text: filled ? '━' : '─', tone: cellTone(i, filled) }
   })
-  if (tick !== null) glyphs.splice(tick, 0, { text: '╋', tone: 'plain' })
+  if (tick !== null) glyphs.splice(tick, 0, { text: '┃', tone: 'plain' })
   return glyphs.reduce<Run[]>((runs, g) => {
     const last = runs.at(-1)
     if (last?.tone === g.tone) last.text += g.text

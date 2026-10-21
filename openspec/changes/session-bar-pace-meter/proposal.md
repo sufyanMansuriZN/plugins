@@ -7,7 +7,7 @@ The person wants to use all of each usage window by its reset: 100% of 5h when 5
 ## What Changes
 
 - Each usage window gets an 8-cell meter between its label and its percent. A filled cell (`━`) is used, an empty cell (`─`) is not.
-- A window with a reset time also gets a tick (`╋`) in its meter, at the cell boundary nearest an even pace through the window: `5h ━━━━━──╋─ 66% ↻46m`. The pace counts around the clock, for 5h and 7d alike.
+- A window with a reset time also gets a tick (`┃`) in its meter, at the cell boundary nearest an even pace through the window: `5h ━━━━━──┃─ 66% ↻46m`. The pace counts around the clock, for 5h and 7d alike.
 - Filled cells after the tick are overspend: yellow, red when more than 20 points ahead. Empty cells before the tick are allowance still to use: blue. Within 5 points of an even pace, the meter shows neither.
 - The percent takes the pace's color: green on pace, blue behind, yellow ahead, red when more than 20 points ahead or used up. The old rule (yellow over 15 ahead, red over 30 ahead or from 90%) goes.
 - The spend limit keeps its 50%/80% colors and gets a meter with no tick.

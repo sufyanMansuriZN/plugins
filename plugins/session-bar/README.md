@@ -22,15 +22,6 @@ claude plugin install session-bar@plugins
 
 There is no setup step. The row shows in the next session.
 
-## Update from 2.x
-
-Version 2.x drew the row through Claude Code's `statusLine` setting. After you update to 3.0.0, you see that old row and the new band until you remove the old one:
-
-1. In a Claude Code session, run `/session-bar:remove`.
-2. Read the line it prints. It names the file it changed.
-
-The command puts back the `statusLine` you had before 2.x setup, or removes the key when you had none. It needs `python3` on `PATH`. If your `statusLine` does not run session-bar, it changes nothing.
-
 ## What the row shows
 
 Each part is left out when it has no value.

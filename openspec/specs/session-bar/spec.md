@@ -131,17 +131,6 @@ The plugin SHALL fit the row in the band's `bodyColumns`, which already leaves o
 - **WHEN** `bodyColumns` is 20
 - **THEN** the row has no git segment and every other segment is whole
 
-### Requirement: Remove command
-`/session-bar:remove` SHALL run `setup.py --remove`, for people who ran the 2.x `/session-bar:setup`. When `statusLine` in `settings.json` runs a `plugins/session-bar/statusline.py`, it SHALL put back the `statusLine` saved in `session-bar/previous-statusline.json` and delete that file, or remove the key when none was saved. When `statusLine` does not run session-bar, it SHALL change nothing.
-
-#### Scenario: Restore
-- **WHEN** 2.x setup saved `~/bin/my-statusline.sh` and remove runs
-- **THEN** `statusLine` runs `~/bin/my-statusline.sh` again and every other key is as it was
-
-#### Scenario: Nothing to remove
-- **WHEN** `statusLine` runs `~/bin/my-statusline.sh`
-- **THEN** remove says nothing changed and `settings.json` is as it was
-
 ### Requirement: Bar follows the transcript in view
 The band SHALL read `e.props.view`. With the main conversation in view (no `agentId`) it SHALL show the main loop's model and context. With a subagent's transcript in view it SHALL show, after git, that agent's type from `$.agent.list()` (its `name` when it has no type match), dim, then the model its last request named, labelled with no window from the main loop, then its context as tokens. Until the agent's first request, the model and context SHALL be left out rather than show the main loop's.
 

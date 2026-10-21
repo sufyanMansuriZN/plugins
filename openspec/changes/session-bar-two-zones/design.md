@@ -24,6 +24,9 @@
 
 **`segments` returns `{ left, right }`.** `BarInput` gains `where`. The left zone is a list of names, each `{ key, text, tone }`, in the order where, branch, agent (dim), model. The right zone is ctx and the windows, made as before. The render draws each zone's segments joined by dim ` · ` runs.
 
+**The branch sits in parentheses beside the repo name.** After the fit, `joinBranch` puts where and branch in one segment, `plugins (main +3 ~2)`, with ` (` and `)` as dim runs. The two runs take 3 cells, the same as the ` · ` they replace, so the fit counts names and separators as before and needs no change. A cut branch stays inside the parentheses (`plugins (f…)`). A branch that is left out takes them with it. A branch without a where shows bare.
+- *Why after the fit.* The cut and shed work on plain names. Joining before them would make the branch's cut reach into the parentheses.
+
 **One `GAP` for the fit and the render.** `GAP = SEP.length` (3). The fit counts `GAP` before a non-empty right zone. The render draws the right zone in a `Box` with `marginLeft={GAP}`, and only when it has segments. The left zone is in a `Box` with `flexGrow={1}`, so it takes the free room and the right zone sits at the band's right edge. Both use the same constant, so a row that the fit accepts at exactly `bodyColumns` does not wrap.
 - *Alternative: a run of spaces of `columns - width(left) - width(right)`.* Rejected, as in the archived change: it needs a known width in the pure core, and a resize between render and paint makes the row too long.
 

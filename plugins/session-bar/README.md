@@ -59,7 +59,7 @@ When half of the window has gone, the tick is in the middle:
 
 - When you are within 5 points of an even pace, you are on pace. The window shows no word.
 - A used cell after the tick is use ahead of pace. If you keep this rate, you run out before the reset.
-- The meter never has a color. Used cells and the tick are in the normal color, and unused cells are dim.
+- The meter never has a color. Used cells are in the normal color, and unused cells are dim. The tick is dim when the cell after it is unused, so its thin arms match the line next to it.
 
 ### Context meter
 

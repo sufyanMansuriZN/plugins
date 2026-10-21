@@ -250,8 +250,23 @@ Each window SHALL show an 8-cell meter between its label and its percent. With h
 - **WHEN** the spend limit is at 80% with no reset time
 - **THEN** the meter is `━━━━━━╾` in the default color and `─` dim, with no tick
 
+### Requirement: Tick tone
+A cell has one tone, so a meter's tick SHALL take the tone of the cell after it, or of the cell before it at the end of the meter. A tick on the unused track is dim, so its light arms match the `─` beside them.
+
+#### Scenario: Before unused cells
+- **WHEN** 5h is at 30% with 2h30m left
+- **THEN** the tick `╂` is dim, in one run with the `─` cells around it
+
+#### Scenario: Inside the fill
+- **WHEN** 5h is at 54% with 2h30m left
+- **THEN** the tick `╋` is in the default color, as is the `╾` after it
+
+#### Scenario: At the end
+- **WHEN** 5h is at 91% with 10m left, then at 6% with 10m left
+- **THEN** the last tick `┨` is in the default color after `╾`, then dim after `─`
+
 ### Requirement: Pace tick
-A window with a pace SHALL insert a tick in the default color at cell boundary round(mark / 12.5), 0 to 8. Its left arm SHALL be heavy when the cell before it is `━`, its right arm heavy when the cell after it is `━` or `╾`, light beside any other cell, and absent at an end. Whatever the pace, no cell SHALL be in color: the used cells after the tick show the overspend by their place, and the badge names it.
+A window with a pace SHALL insert a tick at cell boundary round(mark / 12.5), 0 to 8. Its left arm SHALL be heavy when the cell before it is `━`, its right arm heavy when the cell after it is `━` or `╾`, light beside any other cell, and absent at an end. Its tone SHALL follow the Tick tone requirement. Whatever the pace, no cell SHALL be in color: the used cells after the tick show the overspend by their place, and the badge names it.
 
 #### Scenario: Ahead
 - **WHEN** 5h is at 70% with 2h30m left
@@ -259,11 +274,11 @@ A window with a pace SHALL insert a tick in the default color at cell boundary r
 
 #### Scenario: Behind
 - **WHEN** 5h is at 30% with 2h30m left
-- **THEN** the segment reads `5h ━━╾─╂──── 30%  behind  2h30m`, with `━━╾` and `╂` in the default color and every `─` dim
+- **THEN** the segment reads `5h ━━╾─╂──── 30%  behind  2h30m`, with `━━╾` in the default color and `─╂────` dim
 
 #### Scenario: On pace
 - **WHEN** 5h is at 50% with 2h30m left
-- **THEN** the segment reads `5h ━━━━╉──── 50% 2h30m`, with `━━━━╉` in the default color and `────` dim
+- **THEN** the segment reads `5h ━━━━╉──── 50% 2h30m`, with `━━━━` in the default color and `╉────` dim
 
 #### Scenario: A half cell beside the tick
 - **WHEN** 5h is at 46%, then at 54%, with 2h30m left
@@ -327,7 +342,7 @@ In the main view the context segment SHALL show the 8-cell meter of the Usage wi
 - **THEN** the segment reads `ctx 60K`
 
 ### Requirement: Context tick
-The context meter SHALL insert a tick in the default color at cell boundary round(tick tokens / window × 8), with the arms of the Pace tick requirement. The tick tokens SHALL come from a fixed table by window: 250,000 above 200,000 tokens, where Anthropic's long-context scores drop, and 160,000 at 200,000 or less, which compacts at its edge (`openspec/changes/archive/2026-10-03-session-bar-visual-redesign/research-context-size.md`). A window smaller than its tick tokens SHALL have no tick.
+The context meter SHALL insert a tick at cell boundary round(tick tokens / window × 8), with the arms and tone of the Pace tick requirement. The tick tokens SHALL come from a fixed table by window: 250,000 above 200,000 tokens, where Anthropic's long-context scores drop, and 160,000 at 200,000 or less, which compacts at its edge (`openspec/changes/archive/2026-10-03-session-bar-visual-redesign/research-context-size.md`). A window smaller than its tick tokens SHALL have no tick.
 
 #### Scenario: A 1M window
 - **WHEN** the context holds 300,000 tokens of a 1,000,000-token window

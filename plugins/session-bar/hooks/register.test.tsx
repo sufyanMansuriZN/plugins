@@ -197,17 +197,19 @@ test('a narrow band drops the meters, then the words, then cuts the branch, then
   }
 })
 
-test('a badge is black bold text on its Okabe-Ito color; the percent and the tick stay plain', async ($, on) => {
+test('a badge is black bold text on its Okabe-Ito color; the percent stays plain, and a tick on the unused track is dim', async ($, on) => {
   await engine($, on)
   for (const surface of SURFACES) {
     const ui = await mountBand($, surface)
     const props = async (text: string) => (await ui.find({ type: 'Text', text }))?.props
     const behind = await props(' behind ')
     expect([behind?.backgroundColor, behind?.color, behind?.bold], surface).toEqual(['#56B4E9', '#000000', true])
-    for (const plain of ['66%', '43%', '╂']) {
+    for (const plain of ['66%', '43%']) {
       const p = await props(plain)
       expect([p?.color, p?.backgroundColor, p?.dimColor], `${surface} ${plain}`).toEqual([undefined, undefined, undefined])
     }
+    const tick = await props('╂')
+    expect([tick?.color, tick?.backgroundColor, tick?.dimColor], `${surface} tick`).toEqual([undefined, undefined, true])
     await ui.unmount()
   }
 })

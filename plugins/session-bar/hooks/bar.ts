@@ -125,6 +125,7 @@ const PACE: Record<Pace['kind'], (p: Pace) => { word: string; tone: Tone }> = {
 }
 
 type Arm = 'none' | 'light' | 'heavy'
+type Cell = { text: string; tone: 'plain' | 'dim' }
 
 // the tick takes each side's arm from the cell beside it, so the line stays unbroken
 // and a fill that stops at the tick does not seem to run past it
@@ -137,12 +138,14 @@ const TICK: Record<Arm, Record<Arm, string>> = {
 // a half-used cell is thick on its left half only
 const meter = (percent: number, tick: number | null): Run[] => {
   const halves = Math.min(CELLS * 2, Math.round((percent / 100) * CELLS * 2))
-  const glyphs = Array.from({ length: CELLS }, (_, i): Run =>
+  const glyphs = Array.from({ length: CELLS }, (_, i): Cell =>
     halves > i * 2 + 1 ? { text: '━', tone: 'plain' } : halves === i * 2 + 1 ? { text: '╾', tone: 'plain' } : { text: '─', tone: 'dim' })
   if (tick !== null) {
-    const left = (c?: Run): Arm => (c ? (c.text === '━' ? 'heavy' : 'light') : 'none')
-    const right = (c?: Run): Arm => (c ? (c.text === '─' ? 'light' : 'heavy') : 'none')
-    glyphs.splice(tick, 0, { text: TICK[left(glyphs[tick - 1])][right(glyphs[tick])], tone: 'plain' })
+    const left = (c?: Cell): Arm => (c ? (c.text === '━' ? 'heavy' : 'light') : 'none')
+    const right = (c?: Cell): Arm => (c ? (c.text === '─' ? 'light' : 'heavy') : 'none')
+    // a cell has one tone, so the tick takes the one of the line it leads into, else of the line it ends
+    const { tone } = glyphs[tick] ?? glyphs[tick - 1]!
+    glyphs.splice(tick, 0, { text: TICK[left(glyphs[tick - 1])][right(glyphs[tick])], tone })
   }
   return glyphs.reduce<Run[]>((runs, g) => {
     const last = runs.at(-1)

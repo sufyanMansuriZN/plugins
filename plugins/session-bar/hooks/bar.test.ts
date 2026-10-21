@@ -188,7 +188,7 @@ describe('segments', () => {
   test('the context meter fills over the whole window, with its tick at 250K on a 1M window', () => {
     const ctx = (tokens: number): Partial<BarInput> => ({ ctx: { kind: 'window', tokens, window: 1_000_000 }, windows: [] })
     expect(alone(ctx(60_000))).toBe('ctx ╾─╂────── 60K')
-    expect(meter(ctx(60_000))).toEqual([['╾', 'plain'], ['─', 'dim'], ['╂', 'plain'], ['──────', 'dim']])
+    expect(meter(ctx(60_000))).toEqual([['╾', 'plain'], ['─╂──────', 'dim']])
     expect(alone(ctx(300_000)), '30% is 4.8 half cells, 5').toBe('ctx ━━╋╾─────  300K ')
     expect(meter(ctx(300_000))).toEqual([['━━╋╾', 'plain'], ['─────', 'dim']])
     expect(alone(ctx(1_000_000)), 'a full window').toBe('ctx ━━╋━━━━━━  1M ')
@@ -197,7 +197,7 @@ describe('segments', () => {
   test('on a 200K window the tick is at 160K, 6.4 cells, so after cell 6', () => {
     const ctx = (tokens: number): Partial<BarInput> => ({ ctx: { kind: 'window', tokens, window: 200_000 }, windows: [] })
     expect(alone(ctx(120_000))).toBe('ctx ━━━━━─╂── 120K')
-    expect(meter(ctx(120_000))).toEqual([['━━━━━', 'plain'], ['─', 'dim'], ['╂', 'plain'], ['──', 'dim']])
+    expect(meter(ctx(120_000))).toEqual([['━━━━━', 'plain'], ['─╂──', 'dim']])
     expect(alone(ctx(170_000))).toBe('ctx ━━━━━━╋━─  170K ')
   })
 

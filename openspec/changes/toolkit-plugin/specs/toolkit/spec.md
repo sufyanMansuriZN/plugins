@@ -1,26 +1,22 @@
 ## ADDED Requirements
 
 ### Requirement: One plugin for many tools
-The marketplace SHALL ship a plugin named `toolkit` that expands Claude Code with tools. It SHALL load one hooks module, `hooks/register.tsx`. Each tool SHALL live in its own file under `hooks/` and export `register`. The root module SHALL hold one line per tool that calls that tool's `register` when its option allows it.
+The marketplace SHALL ship a plugin named `toolkit` that expands Claude Code with tools. It SHALL load one hooks module, `hooks/register.tsx`. Each tool SHALL live in its own file under `hooks/` and export `register`. The root module SHALL hold one line per tool that calls that tool's `register`, gated on the tool's option when it has one.
 
 #### Scenario: Install
 - **WHEN** a user runs `claude plugin install toolkit@plugins`
-- **THEN** the mermaid preview and the change session directory tool are both active, with no option set
+- **THEN** the mermaid preview, table copy and the change session directory tool are all active, with no option set
 
 #### Scenario: Adding a tool
 - **WHEN** a maintainer adds a tool
-- **THEN** the change is one new file in `hooks/`, one line in `hooks/register.tsx` and one field in `userConfig`
+- **THEN** the change is one new file in `hooks/` and one line in `hooks/register.tsx`, plus one field in `userConfig` when the tool can be turned off
 
-### Requirement: Each tool can be turned off
-The manifest's `userConfig` SHALL have one boolean field per tool, named by the tool's key, with a plain title and description and a default of `true`. A tool whose field is `false` SHALL register no hooks. The plugin's own hooks SHALL NOT add rows to `/config`.
+### Requirement: The change session directory tool can be turned off
+The manifest's `userConfig` SHALL have one boolean field, `cd`, with a plain title and description and a default of `true`. When it is `false`, the change session directory tool SHALL register no hooks. The mermaid preview and table copy SHALL have no option and SHALL always be on. The plugin's own hooks SHALL NOT add rows to `/config`.
 
 #### Scenario: Default
 - **WHEN** no option is stored for `toolkit`
 - **THEN** every tool registers its hooks
-
-#### Scenario: Mermaid off
-- **WHEN** the `mermaid` option is `false`
-- **THEN** session start writes no drawing settings, and a reply with a drawn mermaid block is left to the engine
 
 #### Scenario: cd off
 - **WHEN** the `cd` option is `false`
@@ -34,7 +30,7 @@ Every `$.state` key the plugin uses SHALL be under the `toolkit` plugin and SHAL
 - **THEN** the cache folder is stored at `{ plugin: 'toolkit', key: 'mermaidDir' }`
 
 ### Requirement: Mermaid preview
-The `mermaid` tool SHALL keep the behaviour of the `mermaid-preview` plugin 0.1.0, except that its session start hook runs only on the terminal surface. In Ghostty or kitty, and not through tmux, it SHALL draw each closed mermaid block of a reply as a picture with mermaid-cli 12.0.0 through `npx`, with a button that shows its source. Elsewhere it SHALL leave replies to the engine.
+The mermaid preview SHALL keep the behaviour of the `mermaid-preview` plugin 0.1.0, except that its session start hook runs only on the terminal surface. In Ghostty or kitty, and not through tmux, it SHALL draw each closed mermaid block of a reply as a picture with mermaid-cli 12.0.0 through `npx`, with a button that shows its source. Elsewhere it SHALL leave mermaid blocks as text.
 
 #### Scenario: A drawn diagram
 - **WHEN** a reply holds a mermaid block that is already drawn, in Ghostty
@@ -42,7 +38,41 @@ The `mermaid` tool SHALL keep the behaviour of the `mermaid-preview` plugin 0.1.
 
 #### Scenario: Through tmux
 - **WHEN** the session runs in Ghostty through tmux
-- **THEN** every reply is left to the engine
+- **THEN** a reply's mermaid blocks stay text
+
+### Requirement: One hook draws a reply
+The plugin SHALL draw a reply from one `ui.render` hook on `AssistantMessage`, on the terminal surface only and never for a summary. It SHALL split the reply into text, mermaid blocks and tables, a table inside a mermaid block not being a table. A reply with only text SHALL be left to the engine. Otherwise the blocks SHALL be drawn in order in the engine's reply frame, the bullet once.
+
+#### Scenario: A table and a diagram
+- **WHEN** a reply holds text, a table, more text and a mermaid block that is already drawn, in Ghostty
+- **THEN** the table is shown with its copy buttons under it, the diagram is shown as a picture, and the bullet shows once
+
+#### Scenario: No picture terminal
+- **WHEN** a reply holds a table and a mermaid block, and the terminal draws no pictures
+- **THEN** the mermaid block stays text and the table still has its copy buttons
+
+#### Scenario: Desktop
+- **WHEN** a reply with a table is drawn on the desktop surface
+- **THEN** the reply is left to the engine
+
+### Requirement: Table copy
+Under each table of a reply, the plugin SHALL draw the row `copy as markdown  ·  copy table`, two dim buttons with no brackets that underline on hover. A toast SHALL confirm each copy with the table's row count, and SHALL name the table by number when the reply has more than one.
+
+#### Scenario: Copy as markdown
+- **WHEN** the person presses `copy as markdown` under a table of 2 rows
+- **THEN** the table as written is copied and the toast says `Copied table as markdown (2 rows)`
+
+#### Scenario: Copy table on X11
+- **WHEN** the person presses `copy table`, and the X11 clipboard script exits 0
+- **THEN** the clipboard holds the table as `text/html` and as tab-separated cells, and the toast says `Copied table (2 rows)`
+
+#### Scenario: Copy table without X11
+- **WHEN** the person presses `copy table`, and the script exits with another code or `python3` does not run
+- **THEN** the tab-separated cells are copied, and the toast says `Copied table as tab-separated cells (a formatted copy needs an X11 desktop) (2 rows)`
+
+#### Scenario: Two tables
+- **WHEN** a reply holds two tables and the person presses `copy table` under the second
+- **THEN** the toast says `Copied table 2 (2 rows)`
 
 ### Requirement: Change session directory tool
 The `cd` tool SHALL register a model tool named `change_session_directory`, called as `mcp__toolkit__change_session_directory`. Its description SHALL say what the tool does, when to use it and when not to. Its input SHALL require `path` and `task`. A path that is not a directory SHALL be denied before anything is asked.

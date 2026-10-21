@@ -1,7 +1,7 @@
 {
   "name": "toolkit",
   "version": "0.1.0",
-  "description": "Expands Claude Code with tools, each one on until you turn it off in /plugin",
+  "description": "Expands Claude Code with tools: a mermaid preview, table copy and a change session directory tool",
   "license": "MIT",
   "types": "./types/index.d.ts",
   "userConfig": {

@@ -32,9 +32,13 @@ const props = (r: Run, inks: boolean) =>
   : inks && r.ink ? INK[r.ink]
   : r.tone === 'dim' ? { dimColor: true } : {}
 
+// the root the git segment and the name were last read in; a render that finds another reads them again
+let readRoot: string | null = null
+
 // the session's root, not its cwd or repo(): both follow a Bash call's `cd`, the root does not
 const refreshRepo = async ($: EngineInterface) => {
   const root = await $.session.root()
+  readRoot = root
   const inRoot = (...args: string[]) => $.process.run(['git', '--no-optional-locks', ...args], { cwd: root, timeoutMs: 2000 })
   let next: Git | null = null
   try {
@@ -103,12 +107,6 @@ export const register: Register = on => {
     return done
   })
 
-  // `/cd` moves the root; without this the bar names the old one until the next tick or turn
-  on('classic.CwdChanged', async ($, e, next) => {
-    void refreshRepo($)
-    return next(e)
-  })
-
   // a render reading $.session.usage() is not subscribed to it; the tick redraws the band with the new figures
   on('session.measure', async ($, e, next) => {
     await update($, tick, n => n + 1)
@@ -128,7 +126,9 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.props.hasSurvey) return next(e)
-    const [g, w, now, usage] = await Promise.all([read($, git), read($, where), $.clock.now(), $.session.usage(), read($, tick)])
+    const [g, w, now, usage, root] = await Promise.all([read($, git), read($, where), $.clock.now(), $.session.usage(), $.session.root(), read($, tick)])
+    // `/cd` raises no event the bar can rely on, and its output redraws the band
+    if (root !== readRoot) void refreshRepo($)
     const agentId = e.props.view?.agentId
     const shown = agentId ? await agentView($, agentId) : await mainView($, usage)
     const { left, right } = segments({ where: w, git: g, ...shown, windows: parseWindows(usage.rateLimits), now }, e.props.bodyColumns)

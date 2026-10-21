@@ -46,7 +46,6 @@ const engine = async ($: Engine, on: On, { porcelain = PORCELAIN, usage = USAGE,
   on('ui.render', () => h('Box', {}) as never)
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('session.root', () => ({ value: place.root }))
-  on('classic.CwdChanged', () => ({}))
   on('session.cwd', () => ({ value: SHELL }))
   on('session.repo', () => ({ value: null }))
   on('session.model', () => ({ value: 'claude-opus-5-5' }))
@@ -133,12 +132,10 @@ test("outside a git repo, the left zone starts with the session root's directory
   }
 })
 
-test('a `/cd` out of the repo names the new root at once', async ($, on) => {
+test('a `/cd` out of the repo: the next redraw reads the new root, with no event and no tick', async ($, on) => {
   const place = { root: ROOT }
-  const clock = await engine($, on, { place })
+  await engine($, on, { place })
   place.root = '/tmp'
-  await $.classic.CwdChanged({ old_cwd: ROOT, new_cwd: '/tmp' })
-  await clock.settle()
   expect((await zonesOn($, 'terminal')).left).toBe('tmp · Opus 5.5 1M')
 })
 

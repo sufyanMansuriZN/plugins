@@ -55,7 +55,7 @@ The git segment SHALL be the branch, then `+N` for untracked and added files and
 - **THEN** the row has no git segment
 
 ### Requirement: Git reading
-The plugin SHALL read the git segment with `$.process.run` of `git --no-optional-locks status --porcelain=v2 --branch` in `$.session.root()`, giving up after 2 seconds, at session start, at each turn's end, on `classic.CwdChanged` and every 30 seconds. A `cd` in a Bash call SHALL NOT change what the bar reads.
+The plugin SHALL read the git segment with `$.process.run` of `git --no-optional-locks status --porcelain=v2 --branch` in `$.session.root()`, giving up after 2 seconds, at session start, at each turn's end, every 30 seconds, and when the band draws with a root other than the one last read. A `cd` in a Bash call SHALL NOT change what the bar reads.
 
 #### Scenario: A slow repo
 - **WHEN** `git status` takes longer than 2 seconds
@@ -298,7 +298,7 @@ The repo segment SHALL be the last part of the path of the first tree `git workt
 
 #### Scenario: A `/cd`
 - **WHEN** `/cd /tmp` moves the session's root
-- **THEN** the repo segment reads `tmp` without waiting for a turn's end
+- **THEN** the band's next draw reads the new root, and the repo segment reads `tmp` without waiting for a turn's end or a tick
 
 ### Requirement: Repo and branch colors
 On the terminal surface, the parentheses and the branch name SHALL be drawn in the oh-my-zsh robbyrussell colors, as the terminal's named ANSI colors. The repo name and the counts SHALL be in the default color, since robbyrussell's cyan and yellow measure about 2:1 on the light theme. On the desktop surface all of them SHALL be in the default color, with dim parentheses. No other text SHALL have a color of its own.

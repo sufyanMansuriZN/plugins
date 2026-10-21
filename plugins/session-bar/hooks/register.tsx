@@ -19,10 +19,6 @@ const BADGE: Record<Extract<Run, { badge: true }>['tone'], string> = {
   blue: '#56B4E9',
 }
 
-// Nerd Font "refresh" (U+F021), centered in its cell where ↻ sits off center; Ghostty bundles the
-// Nerd Font symbols. The desktop app draws with its own fonts, so it keeps ↻.
-export const RESET_TERMINAL = ' '
-
 // oh-my-zsh robbyrussell's prompt colors, as the terminal's named ANSI colors: its theme sets them for light
 // and dark, so they are not fixed colors. A desktop has no such palette and would draw a fixed CSS color
 // (cyan on white is near unreadable), so it draws no ink.
@@ -127,8 +123,7 @@ export const register: Register = on => {
     const [g, w, now, usage] = await Promise.all([read($, git), read($, where), $.clock.now(), $.session.usage(), read($, tick)])
     const agentId = e.props.view?.agentId
     const shown = agentId ? await agentView($, agentId) : await mainView($, usage)
-    const resetMark = e.surface === 'terminal' ? RESET_TERMINAL : '↻'
-    const { left, right } = segments({ where: w, git: g, ...shown, windows: parseWindows(usage.rateLimits), now, resetMark }, e.props.bodyColumns)
+    const { left, right } = segments({ where: w, git: g, ...shown, windows: parseWindows(usage.rateLimits), now }, e.props.bodyColumns)
     const { Box, Text } = $.ui.resolve(e)
     const zone = (segs: Segment[]) => segs
       .flatMap((seg, i): Run[] => (i ? [{ text: SEP, tone: 'dim' }, ...seg] : seg))

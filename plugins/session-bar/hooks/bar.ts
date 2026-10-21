@@ -6,10 +6,9 @@ export type { Git }
 // window: the main view knows the model's window; a subagent's view knows only its tokens
 export type Ctx = { kind: 'window'; tokens: number; window: number } | { kind: 'tokens'; tokens: number }
 export type Window = { label: '5h' | '7d' | '$'; percent: number; resetsAt: number | null; length: number | null }
-// where: the repo's name, or the directory's outside a repo; resetMark: what stands before a reset
-// countdown, chosen by the surface's fonts
+// where: the repo's name, or the directory's outside a repo
 export type BarInput = {
-  where: string | null; git: Git | null; agent: string | null; model: string | null; ctx: Ctx | null; windows: Window[]; now: number; resetMark: string
+  where: string | null; git: Git | null; agent: string | null; model: string | null; ctx: Ctx | null; windows: Window[]; now: number
 }
 // the part of the repo and branch a run draws, which a surface may color in robbyrussell's scheme
 export type Ink = 'where' | 'paren' | 'branch' | 'changes'
@@ -185,7 +184,7 @@ const ctxSegment = (ctx: Ctx, detail: Detail): Segment => {
   ]
 }
 
-const windowSegment = (w: Window, now: number, resetMark: string, detail: Detail): Segment => {
+const windowSegment = (w: Window, now: number, detail: Detail): Segment => {
   const p = pace(w, now)
   const shown = p ? PACE[p.kind](p) : null
   const percent = `${Math.round(w.percent)}%`
@@ -194,7 +193,7 @@ const windowSegment = (w: Window, now: number, resetMark: string, detail: Detail
     ...(detail.meter ? [...meter(w.percent, p?.tick ?? null), { text: ' ', tone: 'dim' } as const] : []),
     shown ? { text: percent, tone: 'plain' } : alert(percent, threshold(w.percent, 50, 80)),
     ...(detail.word && shown?.word ? [{ text: ' ', tone: 'dim' } as const, alert(shown.word, shown.tone)] : []),
-    ...(w.resetsAt === null ? [] : [{ text: ` ${resetMark}${countdown(w.resetsAt - now)}`, tone: 'dim' } as const]),
+    ...(w.resetsAt === null ? [] : [{ text: ` ${countdown(w.resetsAt - now)}`, tone: 'dim' } as const]),
   ]
 }
 
@@ -249,7 +248,7 @@ const gaugesAt = (input: BarInput, detail: Detail): Segment[] => [
   ...(input.ctx ? [ctxSegment(input.ctx, detail)] : []),
   ...input.windows
     .filter(w => w.resetsAt === null || w.resetsAt > input.now)
-    .map(w => windowSegment(w, input.now, input.resetMark, detail)),
+    .map(w => windowSegment(w, input.now, detail)),
 ]
 
 export const segments = (input: BarInput, columns: number): Zones => {

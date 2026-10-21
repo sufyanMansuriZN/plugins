@@ -21,15 +21,12 @@ const USAGE: SessionUsage = {
     { kind: 'seven_day', percentUsed: 43, resetsAt: new Date(NOW + (3 * 24 + 21) * 60 * MIN).toISOString() },
   ],
 }
-const WINDOWS = '5h ━━━━━╾─╂─ 66%  behind  ↻46m · 7d ━━━╾╂──── 43% ↻3d21h'
+const WINDOWS = '5h ━━━━━╾─╂─ 66%  behind  46m · 7d ━━━╾╂──── 43% 3d21h'
 // 60K of a 1M window: half a cell used, and the tick for 250K after cell 2
 const CTX = 'ctx ╾─╂────── 60K'
 const context = (tokens: number, window: number): SessionUsage => ({ ...USAGE, context: { tokens, window, percent: Math.round((tokens / window) * 100) } })
 const SURFACES = ['terminal', 'desktop'] as const
 type Surface = (typeof SURFACES)[number]
-// the terminal marks a countdown with the Nerd Font refresh icon (U+F021), the desktop app with ↻
-const MARK = { terminal: ' ', desktop: '↻' } as const
-const marked = (surface: Surface, row: string) => row.replaceAll('↻', MARK[surface])
 const cells = (s: string) => [...s].length
 // a worktree of the repo: the repo's root is the main working tree, not the session's directory
 const REPO: SessionRepo = { root: '/home/me/plugins', remote: 'git@github.com:me/plugins.git', internal: false, name: null }
@@ -88,7 +85,7 @@ test('main view: repo, git and the main model on the left; context and the windo
   await engine($, on)
   for (const surface of SURFACES) {
     const { left, right } = await zonesOn($, surface)
-    expect([left, right], surface).toEqual(['plugins (main +3 ~2) · Opus 5.5 1M', marked(surface, `${CTX} · ${WINDOWS}`)])
+    expect([left, right], surface).toEqual(['plugins (main +3 ~2) · Opus 5.5 1M', `${CTX} · ${WINDOWS}`])
   }
 })
 
@@ -96,7 +93,7 @@ test('a 200K window: the context meter fills over 200K, its tick for 160K after 
   await engine($, on, { usage: context(120_000, 200_000) })
   for (const surface of SURFACES) {
     const { left, right } = await zonesOn($, surface)
-    expect([left, right], surface).toEqual(['plugins (main +3 ~2) · Opus 5.5 200K', marked(surface, `ctx ━━━━━─╂── 120K · ${WINDOWS}`)])
+    expect([left, right], surface).toEqual(['plugins (main +3 ~2) · Opus 5.5 200K', `ctx ━━━━━─╂── 120K · ${WINDOWS}`])
   }
 })
 
@@ -113,7 +110,7 @@ for (const [tokens, window, shown, badge] of [
       const right = (await ui.find({ type: 'Box', key: 'right' }))?.text
       const ctx = await ui.find({ type: 'Text', text: new RegExp(`^ ?${tokens / 1000}K ?$`) })
       await ui.unmount()
-      expect(right, surface).toBe(marked(surface, `${shown} · ${WINDOWS}`))
+      expect(right, surface).toBe(`${shown} · ${WINDOWS}`)
       expect([ctx?.text, ctx?.props.backgroundColor, ctx?.props.color], surface)
         .toEqual(badge ? [badge, '#D55E00', '#000000'] : [`${tokens / 1000}K`, undefined, undefined])
     }
@@ -137,7 +134,7 @@ test('a subagent in view after a Haiku step: its type and model on the left, its
   await step($, 'a1', 'claude-haiku-4-5-20251001')
   for (const surface of SURFACES) {
     const { left, right } = await zonesOn($, surface, 'a1')
-    expect([left, right], surface).toEqual(['plugins (main +3 ~2) · Explore · Haiku 4.5', marked(surface, `ctx 42K · ${WINDOWS}`)])
+    expect([left, right], surface).toEqual(['plugins (main +3 ~2) · Explore · Haiku 4.5', `ctx 42K · ${WINDOWS}`])
   }
   expect((await zonesOn($, 'terminal')).left).toBe('plugins (main +3 ~2) · Opus 5.5 1M')
 })
@@ -148,7 +145,7 @@ test('a subagent with no step yet: its type, no model and no context', async ($,
   await step($, undefined, 'claude-fable-5-1')
   for (const surface of SURFACES) {
     const { left, right } = await zonesOn($, surface, 'a2')
-    expect([left, right], surface).toEqual(['plugins (main +3 ~2) · Plan', marked(surface, WINDOWS)])
+    expect([left, right], surface).toEqual(['plugins (main +3 ~2) · Plan', WINDOWS])
   }
 })
 
@@ -167,9 +164,9 @@ test('a row at exactly its width keeps every part, and its zones and gap add up 
 test('a narrow band drops the meters, then the words, then cuts the branch, then the repo name', async ($, on) => {
   await engine($, on, { porcelain: LONG_BRANCH })
   for (const surface of SURFACES) {
-    const meters = marked(surface, `${CTX} · ${WINDOWS}`)
-    const words = marked(surface, 'ctx 60K · 5h 66%  behind  ↻46m · 7d 43% ↻3d21h')
-    const bare = marked(surface, 'ctx 60K · 5h 66% ↻46m · 7d 43% ↻3d21h')
+    const meters = `${CTX} · ${WINDOWS}`
+    const words = 'ctx 60K · 5h 66%  behind  46m · 7d 43% 3d21h'
+    const bare = 'ctx 60K · 5h 66% 46m · 7d 43% 3d21h'
     const kept = 'plugins (feature/a-v…) · Opus 5.5 1M'
     const at = async (left: string, right: string) => {
       const { left: l, right: r } = await zonesOn($, surface, undefined, cells(left) + 3 + cells(right))
@@ -251,7 +248,7 @@ test("the terminal draws the repo and branch in robbyrussell's named colors; the
 test('a band left open redraws its countdowns every 30 seconds', async ($, on) => {
   const clock = await engine($, on)
   const ui = await mountBand($, 'terminal')
-  const fiveHour = async () => (await ui.find({ type: 'Text', text: /^  / }))?.text
+  const fiveHour = async () => (await ui.find({ type: 'Text', text: /^ \d+m$/ }))?.text
   const before = await fiveHour()
   await clock.advance(29_000)
   const early = await fiveHour()
@@ -259,7 +256,7 @@ test('a band left open redraws its countdowns every 30 seconds', async ($, on) =
   const after = await fiveHour()
   await ui.unmount()
   // the last tick inside 149 s is at 120 s, so the band shows 46m less two minutes
-  expect([before, early, after]).toEqual(['  46m', '  46m', '  44m'])
+  expect([before, early, after]).toEqual([' 46m', ' 46m', ' 44m'])
 })
 
 test('a survey has the band to itself', async ($, on) => {

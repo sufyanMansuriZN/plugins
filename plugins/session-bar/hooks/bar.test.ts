@@ -9,16 +9,16 @@ const FIVE: Window = { label: '5h', percent: 66, resetsAt: NOW + 46 * MIN, lengt
 const SEVEN: Window = { label: '7d', percent: 43, resetsAt: NOW + (3 * 24 + 21) * HOUR, length: 168 * HOUR }
 // 5h: an even pace is at 84.7% with 46m left, so 66% (10.56 half cells, 11) is behind and the tick sits after cell 7;
 // 7d: 44.6% with 3d21h left, so 43% (6.88 half cells, 7) is on pace and the tick sits after cell 4
-const FIVE_ROW = '5h ━━━━━╾─╂─ 66%  behind  ↻46m'
-const SEVEN_ROW = '7d ━━━╾╂──── 43% ↻3d21h'
+const FIVE_ROW = '5h ━━━━━╾─╂─ 66%  behind  46m'
+const SEVEN_ROW = '7d ━━━╾╂──── 43% 3d21h'
 const TICKS = '┃┠┣┨╂╊┫╉╋'
 const LEFT = 'plugins (main +3 ~2) · Opus 5.5 1M'
 // 60K of 1M is 6% (0.96 half cells, 1); the 250K tick on a 1M window sits after cell 2
 const CTX = { kind: 'window', tokens: 60_000, window: 1_000_000 } as const
 const CTX_ROW = 'ctx ╾─╂────── 60K'
 const GAUGES = `${CTX_ROW} · ${FIVE_ROW} · ${SEVEN_ROW}`
-const WORDS = 'ctx 60K · 5h 66%  behind  ↻46m · 7d 43% ↻3d21h'
-const BARE = 'ctx 60K · 5h 66% ↻46m · 7d 43% ↻3d21h'
+const WORDS = 'ctx 60K · 5h 66%  behind  46m · 7d 43% 3d21h'
+const BARE = 'ctx 60K · 5h 66% 46m · 7d 43% 3d21h'
 const LONG = { branch: 'feature/a-very-long-branch-name', added: 1, changed: 0 }
 const cells = (s: string) => [...s].length
 // the row's width when both zones are drawn: the left, the gap, the right
@@ -32,7 +32,6 @@ const input = (over: Partial<BarInput> = {}): BarInput => ({
   ctx: CTX,
   windows: [FIVE, SEVEN],
   now: NOW,
-  resetMark: '↻',
   ...over,
 })
 
@@ -104,27 +103,27 @@ describe('segments', () => {
   })
 
   test('ahead: no cell in color, and an "ahead" badge follows the plain percent', () => {
-    expect(alone(half(70))).toBe('5h ━━━━╋━╾── 70%  ahead  ↻2h30m')
+    expect(alone(half(70))).toBe('5h ━━━━╋━╾── 70%  ahead  2h30m')
     expect(meter(half(70))).toEqual([['━━━━╋━╾', 'plain'], ['──', 'dim']])
     expect(badges(half(70))).toEqual([[' ahead ', 'yellow']])
     expect(tone(half(70), '70%')).toBe('plain')
   })
 
   test('behind: no cell in color, and a "behind" badge', () => {
-    expect(alone(half(30))).toBe('5h ━━╾─╂──── 30%  behind  ↻2h30m')
+    expect(alone(half(30))).toBe('5h ━━╾─╂──── 30%  behind  2h30m')
     expect(meter(half(30))).toEqual([['━━╾', 'plain'], ['─', 'dim'], ['╂', 'plain'], ['────', 'dim']])
     expect(badges(half(30))).toEqual([[' behind ', 'blue']])
     expect(tone(half(30), '30%')).toBe('plain')
   })
 
   test('on pace: a fill that stops at the tick has no heavy arm past it', () => {
-    expect(alone(half(50))).toBe('5h ━━━━╉──── 50% ↻2h30m')
+    expect(alone(half(50))).toBe('5h ━━━━╉──── 50% 2h30m')
     expect(meter(half(50))).toEqual([['━━━━╉', 'plain'], ['────', 'dim']])
   })
 
   test('a half cell gives the tick a light arm on its left and a heavy arm on its right', () => {
-    expect(alone(half(46)), 'half cell before the tick').toBe('5h ━━━╾╂──── 46% ↻2h30m')
-    expect(alone(half(54)), 'half cell after the tick').toBe('5h ━━━━╋╾─── 54% ↻2h30m')
+    expect(alone(half(46)), 'half cell before the tick').toBe('5h ━━━╾╂──── 46% 2h30m')
+    expect(alone(half(54)), 'half cell after the tick').toBe('5h ━━━━╋╾─── 54% 2h30m')
   })
 
   test('within 5 points of an even pace has no word; past 20 ahead, or used up, is red', () => {
@@ -134,9 +133,9 @@ describe('segments', () => {
     ] as const) {
       expect(badges(half(percent)), `${percent}%`).toEqual(expected)
     }
-    expect(alone(half(71))).toBe('5h ━━━━╋━╾── 71%  far ahead  ↻2h30m')
+    expect(alone(half(71))).toBe('5h ━━━━╋━╾── 71%  far ahead  2h30m')
     expect(meter(half(71)), 'far ahead').toEqual([['━━━━╋━╾', 'plain'], ['──', 'dim']])
-    expect(alone(half(100))).toBe('5h ━━━━╋━━━━ 100%  used up  ↻2h30m')
+    expect(alone(half(100))).toBe('5h ━━━━╋━━━━ 100%  used up  2h30m')
     expect(meter(half(100)), 'used up').toEqual([['━━━━╋━━━━', 'plain']])
   })
 
@@ -162,15 +161,15 @@ describe('segments', () => {
   })
 
   test('the tick stands first at the start of a window and last near its reset', () => {
-    expect(alone(five(20, NOW + 5 * HOUR - 10 * MIN))).toBe('5h ┣━╾────── 20%  ahead  ↻4h50m')
+    expect(alone(five(20, NOW + 5 * HOUR - 10 * MIN))).toBe('5h ┣━╾────── 20%  ahead  4h50m')
     expect(meter(five(20, NOW + 5 * HOUR - 10 * MIN))).toEqual([['┣━╾', 'plain'], ['──────', 'dim']])
-    expect(alone(five(91, NOW + 10 * MIN)), 'an even pace is at 96.7%').toBe('5h ━━━━━━━╾┨ 91%  behind  ↻10m')
+    expect(alone(five(91, NOW + 10 * MIN)), 'an even pace is at 96.7%').toBe('5h ━━━━━━━╾┨ 91%  behind  10m')
     expect(meter(five(91, NOW + 10 * MIN))).toEqual([['━━━━━━━╾┨', 'plain']])
   })
 
   test('the 7-day window has a pace around the clock too', () => {
     const seven = (percent: number) => ({ windows: [{ ...SEVEN, percent, resetsAt: NOW + 84 * HOUR }] })
-    expect(alone(seven(80))).toBe('7d ━━━━╋━━╾─ 80%  far ahead  ↻3d12h')
+    expect(alone(seven(80))).toBe('7d ━━━━╋━━╾─ 80%  far ahead  3d12h')
     expect(meter(seven(80))).toEqual([['━━━━╋━━╾', 'plain'], ['─', 'dim']])
   })
 
@@ -212,13 +211,13 @@ describe('segments', () => {
     for (const [percent, expected] of [[49, []], [50, [[' 50% ', 'yellow']]], [79, [[' 79% ', 'yellow']]], [80, [[' 80% ', 'red']]]] as const) {
       const over = { windows: [{ ...SEVEN, percent, resetsAt: null }] }
       expect(badges(over), String(percent)).toEqual(expected)
-      expect(alone(over)).not.toMatch(new RegExp(`[↻${TICKS}]`))
+      expect(alone(over), 'no tick and no countdown').toMatch(new RegExp(`^7d [━╾─]{8} +${percent}% ?$`))
     }
   })
 
   test('countdowns use at most two units', () => {
     for (const [ms, shown] of [[30_000, '<1m'], [12 * MIN, '12m'], [2 * HOUR + 40 * MIN, '2h40m'], [4 * HOUR, '4h'], [31 * HOUR + 59_000, '1d7h'], [48 * HOUR, '2d']] as const) {
-      expect(right(five(1, NOW + ms)).endsWith(`↻${shown}`), shown).toBe(true)
+      expect(right(five(1, NOW + ms)).endsWith(` ${shown}`), shown).toBe(true)
     }
   })
 

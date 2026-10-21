@@ -19,4 +19,4 @@
 
 ## 5. Release
 
-- [ ] 5.1 Live check in a session with a subagent: open its transcript and see its type and model. Archive this change after the user accepts 3.0.0.
+- [x] 5.1 Live check in a session with a subagent: open its transcript and see its type and model. Archive this change after the user accepts 3.0.0.

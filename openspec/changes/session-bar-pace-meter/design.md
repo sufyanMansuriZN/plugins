@@ -27,5 +27,5 @@
 
 ## Risks / Trade-offs
 
-- [8 cells are 12.5 points each] -> A window on pace can show one yellow or blue cell. The word and the percent color carry the verdict; the meter shows the shape.
+- [8 cells are 12.5 points each] -> A window on pace could show one yellow or blue cell that the word calls fine. On pace, the meter draws only the default color and dim.
 - [The example row is 37 cells wider] -> The ladder drops meters, then words, on narrow bands.

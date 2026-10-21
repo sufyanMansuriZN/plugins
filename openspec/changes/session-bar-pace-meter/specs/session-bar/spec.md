@@ -97,7 +97,7 @@ A window with a reset time and a known length (5h is 5 hours, 7d is 168 hours) S
 - **THEN** the pace word is `used up`
 
 ### Requirement: Usage window meter
-Each window SHALL show an 8-cell meter between its label and its percent. Cell i SHALL be filled (`━`) when its center, (i + 0.5) / 8 × 100, is at or below the percent, and empty (`─`) otherwise. With a pace, a filled cell at or below the mark SHALL be in the default color, a filled cell past it in the ahead color, an empty cell at or below it blue, and the rest dim. Without a pace, filled cells SHALL take the percent's color and empty cells SHALL be dim.
+Each window SHALL show an 8-cell meter between its label and its percent. Cell i SHALL be filled (`━`) when its center, (i + 0.5) / 8 × 100, is at or below the percent, and empty (`─`) otherwise. With a pace, a filled cell past the mark SHALL be in the ahead color, an empty cell at or below it blue, other filled cells default and the rest dim; on pace, none yellow, red or blue. Without a pace, filled cells SHALL take the percent's color and empty cells SHALL be dim.
 
 #### Scenario: Far ahead
 - **WHEN** 5h is at 75% with 2h30m left

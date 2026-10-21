@@ -121,9 +121,12 @@ const meter = (percent: number, cellTone: (center: number, filled: boolean) => T
   return runs
 }
 
-// a filled cell past the mark is overspend; an empty cell before it is allowance not yet used
-const paceCell = (p: Pace) => (center: number, filled: boolean): Tone =>
-  filled ? (center <= p.mark ? 'plain' : aheadTone(p.delta)) : center <= p.mark ? 'blue' : 'dim'
+// a filled cell past the mark is overspend; an empty cell before it is allowance not yet used.
+// On pace, a 12.5-point cell would otherwise flag a gap the word calls fine.
+const paceCell = (p: Pace) => (center: number, filled: boolean): Tone => {
+  if (filled) return center <= p.mark || p.kind === 'on' ? 'plain' : aheadTone(p.delta)
+  return center <= p.mark && p.kind !== 'on' ? 'blue' : 'dim'
+}
 
 type Detail = { meter: boolean; word: boolean }
 

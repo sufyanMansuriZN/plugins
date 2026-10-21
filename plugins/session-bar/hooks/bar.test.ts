@@ -102,6 +102,8 @@ describe('segments', () => {
     expect(meter(half(75)), 'far ahead').toEqual([['━━━━', 'plain'], ['━━', 'red'], ['──', 'dim']])
     expect(meter(half(60)), 'ahead').toEqual([['━━━━', 'plain'], ['━', 'yellow'], ['───', 'dim']])
     expect(meter(half(50)), 'on pace').toEqual([['━━━━', 'plain'], ['────', 'dim']])
+    expect(meter(five(57, NOW + 138 * MIN)), 'on pace, a cell past the mark').toEqual([['━━━━━', 'plain'], ['───', 'dim']])
+    expect(meter(five(54, NOW + 126 * MIN)), 'on pace, a cell short of it').toEqual([['━━━━', 'plain'], ['────', 'dim']])
     expect(meter(half(30)), 'behind').toEqual([['━━', 'plain'], ['──', 'blue'], ['────', 'dim']])
   })
 

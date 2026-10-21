@@ -2,10 +2,13 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, SessionUsage } from 'claude-code'
 
 import type { AgentReading, Git } from '../types'
-import { type BarInput, type Run, SEP, modelLabel, parseContext, parseGit, parseWindowSize, parseWindows, segments, stepTokens } from './bar'
+import {
+  type BarInput, type Run, type Segment, GAP, SEP, folderName, modelLabel, parseContext, parseGit, parseWindowSize, parseWindows, segments, stepTokens,
+} from './bar'
 
 const agents = atom({ plugin: 'session-bar', key: 'agents' } as const, {} as Record<string, AgentReading>)
 const git = atom({ plugin: 'session-bar', key: 'git' } as const, null as Git | null)
+const where = atom({ plugin: 'session-bar', key: 'where' } as const, null as string | null)
 const tick = atom({ plugin: 'session-bar', key: 'tick' } as const, 0)
 
 // Okabe-Ito colors, told apart with the common color vision deficiencies; orange and vermillion
@@ -23,13 +26,19 @@ export const RESET_TERMINAL = ' '
 const props = (r: Run) =>
   r.badge ? { backgroundColor: BADGE[r.tone], color: '#000000', bold: true } : r.tone === 'dim' ? { dimColor: true } : {}
 
-const refreshGit = async ($: EngineInterface) => {
+const refreshRepo = async ($: EngineInterface) => {
   let next: Git | null = null
   try {
     const r = await $.process.run(['git', '--no-optional-locks', 'status', '--porcelain=v2', '--branch'], { timeoutMs: 2000 })
     if (r.exitCode === 0) next = parseGit(r.stdout)
   } catch {} // git missing or too slow: no git segment
   if (JSON.stringify(await read($, git)) !== JSON.stringify(next)) await update($, git, () => next)
+  try {
+    // a worktree's repo root is its main working tree, so a worktree shows the repo's own name
+    const repo = await $.session.repo()
+    const name = folderName(repo ? repo.root : await $.session.cwd())
+    if ((await read($, where)) !== name) await update($, where, () => name)
+  } catch {} // the name stays as it was
 }
 
 // update() always writes, and a write redraws the band, so most steps (same model, same tokens) write nothing
@@ -65,7 +74,7 @@ const startTicking = ($: EngineInterface) => {
   isTicking = true
   $.clock.every(30_000, () => {
     void update($, tick, n => n + 1)
-    void refreshGit($)
+    void refreshRepo($)
   })
 }
 
@@ -73,14 +82,14 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const started = await next(e)
     startTicking($)
-    void refreshGit($)
+    void refreshRepo($)
     return started
   })
 
   on('turn.complete', async ($, e, next) => {
     const done = await next(e)
     startTicking($)
-    void refreshGit($)
+    void refreshRepo($)
     return done
   })
 
@@ -103,18 +112,24 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.props.hasSurvey) return next(e)
-    const [g, now, usage] = await Promise.all([read($, git), $.clock.now(), $.session.usage(), read($, tick)])
+    const [g, w, now, usage] = await Promise.all([read($, git), read($, where), $.clock.now(), $.session.usage(), read($, tick)])
     const agentId = e.props.view?.agentId
     const shown = agentId ? await agentView($, agentId) : await mainView($, usage)
     const resetMark = e.surface === 'terminal' ? RESET_TERMINAL : '↻'
-    const row = segments({ git: g, ...shown, windows: parseWindows(usage.rateLimits), now, resetMark }, e.props.bodyColumns)
-    const runs = row.flatMap((seg, i): Run[] => (i ? [{ text: SEP, tone: 'dim' }, ...seg] : seg))
+    const { left, right } = segments({ where: w, git: g, ...shown, windows: parseWindows(usage.rateLimits), now, resetMark }, e.props.bodyColumns)
     const { Box, Text } = $.ui.resolve(e)
+    const zone = (segs: Segment[]) => segs
+      .flatMap((seg, i): Run[] => (i ? [{ text: SEP, tone: 'dim' }, ...seg] : seg))
+      .map(r => <Text {...props(r)}>{r.text}</Text>)
     const below = await next(e)
 
+    // the left zone takes the free room, so the right zone sits at the band's right edge
     return (
       <Box flexDirection="column">
-        <Box>{runs.map(r => <Text {...props(r)}>{r.text}</Text>)}</Box>
+        <Box>
+          <Box key="left" flexGrow={1}>{zone(left)}</Box>
+          {right.length ? <Box key="right" marginLeft={GAP}>{zone(right)}</Box> : null}
+        </Box>
         {below}
       </Box>
     )

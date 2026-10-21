@@ -5,15 +5,22 @@ import type { Git } from '../types'
 export type { Git }
 export type Ctx = { kind: 'percent'; percent: number } | { kind: 'tokens'; tokens: number }
 export type Window = { label: '5h' | '7d' | '$'; percent: number; resetsAt: number | null; length: number | null }
-// resetMark: what stands before a reset countdown, chosen by the surface's fonts
-export type BarInput = { git: Git | null; agent: string | null; model: string | null; ctx: Ctx | null; windows: Window[]; now: number; resetMark: string }
+// where: the repo's name, or the directory's outside a repo; resetMark: what stands before a reset
+// countdown, chosen by the surface's fonts
+export type BarInput = {
+  where: string | null; git: Git | null; agent: string | null; model: string | null; ctx: Ctx | null; windows: Window[]; now: number; resetMark: string
+}
 // a colored tone exists only on a badge, which fills the background behind the text
 export type Run = { text: string; tone: 'plain' | 'dim'; badge?: never } | { text: string; tone: 'yellow' | 'red' | 'blue'; badge: true }
 export type Segment = Run[]
+// left: what the session is (where, branch, agent, model); right: the gauges, pinned to the band's right edge
+export type Zones = { left: Segment[]; right: Segment[] }
 // what an alert asks for: nothing, or a badge in one of the colors
 type Tone = 'plain' | Extract<Run, { badge: true }>['tone']
 
 export const SEP = ' · '
+// the fewest cells between the zones; the render's margin and the fit both use it, so a fitted row never wraps
+export const GAP = SEP.length
 
 const HOUR = 3_600_000
 const WINDOWS = [
@@ -59,6 +66,8 @@ export const parseGit = (porcelain: string): Git | null => {
   if (head === '(detached)') head = oid && oid !== '(initial)' ? oid.slice(0, 7) : 'HEAD'
   return { branch: head, added, changed }
 }
+
+export const folderName = (path: string) => path.split(/[\\/]/).filter(Boolean).at(-1) ?? path
 
 const sizeLabel = (n: number) => (n >= 1e6 && n % 1e6 === 0 ? `${n / 1e6}M` : `${Math.round(n / 1000)}K`)
 
@@ -147,9 +156,6 @@ const DETAILS: readonly Detail[] = [
   { meter: false, word: false },
 ]
 
-// the branch keeps this many cells before the gauges give up their meters and words
-const GIT_KEEPS = 12
-
 const ctxSegment = (ctx: Ctx): Segment => {
   const dim: Run = { text: 'ctx ', tone: 'dim' }
   if (ctx.kind === 'tokens') return [dim, { text: sizeLabel(ctx.tokens), tone: 'plain' }]
@@ -170,31 +176,66 @@ const windowSegment = (w: Window, now: number, resetMark: string, detail: Detail
   ]
 }
 
-export const width = (segment: Segment) => segment.reduce((n, run) => n + [...run.text].length, 0)
+const cells = (text: string) => [...text].length
+
+export const width = (segment: Segment) => segment.reduce((n, run) => n + cells(run.text), 0)
 
 const rowWidth = (row: Segment[]) => row.reduce((n, s) => n + width(s), 0) + SEP.length * Math.max(0, row.length - 1)
+
+// the cells the right zone takes with the gap before it; an empty zone takes none
+const rightWidth = (right: Segment[]) => (right.length ? GAP + rowWidth(right) : 0)
 
 const gitText = ({ branch, added, changed }: Git) =>
   branch + (added ? ` +${added}` : '') + (changed ? ` ~${changed}` : '')
 
-const gaugesAt = (input: BarInput, detail: Detail): Segment[] => {
-  const gauges: Segment[] = []
-  if (input.agent) gauges.push([{ text: input.agent, tone: 'dim' }])
-  if (input.model) gauges.push([{ text: input.model, tone: 'plain' }])
-  if (input.ctx) gauges.push(ctxSegment(input.ctx))
-  for (const w of input.windows) {
-    if (w.resetsAt === null || w.resetsAt > input.now) gauges.push(windowSegment(w, input.now, input.resetMark, detail))
-  }
-  return gauges
+type Key = 'where' | 'branch' | 'agent' | 'model'
+type Name = { key: Key; text: string; tone: 'plain' | 'dim' }
+
+const namesOf = (input: BarInput): Name[] => {
+  const all: [Key, string | null, Name['tone']][] = [
+    ['where', input.where, 'plain'],
+    ['branch', input.git && gitText(input.git), 'plain'],
+    ['agent', input.agent, 'dim'],
+    ['model', input.model, 'plain'],
+  ]
+  return all.flatMap(([key, text, tone]) => (text ? [{ key, text, tone }] : []))
 }
 
-export const segments = (input: BarInput, columns: number): Segment[] => {
-  const text = input.git ? [...gitText(input.git)] : []
-  const kept = input.git ? Math.min(text.length, GIT_KEEPS) + SEP.length : 0
+// the cells each name keeps while the right zone still has meters or words to give up; the rest keep all
+const KEEPS: Partial<Record<Key, number>> = { branch: 12 }
+// after the right zone's last step, the names that give up cells, first one first; agent and model are never cut
+const SHEDS: readonly Key[] = ['branch', 'where']
+
+const namesWidth = (names: Name[], keeps: Partial<Record<Key, number>> = {}) =>
+  names.reduce((n, x) => n + Math.min(cells(x.text), keeps[x.key] ?? Infinity), 0) + SEP.length * Math.max(0, names.length - 1)
+
+// a cut name ends with …; one with fewer than 2 cells of room is left out
+const cut = (text: string, room: number): string | null =>
+  cells(text) <= room ? text : room >= 2 ? `${[...text].slice(0, room - 1).join('')}…` : null
+
+const shed = (names: Name[], key: Key, room: number): Name[] => {
+  const over = namesWidth(names) - room
+  if (over <= 0) return names
+  return names.flatMap(n => {
+    if (n.key !== key) return [n]
+    const text = cut(n.text, cells(n.text) - over)
+    return text === null ? [] : [{ ...n, text }]
+  })
+}
+
+const gaugesAt = (input: BarInput, detail: Detail): Segment[] => [
+  ...(input.ctx ? [ctxSegment(input.ctx)] : []),
+  ...input.windows
+    .filter(w => w.resetsAt === null || w.resetsAt > input.now)
+    .map(w => windowSegment(w, input.now, input.resetMark, detail)),
+]
+
+export const segments = (input: BarInput, columns: number): Zones => {
+  const names = namesOf(input)
+  const kept = namesWidth(names, KEEPS)
   const ladder = DETAILS.map(detail => gaugesAt(input, detail))
-  const gauges = ladder.find(g => rowWidth(g) + kept <= columns) ?? ladder.at(-1)!
-  if (!input.git) return gauges
-  const room = columns - rowWidth(gauges) - (gauges.length ? SEP.length : 0)
-  if (text.length <= room) return [[{ text: text.join(''), tone: 'plain' }], ...gauges]
-  return room >= 2 ? [[{ text: `${text.slice(0, room - 1).join('')}…`, tone: 'plain' }], ...gauges] : gauges
+  const right = ladder.find(g => kept + rightWidth(g) <= columns) ?? ladder.at(-1)!
+  const room = columns - rightWidth(right)
+  const left = SHEDS.reduce((left, key) => shed(left, key, room), names)
+  return { left: left.map(n => [{ text: n.text, tone: n.tone }]), right }
 }

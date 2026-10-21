@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { type BarInput, type Segment, type Window, SEP, modelLabel, parseGit, parseWindows, segments, stepTokens } from './bar'
+import { type BarInput, type Segment, type Window, GAP, SEP, folderName, modelLabel, parseGit, parseWindows, segments, stepTokens } from './bar'
 
 const NOW = 1_792_162_404_000
 const MIN = 60_000
@@ -12,12 +12,17 @@ const SEVEN: Window = { label: '7d', percent: 43, resetsAt: NOW + (3 * 24 + 21) 
 const FIVE_ROW = '5h ━━━━━╾─╂─ 66%  behind  ↻46m'
 const SEVEN_ROW = '7d ━━━╾╂──── 43% ↻3d21h'
 const TICKS = '┃┠┣┨╂╊┫╉╋'
-const GAUGES = `Opus 5.5 1M · ctx 6% · ${FIVE_ROW} · ${SEVEN_ROW}`
-const WORDS = 'Opus 5.5 1M · ctx 6% · 5h 66%  behind  ↻46m · 7d 43% ↻3d21h'
-const BARE = 'Opus 5.5 1M · ctx 6% · 5h 66% ↻46m · 7d 43% ↻3d21h'
+const LEFT = 'plugins · main +3 ~2 · Opus 5.5 1M'
+const GAUGES = `ctx 6% · ${FIVE_ROW} · ${SEVEN_ROW}`
+const WORDS = 'ctx 6% · 5h 66%  behind  ↻46m · 7d 43% ↻3d21h'
+const BARE = 'ctx 6% · 5h 66% ↻46m · 7d 43% ↻3d21h'
+const LONG = { branch: 'feature/a-very-long-branch-name', added: 1, changed: 0 }
 const cells = (s: string) => [...s].length
+// the row's width when both zones are drawn: the left, the gap, the right
+const fitted = (left: string, right: string) => cells(left) + GAP + cells(right)
 
 const input = (over: Partial<BarInput> = {}): BarInput => ({
+  where: 'plugins',
   git: { branch: 'main', added: 3, changed: 2 },
   agent: null,
   model: 'Opus 5.5 1M',
@@ -28,9 +33,16 @@ const input = (over: Partial<BarInput> = {}): BarInput => ({
   ...over,
 })
 
-const row = (over: Partial<BarInput> = {}, columns = 500) => text(segments(input(over), columns))
 const text = (segs: Segment[]) => segs.map(s => s.map(r => r.text).join('')).join(SEP)
-const runs = (over: Partial<BarInput>) => segments(input({ git: null, ...over }), 500).flat()
+const zones = (over: Partial<BarInput> = {}, columns = 500) => {
+  const { left, right } = segments(input(over), columns)
+  return [text(left), text(right)] as const
+}
+const right = (over: Partial<BarInput> = {}, columns = 500) => zones(over, columns)[1]
+const runs = (over: Partial<BarInput>, columns = 500) => {
+  const { left, right } = segments(input({ git: null, ...over }), columns)
+  return [...left, ...right].flat()
+}
 const tone = (over: Partial<BarInput>, shown: string) => runs(over).find(r => r.text.trim() === shown)?.tone
 const meter = (over: Partial<BarInput>) =>
   runs(over).filter(r => new RegExp(`^[━╾─${TICKS}]+$`).test(r.text)).map(r => [r.text, r.tone])
@@ -41,11 +53,11 @@ const five = (percent: number, resetsAt: number | null): Partial<BarInput> =>
 // half of 5h gone: an even pace stands at 50%, so the tick sits after cell 4
 const half = (percent: number) => five(percent, NOW + 2.5 * HOUR)
 const spend = (percent: number): Partial<BarInput> => ({ windows: [{ label: '$', percent, resetsAt: null, length: null }] })
-const alone = (over: Partial<BarInput>) => row({ git: null, model: null, ctx: null, ...over })
+const alone = (over: Partial<BarInput>) => right({ ctx: null, ...over })
 
 describe('segments', () => {
-  test('every segment has a value', () => {
-    expect(row()).toBe(`main +3 ~2 · ${GAUGES}`)
+  test('every segment has a value: where, git and the model on the left, the gauges on the right', () => {
+    expect(zones()).toEqual([LEFT, GAUGES])
   })
 
   test('on pace: no word, and no cell or percent in color', () => {
@@ -56,15 +68,16 @@ describe('segments', () => {
   })
 
   test('only the model is known', () => {
-    expect(row({ git: null, ctx: null, windows: [] })).toBe('Opus 5.5 1M')
+    expect(zones({ where: null, git: null, ctx: null, windows: [] })).toEqual(['Opus 5.5 1M', ''])
   })
 
   test('each part is left out without a value', () => {
-    expect(row({ git: null })).toBe(GAUGES)
-    expect(row({ git: { branch: 'main', added: 0, changed: 0 } })).toBe(`main · ${GAUGES}`)
-    expect(row({ git: null, model: null })).toBe(`ctx 6% · ${FIVE_ROW} · ${SEVEN_ROW}`)
-    expect(row({ git: null, windows: [] })).toBe('Opus 5.5 1M · ctx 6%')
-    expect(row({ git: null, windows: [SEVEN] })).toBe(`Opus 5.5 1M · ctx 6% · ${SEVEN_ROW}`)
+    expect(zones({ git: null })).toEqual(['plugins · Opus 5.5 1M', GAUGES])
+    expect(zones({ git: { branch: 'main', added: 0, changed: 0 } })).toEqual(['plugins · main · Opus 5.5 1M', GAUGES])
+    expect(zones({ where: null })).toEqual(['main +3 ~2 · Opus 5.5 1M', GAUGES])
+    expect(zones({ git: null, model: null })).toEqual(['plugins', GAUGES])
+    expect(zones({ windows: [] })).toEqual([LEFT, 'ctx 6%'])
+    expect(right({ windows: [SEVEN] })).toBe(`ctx 6% · ${SEVEN_ROW}`)
   })
 
   test('a cell fills in halves: a thick left half is half a cell', () => {
@@ -75,7 +88,7 @@ describe('segments', () => {
   })
 
   test('a spend limit has no tick and no word; its percent becomes a yellow badge at 50 and a red one at 80', () => {
-    expect(row({ git: null, ...spend(40.4) })).toBe('Opus 5.5 1M · ctx 6% · $ ━━━───── 40%')
+    expect(right(spend(40.4))).toBe('ctx 6% · $ ━━━───── 40%')
     expect(alone(spend(50))).toBe('$ ━━━━────  50% ')
     expect(alone(spend(80))).toBe('$ ━━━━━━╾─  80% ')
     expect(meter(spend(40.4))).toEqual([['━━━', 'plain'], ['─────', 'dim']])
@@ -157,7 +170,7 @@ describe('segments', () => {
   })
 
   test('a window whose reset has passed is left out', () => {
-    expect(row({ git: null, ...five(88, NOW - 1) })).toBe('Opus 5.5 1M · ctx 6%')
+    expect(right(five(88, NOW - 1))).toBe('ctx 6%')
   })
 
   test('the context percent becomes a yellow badge at 70% and a red one at 85%', () => {
@@ -174,42 +187,55 @@ describe('segments', () => {
     for (const [percent, expected] of [[49, []], [50, [[' 50% ', 'yellow']]], [79, [[' 79% ', 'yellow']]], [80, [[' 80% ', 'red']]]] as const) {
       const over = { windows: [{ ...SEVEN, percent, resetsAt: null }] }
       expect(badges(over), String(percent)).toEqual(expected)
-      expect(row(over)).not.toMatch(new RegExp(`[↻${TICKS}]`))
+      expect(right(over)).not.toMatch(new RegExp(`[↻${TICKS}]`))
     }
   })
 
   test('countdowns use at most two units', () => {
     for (const [ms, shown] of [[30_000, '<1m'], [12 * MIN, '12m'], [2 * HOUR + 40 * MIN, '2h40m'], [4 * HOUR, '4h'], [31 * HOUR + 59_000, '1d7h'], [48 * HOUR, '2d']] as const) {
-      expect(row(five(1, NOW + ms)).endsWith(`↻${shown}`), shown).toBe(true)
+      expect(right(five(1, NOW + ms)).endsWith(`↻${shown}`), shown).toBe(true)
     }
   })
 
-  test('a subagent: dim type, its model, tokens in the default color', () => {
+  test('a subagent: dim type and its model on the left, tokens in the default color on the right', () => {
     const over: Partial<BarInput> = { git: null, agent: 'Explore', model: 'Haiku 4.5', ctx: { kind: 'tokens', tokens: 42_000 } }
-    expect(row(over)).toBe(`Explore · Haiku 4.5 · ctx 42K · ${FIVE_ROW} · ${SEVEN_ROW}`)
+    expect(zones(over)).toEqual(['plugins · Explore · Haiku 4.5', `ctx 42K · ${FIVE_ROW} · ${SEVEN_ROW}`])
     expect(tone(over, 'Explore')).toBe('dim')
     expect(tone(over, '42K')).toBe('plain')
   })
 
-  test('a narrow row drops the meters, then the words', () => {
-    expect(row({ git: null }, cells(GAUGES))).toBe(GAUGES)
-    expect(row({ git: null }, cells(GAUGES) - 1)).toBe(WORDS)
-    expect(row({ git: null }, cells(WORDS))).toBe(WORDS)
-    expect(row({ git: null }, cells(WORDS) - 1)).toBe(BARE)
-    const words = segments(input({ git: null }), cells(WORDS)).flat()
+  test('a narrow row drops the meters, then the words, while the left zone stays whole', () => {
+    expect(zones({}, fitted(LEFT, GAUGES))).toEqual([LEFT, GAUGES])
+    expect(zones({}, fitted(LEFT, GAUGES) - 1)).toEqual([LEFT, WORDS])
+    expect(zones({}, fitted(LEFT, WORDS))).toEqual([LEFT, WORDS])
+    expect(zones({}, fitted(LEFT, WORDS) - 1)).toEqual([LEFT, BARE])
+    const words = segments(input(), fitted(LEFT, WORDS)).right.flat()
     expect(words.find(r => r.badge)?.tone, 'the word keeps its badge').toBe('blue')
   })
 
-  test('a narrow row cuts git to 12 cells before it drops a meter', () => {
-    const git = { branch: 'feature/a-very-long-branch-name', added: 1, changed: 0 }
-    const full = row({ git })
-    expect(row({ git }, cells(full))).toBe(full)
-    expect(row({ git }, cells(GAUGES) + SEP.length + 12)).toBe(`feature/a-v… · ${GAUGES}`)
-    expect(row({ git }, cells(GAUGES) + SEP.length + 11)).toBe(`feature/a-very-long-branch-nam… · ${WORDS}`)
+  test('a narrow row cuts the branch to 12 cells before it drops a meter', () => {
+    const full = zones({ git: LONG })
+    expect(zones({ git: LONG }, fitted(full[0], GAUGES))).toEqual(full)
+    const kept = 'plugins · feature/a-v… · Opus 5.5 1M'
+    expect(zones({ git: LONG }, fitted(kept, GAUGES))).toEqual([kept, GAUGES])
+    expect(zones({ git: LONG }, fitted(kept, GAUGES) - 1)).toEqual(['plugins · feature/a-very-long-branch-nam… · Opus 5.5 1M', WORDS])
   })
 
-  test('the gauges are never cut', () => {
-    expect(row({}, 20)).toBe(BARE)
+  test('past the last step on the right, the branch is cut, then left out, then the name is cut', () => {
+    const rest = 'plugins · Opus 5.5 1M'
+    expect(zones({ git: LONG }, fitted(rest, BARE) + SEP.length + 2)).toEqual(['plugins · f… · Opus 5.5 1M', BARE])
+    expect(zones({ git: LONG }, fitted(rest, BARE) + SEP.length + 1)).toEqual([rest, BARE])
+    expect(zones({ git: LONG }, fitted(rest, BARE))).toEqual([rest, BARE])
+    expect(zones({ git: LONG }, fitted('plu… · Opus 5.5 1M', BARE))).toEqual(['plu… · Opus 5.5 1M', BARE])
+  })
+
+  test('the gauges, the agent and the model are never cut', () => {
+    expect(zones({}, 20)).toEqual(['Opus 5.5 1M', BARE])
+    expect(zones({ agent: 'Explore', model: 'Haiku 4.5' }, 20)).toEqual(['Explore · Haiku 4.5', BARE])
+  })
+
+  test('with no gauges, the left zone has the whole row and no gap', () => {
+    expect(zones({ git: LONG, ctx: null, windows: [] }, 26)).toEqual(['plugins · f… · Opus 5.5 1M', ''])
   })
 })
 
@@ -258,6 +284,13 @@ describe('boundary parsing', () => {
 
   test('not status output', () => {
     expect(parseGit('')).toBe(null)
+  })
+
+  test('a folder name is the last part of its path', () => {
+    expect(folderName('/home/me/plugins')).toBe('plugins')
+    expect(folderName('/home/me/plugins/')).toBe('plugins')
+    expect(folderName('C:\\Users\\me\\plugins')).toBe('plugins')
+    expect(folderName('/')).toBe('/')
   })
 })
 

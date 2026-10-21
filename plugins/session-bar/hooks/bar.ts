@@ -7,10 +7,11 @@ export type Ctx = { kind: 'percent'; percent: number } | { kind: 'tokens'; token
 export type Window = { label: '5h' | '7d' | '$'; percent: number; resetsAt: number | null; length: number | null }
 // resetMark: what stands before a reset countdown, chosen by the surface's fonts
 export type BarInput = { git: Git | null; agent: string | null; model: string | null; ctx: Ctx | null; windows: Window[]; now: number; resetMark: string }
-// badge: the tone fills the background behind the text instead of coloring it
-export type Run = { text: string; tone: 'plain' | 'dim' | 'yellow' | 'red' | 'blue'; badge?: true }
+// a colored tone exists only on a badge, which fills the background behind the text
+export type Run = { text: string; tone: 'plain' | 'dim'; badge?: never } | { text: string; tone: 'yellow' | 'red' | 'blue'; badge: true }
 export type Segment = Run[]
-type Tone = Run['tone']
+// what an alert asks for: nothing, or a badge in one of the colors
+type Tone = 'plain' | Extract<Run, { badge: true }>['tone']
 
 export const SEP = ' · '
 

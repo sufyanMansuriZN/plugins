@@ -10,12 +10,10 @@ const tick = atom({ plugin: 'session-bar', key: 'tick' } as const, 0)
 
 // Okabe-Ito colors, told apart with the common color vision deficiencies; orange and vermillion
 // also differ in lightness. Fixed, not theme keys, so black on each keeps 5:1 in light and dark themes.
-const TONE: Record<Run['tone'], { dimColor?: boolean; color?: string }> = {
-  plain: {},
-  dim: { dimColor: true },
-  yellow: { color: '#E69F00' },
-  red: { color: '#D55E00' },
-  blue: { color: '#56B4E9' },
+const BADGE: Record<Extract<Run, { badge: true }>['tone'], string> = {
+  yellow: '#E69F00',
+  red: '#D55E00',
+  blue: '#56B4E9',
 }
 
 // Nerd Font "refresh" (U+F021), centered in its cell where ↻ sits off center; Ghostty bundles the
@@ -23,7 +21,7 @@ const TONE: Record<Run['tone'], { dimColor?: boolean; color?: string }> = {
 export const RESET_TERMINAL = ' '
 
 const props = (r: Run) =>
-  r.badge && TONE[r.tone].color ? { backgroundColor: TONE[r.tone].color, color: '#000000', bold: true } : TONE[r.tone]
+  r.badge ? { backgroundColor: BADGE[r.tone], color: '#000000', bold: true } : r.tone === 'dim' ? { dimColor: true } : {}
 
 const refreshGit = async ($: EngineInterface) => {
   let next: Git | null = null

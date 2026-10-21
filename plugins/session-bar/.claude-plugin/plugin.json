@@ -1,1 +1,1 @@
-{ "name": "session-bar", "version": "2.0.0", "description": "Native status line: git, model, context and usage windows (run /session-bar:setup once)", "types": "./types/index.d.ts" }
+{ "name": "session-bar", "version": "3.0.0", "description": "Session bar above the prompt: git, model, context and usage windows, following the transcript in view", "types": "./types/index.d.ts" }

@@ -22,6 +22,6 @@ From inside a Claude Code session:
 
 ## Plugins
 
-- **session-bar**: Native status line: git, model, context and usage windows (run /session-bar:setup once). Needs `python3`. It replaces your own `statusLine`; setup saves it and `/session-bar:remove` puts it back. See [its README](plugins/session-bar/README.md)
+- **session-bar** (3.0.0): Session bar above the prompt: git, model, context and usage windows, following the transcript in view. With a subagent's transcript open, it shows that subagent's type and model. If you ran `/session-bar:setup` on 2.x, run `/session-bar:remove` once (needs `python3`). See [its README](plugins/session-bar/README.md)
 - **plain-focus**: Always-on lean ADHD output rules plus ASD-STE100-style simple English (based on ayghri/i-have-adhd, MIT)
 - **mermaid-preview**: Draws each mermaid block of a reply as a picture in the chat, in Ghostty or kitty. A button under each picture shows its source. Needs Node: mermaid-cli 12.0.0 runs through `npx` (the first run downloads it and Chromium). Not through tmux; elsewhere replies are left as they are

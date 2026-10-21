@@ -7,7 +7,7 @@
     {
       "name": "session-bar",
       "source": "./plugins/session-bar",
-      "description": "Native status line: git, model, context and usage windows (run /session-bar:setup once)"
+      "description": "Session bar above the prompt: git, model, context and usage windows, following the transcript in view"
     },
     {
       "name": "plain-focus",

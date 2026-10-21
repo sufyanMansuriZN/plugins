@@ -11,6 +11,21 @@ The plugin SHALL draw one row in the `AbovePrompt` band through a hooks module, 
 - **WHEN** the session is outside a git repo, the context has no percent yet and there are no rate limits
 - **THEN** the row reads `Opus 5.5 1M`
 
+### Requirement: Context segment
+In the main view the context segment SHALL read `ctx <percent>%` from `$.session.usage()`'s `context.percent`, rounded to a whole number. From 70% the percent SHALL be a badge on yellow, from 85% on red, and below 70% plain. It SHALL be left out while the percent is absent. In a subagent's view it SHALL read `ctx <n>K`, the input tokens (uncached, cache read and cache written) of that agent's last request, in the default color, and SHALL be left out until the agent has a request with usage.
+
+#### Scenario: Marks
+- **WHEN** the context is 69%, 70% or 85% full
+- **THEN** the segment reads `ctx 69%` in the default color, `ctx  70% ` with ` 70% ` in bold black on `#E69F00`, or `ctx  85% ` with ` 85% ` in bold black on `#D55E00`
+
+#### Scenario: No response yet
+- **WHEN** `context.percent` is absent
+- **THEN** the row has no context segment
+
+#### Scenario: Subagent tokens
+- **WHEN** a subagent's last request had 2,000 uncached, 30,000 cache-read and 10,000 cache-written input tokens and its transcript is in view
+- **THEN** the context segment reads `ctx 42K`
+
 ### Requirement: Usage window segments
 The `$.session.usage()` rate limits of kind `five_hour`, `seven_day` and `spend_limit` SHALL read `5h`, `7d` and `$`, then the meter, then `percentUsed` rounded to a whole number, then the pace badge when there is one, and ` ↻<countdown>` to `resetsAt` (ISO 8601) when it is set. The countdown SHALL use at most two units (`1d7h`, `2h40m`, `12m`, `<1m`). A window whose reset time has passed SHALL be left out. Other kinds SHALL be ignored. The windows SHALL show in every view.
 
@@ -34,11 +49,11 @@ The plugin SHALL parse each outside input where it enters: a rate limit whose `p
 - **THEN** the segment reads `5h ━╾────── 20%` with no tick, no badge and no countdown
 
 ### Requirement: Usage window colors
-A window with a pace SHALL draw its percent in the default color. A window without a reset time or a known length (the spend limit) SHALL color its percent and its used cells yellow from 50% and red from 80%. Labels and the countdown SHALL be dim. Yellow SHALL draw as `#E69F00`, red as `#D55E00` and blue as `#56B4E9`, the Okabe-Ito colors, fixed in every theme. The `green` tone and the theme's color keys SHALL NOT be used.
+Color SHALL show only as a badge's background, behind bold `#000000` text. No other text, cell or tick SHALL be in color. A window with a pace SHALL draw its percent in the default color. A window without a reset time or a known length (the spend limit) SHALL show its percent as a badge on yellow from 50% and on red from 80%, and plain below 50%. Labels and the countdown SHALL be dim. Yellow SHALL be `#E69F00`, red `#D55E00` and blue `#56B4E9`, fixed in every theme.
 
 #### Scenario: Ahead of pace
 - **WHEN** 5h is at 40% with 4h left of 5h
-- **THEN** `40%` is in the default color and ` ahead ` follows it
+- **THEN** `40%` and every cell are in the default color or dim, and ` ahead ` follows the percent
 
 #### Scenario: Behind pace
 - **WHEN** 5h is at 40% with 2h left
@@ -50,11 +65,15 @@ A window with a pace SHALL draw its percent in the default color. A window witho
 
 #### Scenario: No reset time
 - **WHEN** 7d is at 50% with no reset time
-- **THEN** `50%` is `#E69F00` and the segment has no tick, no badge and no countdown
+- **THEN** the percent shows as ` 50% ` in bold black on `#E69F00`, and the segment has no tick, no pace badge and no countdown
+
+#### Scenario: Spend limit below 50%
+- **WHEN** the spend limit is at 49%
+- **THEN** `49%` is in the default color, with no badge
 
 #### Scenario: Spend limit near its end
 - **WHEN** the spend limit is at 80%
-- **THEN** `80%` and its used cells are `#D55E00`
+- **THEN** the segment reads `$ ━━━━━━╾─  80% `, with ` 80% ` in bold black on `#D55E00`, `━━━━━━╾` in the default color and `─` dim
 
 ### Requirement: Row fits the terminal
 The plugin SHALL fit the row in the band's `bodyColumns`, which already leaves out the engine's own cells. It SHALL show the windows with their meters and badges when they fit beside the git segment at its width up to 12 cells, else with badges only, else bare. The git segment SHALL then be cut to the room left and end with `…`, and left out when fewer than 2 cells are left. The other segments SHALL never be cut.
@@ -108,7 +127,7 @@ A window that is ahead, far ahead, behind or used up SHALL show a dim space and 
 - **THEN** ` behind ` follows `91%`, in bold black on `#56B4E9`
 
 ### Requirement: Usage window meter
-Each window SHALL show an 8-cell meter between its label and its percent. With halves = round(percent / 100 × 16), capped at 16, cell i SHALL be `━` when halves > 2i + 1, `╾` when halves = 2i + 1, and `─` otherwise. Unused cells SHALL be dim. Without a pace, used cells SHALL take the percent's color.
+Each window SHALL show an 8-cell meter between its label and its percent. With halves = round(percent / 100 × 16), capped at 16, cell i SHALL be `━` when halves > 2i + 1, `╾` when halves = 2i + 1, and `─` otherwise. Unused cells SHALL be dim and every other cell SHALL be in the default color.
 
 #### Scenario: Half a cell
 - **WHEN** the spend limit is at 6%, then at 19%
@@ -116,14 +135,14 @@ Each window SHALL show an 8-cell meter between its label and its percent. With h
 
 #### Scenario: Spend limit
 - **WHEN** the spend limit is at 80% with no reset time
-- **THEN** the meter is `━━━━━━╾` red and `─` dim, with no tick
+- **THEN** the meter is `━━━━━━╾` in the default color and `─` dim, with no tick
 
 ### Requirement: Pace tick
-A window with a pace SHALL insert a tick in the default color at cell boundary round(mark / 12.5), 0 to 8. Its left arm SHALL be heavy when the cell before it is `━`, its right arm heavy when the cell after it is `━` or `╾`, light beside any other cell, and absent at an end. A used cell after the tick SHALL be yellow when ahead and red when far ahead or used up. Other used cells SHALL be default. On pace and behind, no cell SHALL be in color.
+A window with a pace SHALL insert a tick in the default color at cell boundary round(mark / 12.5), 0 to 8. Its left arm SHALL be heavy when the cell before it is `━`, its right arm heavy when the cell after it is `━` or `╾`, light beside any other cell, and absent at an end. Whatever the pace, no cell SHALL be in color: the used cells after the tick show the overspend by their place, and the badge names it.
 
 #### Scenario: Ahead
 - **WHEN** 5h is at 70% with 2h30m left
-- **THEN** the segment reads `5h ━━━━╋━╾── 70%  ahead  ↻2h30m`, with `━━━━╋` in the default color, `━╾` yellow and `──` dim
+- **THEN** the segment reads `5h ━━━━╋━╾── 70%  ahead  ↻2h30m`, with `━━━━╋━╾` in the default color and `──` dim
 
 #### Scenario: Behind
 - **WHEN** 5h is at 30% with 2h30m left
@@ -144,3 +163,14 @@ A window with a pace SHALL insert a tick in the default color at cell boundary r
 #### Scenario: Near the reset
 - **WHEN** 5h is at 91% with 10m left
 - **THEN** the segment reads `5h ━━━━━━━╾┨ 91%  behind  ↻10m`
+
+### Requirement: Reset mark
+A mark SHALL stand just before each countdown. On the terminal it SHALL be the Nerd Font refresh icon (U+F021), which sits in the center of its cell, and a space. On the desktop, which draws with its own fonts, it SHALL be `↻`. The rows in this spec show `↻`.
+
+#### Scenario: Terminal
+- **WHEN** 5h resets in 46m and the band is on the terminal
+- **THEN** the countdown reads U+F021, a space and `46m`
+
+#### Scenario: Desktop
+- **WHEN** 5h resets in 46m and the band is in the desktop app
+- **THEN** the countdown reads `↻46m`

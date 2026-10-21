@@ -111,14 +111,22 @@ describe('segments', () => {
 
   test('behind: no cell in color, and a "behind" badge', () => {
     expect(alone(half(30))).toBe('5h ━━╾─╂──── 30%  behind  2h30m')
-    expect(meter(half(30))).toEqual([['━━╾', 'plain'], ['─', 'dim'], ['╂', 'plain'], ['────', 'dim']])
+    expect(meter(half(30))).toEqual([['━━╾', 'plain'], ['─╂────', 'dim']])
     expect(badges(half(30))).toEqual([[' behind ', 'blue']])
     expect(tone(half(30), '30%')).toBe('plain')
   })
 
   test('on pace: a fill that stops at the tick has no heavy arm past it', () => {
     expect(alone(half(50))).toBe('5h ━━━━╉──── 50% 2h30m')
-    expect(meter(half(50))).toEqual([['━━━━╉', 'plain'], ['────', 'dim']])
+    expect(meter(half(50))).toEqual([['━━━━', 'plain'], ['╉────', 'dim']])
+  })
+
+  // a cell has one tone, so the tick's thin arms cannot be dim while its stroke is not
+  test('the tick takes the tone of the cell after it, or of the cell before it at the end', () => {
+    expect(meter(half(30)), 'unused after').toContainEqual(['─╂────', 'dim'])
+    expect(meter(half(54)), 'used after').toEqual([['━━━━╋╾', 'plain'], ['───', 'dim']])
+    expect(meter(five(91, NOW + 10 * MIN)), 'last, used before').toEqual([['━━━━━━━╾┨', 'plain']])
+    expect(meter(five(6, NOW + 10 * MIN)), 'last, unused before').toEqual([['╾', 'plain'], ['───────┨', 'dim']])
   })
 
   test('a half cell gives the tick a light arm on its left and a heavy arm on its right', () => {
@@ -157,7 +165,7 @@ describe('segments', () => {
 
   test('on pace, no cell is in color, even across the tick', () => {
     expect(meter(five(57, NOW + 138 * MIN)), 'mark at 54').toEqual([['━━━━╋╾', 'plain'], ['───', 'dim']])
-    expect(meter(five(54, NOW + 126 * MIN)), 'mark at 58').toEqual([['━━━━╾╂', 'plain'], ['───', 'dim']])
+    expect(meter(five(54, NOW + 126 * MIN)), 'mark at 58').toEqual([['━━━━╾', 'plain'], ['╂───', 'dim']])
   })
 
   test('the tick stands first at the start of a window and last near its reset', () => {

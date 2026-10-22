@@ -31,7 +31,10 @@ const FLOWCHART_HEADER = /^(\s*(?:flowchart|graph))(?:\s+(TB|TD|BT|LR|RL))?\b(.*
 
 export type Part = { kind: 'text'; text: string } | { kind: 'mermaid'; source: string; fence: string }
 
-/** Splits reply markdown into text and closed ```mermaid blocks; a fence inside another stays text. */
+/**
+ * Splits reply markdown into text and closed ```mermaid blocks of a type the renderer draws; a fence
+ * inside another, or of another type, stays text.
+ */
 export function split(text: string): Part[] {
   const parts: Part[] = []
   const lines = text.split('\n')
@@ -48,9 +51,10 @@ export function split(text: string): Part[] {
     const close = lines.findIndex((line, at) => at > i && closer.test(line))
     // An unclosed fence is still streaming: the engine draws it as it comes.
     if (close === -1) break
-    if (open[2] === 'mermaid') {
+    const source = lines.slice(i + 1, close).join('\n').trim()
+    if (open[2] === 'mermaid' && isDrawn(diagramType(source))) {
       pushText(i)
-      parts.push({ kind: 'mermaid', source: lines.slice(i + 1, close).join('\n').trim(), fence: lines.slice(i, close + 1).join('\n') })
+      parts.push({ kind: 'mermaid', source, fence: lines.slice(i, close + 1).join('\n') })
       textStart = close + 1
     }
     i = close

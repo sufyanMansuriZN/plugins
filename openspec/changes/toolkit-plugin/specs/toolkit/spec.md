@@ -52,7 +52,7 @@ The mermaid preview's session start hook SHALL run only on the terminal surface.
 
 #### Scenario: A type that is not drawn
 - **WHEN** a mermaid block is a gantt, pie, mindmap, gitGraph or other type the renderer does not draw
-- **THEN** it stays as source with a dim note, and nothing runs
+- **THEN** it stays as source, drawn by the engine as any code block, and nothing runs
 
 #### Scenario: Through tmux
 - **WHEN** the session runs in Ghostty through tmux

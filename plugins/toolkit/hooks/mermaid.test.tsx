@@ -124,6 +124,8 @@ test('split takes closed mermaid fences that open a line, and nothing else', () 
   const shown = '````markdown\n' + FENCE + '\n````'
   expect(split(shown)).toEqual([{ kind: 'text', text: shown }])
   expect(split('```mermaidjs\nx\n```').some(part => part.kind === 'mermaid')).toBe(false)
+  const pie = 'Before.\n\n```mermaid\npie\n  "a": 1\n```\n\nAfter.'
+  expect(split(pie)).toEqual([{ kind: 'text', text: pie }])
   expect(split('Streaming:\n```mermaid\ngraph LR\n  A-->')).toEqual([{ kind: 'text', text: 'Streaming:\n```mermaid\ngraph LR\n  A-->' }])
   expect(split('  1. list\n     indented\n\n' + FENCE)[0]).toEqual({ kind: 'text', text: '  1. list\n     indented' })
 })
@@ -248,7 +250,7 @@ test('the first diagram installs the pinned renderer, then draws the flowchart b
   const host = engine(on, { dir: DIR })
   const clock = mock.clock(on)
   const ui = await mount($, FENCE, { viewport: SCREEN })
-  expect(await ui.find({ type: 'Text', text: 'drawing diagram…' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^installing the diagram renderer, once/ })).toBeDefined()
   await ui.redraw()
   await settle(clock)
 
@@ -317,14 +319,12 @@ test('a failed install keeps the source and says why', async ($, on) => {
   expect(await ui.find({ type: 'Text', text: 'mermaid: npm error code ENOTFOUND' })).toBeDefined()
 })
 
-test('a type the renderer does not draw stays as source with a note, and nothing runs', async ($, on) => {
+test('a reply whose only diagram is of a type the renderer does not draw is left to the engine, and nothing runs', async ($, on) => {
   const host = engine(on, { dir: DIR })
   const clock = mock.clock(on)
-  const pie = '```mermaid\npie\n  "a": 1\n```'
-  const ui = await mount($, pie)
+  const ui = await mount($, 'A pie.\n\n```mermaid\npie\n  "a": 1\n```')
   await settle(clock)
-  expect(await ui.find({ type: 'Markdown', text: pie })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^pie diagrams stay as source\./ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /engine drawing/ })).toBeDefined()
   expect(host.runs).toHaveLength(0)
 })
 

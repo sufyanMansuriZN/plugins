@@ -6,10 +6,8 @@ import { blocks } from './blocks'
 import { X11_CLIPBOARD_PY } from './clipboard'
 import {
   diagramId,
-  diagramType,
   INSTALL_TIMEOUT_MS,
   installArgv,
-  isDrawn,
   isShrunk,
   orientations,
   pairOf,
@@ -95,11 +93,6 @@ export const register: Register = on => {
             {items.length ? links(`links-${index}`, ...items) : null}
           </Box>
         )
-        const type = diagramType(part.source)
-        if (!isDrawn(type)) {
-          return withSource(`${type || 'This'} diagrams stay as source. The preview draws flowchart, sequence, class, state, ER and XY chart diagrams.`)
-        }
-
         const id = await diagramId(part.source)
         const diagramRef = { plugin: 'toolkit', key: 'mermaidDiagram', id } as const
         const sourceRef = { plugin: 'toolkit', key: 'mermaidIsSource', id: `${e.requestId}:${index}` } as const
@@ -140,7 +133,8 @@ export const register: Register = on => {
         const diagram = await read($, diagramRef)
         if (!diagram) {
           schedule()
-          return withSource('drawing diagram…')
+          const installed = await Promise.all(rendererFiles(dir).map(file => $.fs.exists(file)))
+          return withSource(installed.includes(false) ? 'installing the diagram renderer, once (about 16 MB, can take a few minutes)…' : 'drawing diagram…')
         }
         if (diagram.status === 'failed') {
           const retry = () => {

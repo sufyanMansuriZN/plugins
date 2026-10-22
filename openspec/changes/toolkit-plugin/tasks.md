@@ -24,7 +24,7 @@
 
 ## 5. Mermaid without a browser
 
-- [x] 5.0 Replace mmdc with `beautiful-mermaid` and resvg run through node (`hooks/render.ts`). Draw light and dark PNGs, follow the `theme` setting or the OS, cap a diagram at half the screen, turn a flowchart when that draws larger, offer `open full size` below 60%, and leave other types as source with a note. Verify: `claude plugin test plugins/toolkit` passes the install, render, reuse, theme, long diagram, refused, failed install and unsupported type tests, and `tsc` passes.
+- [x] 5.0 Replace mmdc with `beautiful-mermaid` and resvg run through node (`hooks/render.ts`). Draw light and dark PNGs, follow the `theme` setting or the OS, cap a diagram at half the screen, turn a flowchart when that draws larger, offer `open full size` below 60%, and leave other types to the engine as source. Verify: `claude plugin test plugins/toolkit` passes the install, render, reuse, theme, long diagram, refused, failed install and unsupported type tests, and `tsc` passes.
 
 ## 6. Release
 

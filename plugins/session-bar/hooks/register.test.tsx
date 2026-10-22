@@ -276,6 +276,19 @@ test('a band left open redraws its countdowns every 30 seconds', async ($, on) =
   expect([before, early, after]).toEqual([' 46m', ' 46m', ' 44m'])
 })
 
+test("rows another hook draws in the band sit above the bar, so the bar stays on the prompt", async ($, on) => {
+  on('ui.render', { component: 'AbovePrompt' }, ($, e) => {
+    const { Text } = $.ui.resolve(e)
+    return <Text>3 tasks (1 done, 2 open)</Text>
+  })
+  await engine($, on)
+  const ui = await mountBand($, 'terminal')
+  const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
+  await ui.unmount()
+  expect(texts[0]).toBe('3 tasks (1 done, 2 open)')
+  expect(texts.slice(1).join('')).toMatch(/^plugins/)
+})
+
 test('a survey has the band to itself', async ($, on) => {
   await engine($, on)
   const ui = await $.ui.mount({

@@ -138,14 +138,15 @@ export const register: Register = on => {
       .map(r => <Text {...props(r, e.surface === 'terminal')}>{r.text}</Text>)
     const below = await next(e)
 
+    // the bar is the band's last row, on the prompt, whatever order other hooks drawing here run in;
     // the left zone takes the free room, so the right zone sits at the band's right edge
     return (
       <Box flexDirection="column">
+        {below}
         <Box>
           <Box key="left" flexGrow={1}>{zone(left)}</Box>
           {right.length ? <Box key="right" marginLeft={GAP}>{zone(right)}</Box> : null}
         </Box>
-        {below}
       </Box>
     )
   })

@@ -84,6 +84,23 @@ test('a button with hidden text behind its label is refused', async ($, on) => {
   expect(call.deny).toContain('sends only the label')
 })
 
+test('each prompt carries the rule, only in a session that offers the tool', async ($, on) => {
+  const contexts: (readonly string[] | undefined)[] = []
+  on('tool.register', (_$, e) => ({ value: { tool: `mcp__toolkit__${e.name}` } }))
+  on('prompt.submit', (_$, e) => {
+    contexts.push(e.context)
+    return { text: e.text }
+  })
+  mock.env(on, {})
+  on('session.start', () => ({ cwd: '/w' }))
+  const typed = (text: string) => $.prompt.submit({ text, wait: false, origin: { kind: 'composer' } })
+  await typed('before the tool is offered')
+  await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
+  await typed('where does this stand?')
+  expect(contexts[0] ?? []).toEqual([])
+  expect(contexts[1]?.join('\n')).toContain('Next: tell me whether')
+})
+
 test('a call with nothing to decide is refused, so a turn never ends in a recap alone', async ($, on) => {
   engine(on)
   const call = await $.tool.call({ tool: TOOL, recap: RECAP })

@@ -30,11 +30,29 @@ Every `$.state` key the plugin uses SHALL be under the `toolkit` plugin and SHAL
 - **THEN** the cache folder is stored at `{ plugin: 'toolkit', key: 'mermaidDir' }`
 
 ### Requirement: Mermaid preview
-The mermaid preview SHALL keep the behaviour of the `mermaid-preview` plugin 0.1.0, except that its session start hook runs only on the terminal surface. In Ghostty or kitty, and not through tmux, it SHALL draw each closed mermaid block of a reply as a picture with mermaid-cli 12.0.0 through `npx`, with a button that shows its source. Elsewhere it SHALL leave mermaid blocks as text.
+The mermaid preview's session start hook SHALL run only on the terminal surface. In Ghostty or kitty, and not through tmux, it SHALL draw each closed mermaid block of a reply as a picture with no browser, through node. A plain dim link under a picture SHALL show its source. Elsewhere it SHALL leave mermaid blocks as text.
 
 #### Scenario: A drawn diagram
 - **WHEN** a reply holds a mermaid block that is already drawn, in Ghostty
 - **THEN** the block is shown as a picture inside the engine's reply frame
+
+#### Scenario: Drawing a new diagram
+- **WHEN** a reply holds a mermaid block that is not drawn yet
+- **THEN** `beautiful-mermaid` 1.1.3 and `@resvg/resvg-js` 2.6.2 are installed with npm into the cache folder if missing, and the diagram is drawn as a light and a dark PNG with a transparent background, grey borders and `#D77757` arrowheads
+
+#### Scenario: Theme
+- **WHEN** Claude Code's `theme` setting starts with `light` or `dark`
+- **THEN** the picture for that theme is shown
+- **WHEN** the setting is `auto`
+- **THEN** the OS preference decides (`gsettings` color-scheme on Linux, `AppleInterfaceStyle` on macOS), dark when it cannot be read, and a change is shown within 5 seconds
+
+#### Scenario: A long diagram
+- **WHEN** a diagram is taller than half the screen
+- **THEN** it is shrunk to half the screen's height (at least 8 rows), a flowchart is shown the way (as written or turned) that draws larger, and below 60% of its natural size an `open full size` link opens it with `xdg-open` or `open`
+
+#### Scenario: A type that is not drawn
+- **WHEN** a mermaid block is a gantt, pie, mindmap, gitGraph or other type the renderer does not draw
+- **THEN** it stays as source with a dim note, and nothing runs
 
 #### Scenario: Through tmux
 - **WHEN** the session runs in Ghostty through tmux

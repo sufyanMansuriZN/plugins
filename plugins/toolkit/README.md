@@ -10,14 +10,18 @@ claude plugin install toolkit@plugins
 
 ### Mermaid preview
 
-Draws each mermaid block of a reply as a picture in the chat. A button under each picture shows its source, and a second press shows the picture again. If mermaid cannot draw a block, the source stays, with the reason and a Retry button.
+Draws each mermaid block of a reply as a picture in the chat, with no browser. **Show source** under a picture shows its source, and **Show picture** shows the picture again. If a block cannot be drawn, the source stays, with the reason and **Retry**.
+
+- **Light and dark.** Each diagram is drawn for a light and a dark background. The picture follows Claude Code's `theme` setting. With `auto`, it follows the OS: GNOME's color scheme on Linux, the appearance on macOS. If the OS does not say, it is dark. A change shows within 5 seconds.
+- **Long diagrams.** A diagram takes at most half the screen's height. A flowchart is also drawn the other way (left to right for a top to bottom one), and the way that shows larger is used. A diagram shown at less than 60% of its size gets **open full size**, which opens it in your image viewer.
+- **Types.** It draws flowchart, sequence, class, state, ER and XY chart diagrams. Other types (gantt, pie, mindmap, gitGraph and more) stay as source, with a note.
 
 It needs:
 
 - Ghostty or kitty. It does not work through tmux. In other terminals, replies stay as they are.
-- Node. mermaid-cli 12.0.0 runs through `npx`. The first run downloads mermaid-cli and Chromium, so the first picture takes some time.
+- Node and npm. The first diagram installs `beautiful-mermaid` 1.1.3 and `@resvg/resvg-js` 2.6.2 (about 16 MB) into the cache folder, so it takes some time.
 
-Pictures are kept in `~/.cache/claude-mermaid`.
+Pictures and the renderer are kept in `~/.cache/claude-mermaid`.
 
 ### Table copy
 

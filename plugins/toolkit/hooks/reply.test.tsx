@@ -12,7 +12,8 @@ const REPLY = `Here is the data.\n\n${TABLE}\n\nAnd more text.`
 const DIR = '/home/me/.cache/claude-mermaid'
 const SOURCE = 'graph LR\n  A-->B'
 const FENCE = '```mermaid\n' + SOURCE + '\n```'
-const DRAWN: Diagram = { status: 'drawn', picture: { file: `${DIR}/d.png`, width: 360, height: 180 } }
+const PICTURE = { file: `${DIR}/d.png`, full: `${DIR}/d-full.png`, width: 360, height: 180 }
+const DRAWN: Diagram = { status: 'drawn', light: PICTURE, dark: PICTURE }
 
 type Host = { copied: string[]; runs: { argv: readonly string[]; stdin?: string }[]; toasts: string[] }
 // How the X11 clipboard script ends: its exit code, or the run itself failing (no python3).

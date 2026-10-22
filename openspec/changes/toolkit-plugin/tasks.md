@@ -22,6 +22,10 @@
 - [x] 4.3 Port the `table-copy` dev mod: `hooks/tables.ts` and a `table` block in the reply hook, with `copy table` through the X11 clipboard script in `hooks/clipboard.ts`, which needs nothing installed. Verify: `claude plugin test plugins/toolkit` passes the parser tests, the button row under each table, each button's copy, the fallback on a non-zero exit and on a failed run, the `table 2` toast, a reply with a table and a drawn diagram that shows both under one bullet, and a terminal with no pictures where the fence stays text and the table keeps its buttons.
 - [x] 4.4 Update both READMEs and this change. Verify: `openspec validate --all --strict` passes.
 
-## 5. Release
+## 5. Mermaid without a browser
 
-- [ ] 5.1 Live check: install `toolkit@plugins` in a session in Ghostty and see a mermaid block drawn. In a reply with a table, press `copy table` and paste into Teams or a spreadsheet, then into a plain-text editor. Compare the spacing of a reply with a table against one without. Have the model call `mcp__toolkit__change_session_directory`: `Move` continues in the new folder, `Stay` and typed text keep the session, and a dialog left open past the idle time does not move it. Turn `cd` off in `/plugin` and see the tool go. Archive this change once the user accepts 0.1.0.
+- [x] 5.0 Replace mmdc with `beautiful-mermaid` and resvg run through node (`hooks/render.ts`). Draw light and dark PNGs, follow the `theme` setting or the OS, cap a diagram at half the screen, turn a flowchart when that draws larger, offer `open full size` below 60%, and leave other types as source with a note. Verify: `claude plugin test plugins/toolkit` passes the install, render, reuse, theme, long diagram, refused, failed install and unsupported type tests, and `tsc` passes.
+
+## 6. Release
+
+- [ ] 6.1 Live check: install `toolkit@plugins` in a session in Ghostty and see a mermaid block drawn. In a reply with a table, press `copy table` and paste into Teams or a spreadsheet, then into a plain-text editor. Compare the spacing of a reply with a table against one without. Have the model call `mcp__toolkit__change_session_directory`: `Move` continues in the new folder, `Stay` and typed text keep the session, and a dialog left open past the idle time does not move it. Turn `cd` off in `/plugin` and see the tool go. Archive this change once the user accepts 0.1.0.

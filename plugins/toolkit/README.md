@@ -52,6 +52,17 @@ In the terminal, the call shows as one row, **Move session** and the folder, wit
 
 If you still have the `auto-cd` dev mod, remove it. With both, Claude sees two tools that do the same thing.
 
+### Next step box (`wrap_up`)
+
+Gives Claude a tool, `wrap_up`, that it calls at the end of a turn with real work in it. The terminal draws a box with a short recap of where the work stands. When the next move is yours, the box also shows one question and one or two buttons that answer it. Claude writes its closing message after the box.
+
+- **A button sends your answer.** A press sends the button's message as your own prompt, as if you typed it. The buttons then give way to one dim line that names your choice, and they cannot be pressed again.
+- **Common steps.** Claude can offer a common step, such as **Commit**, **Create PR** or **Fix CI**. In the terminal no app is behind these, so a press asks Claude in words to do it.
+- **Waiting on you.** When Claude cannot go on until you answer, you also get a notification.
+- **Full view.** ctrl+o shows the call and its result as Claude Code draws them.
+
+It runs in an interactive terminal session only. The Claude desktop app has its own next step box, and a `claude -p` run has no one to press a button.
+
 ## Add a tool
 
 1. Write the tool as one file in `hooks/`, for example `hooks/my-tool.ts`. Export `register` from it. Put its tests beside it in `hooks/my-tool.test.ts`.
@@ -59,14 +70,14 @@ If you still have the `auto-cd` dev mod, remove it. With both, Claude sees two t
 3. Do not give a tool an on/off option. A model tool is declared at session start, and the plugin API cannot take it back, so an option switched off mid-session leaves the model a tool that fails.
 4. Start each `$.state` key of the tool with its key, for example `myToolCount`, and declare it in `types/index.d.ts`.
 
-The mermaid preview uses the state keys `mermaidDir`, `mermaidDiagram` and `mermaidIsSource`. The change session directory tool keeps a started move in `cdPending` until its task is submitted. Its pictures have a transparent background, grey borders and `#D77757` arrowheads.
+The mermaid preview uses the state keys `mermaidDir`, `mermaidDiagram` and `mermaidIsSource`. Its pictures have a transparent background, grey borders and `#D77757` arrowheads. The change session directory tool keeps a started move in `cdPending` until its task is submitted. The next step box uses `wrapUpAnswer`.
 
 A tool that draws part of a reply does not get its own `ui.render` hook. The one hook runs on the terminal surface only, never for a summary. It splits the reply into text, mermaid blocks, quotes and tables (a table inside a mermaid block or a quote is not a table), and leaves a reply with only text, or any reply on the desktop, to the engine. It adds a block kind to `hooks/blocks.ts` and draws it in `hooks/reply.tsx`. A render hook on `AssistantMessage` draws the whole reply, so a second one would hide the first one's work.
 
 Two rules of the hooks loader shape this:
 
 - `on` can only be passed to a function named in the module. So `register.tsx` has one line per tool, not a loop over a table.
-- One module cannot hook the same event twice without a matcher. The change session directory tool already hooks `session.start` with none. A new tool that hooks `session.start` must give a matcher that says when it applies, as mermaid does with `{ surface: 'terminal' }`.
+- One module cannot hook the same event twice without a matcher. The change session directory tool already hooks `session.start` with none. A new tool that hooks `session.start` must give a matcher that says when it applies, as mermaid does with `{ surface: 'terminal' }` and the next step box with `{ surface: 'terminal', isInteractive: true }`.
 
 Run the checks:
 

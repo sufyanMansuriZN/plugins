@@ -72,7 +72,7 @@ The tick is fixed. It marks the context size to stay under:
 | More than 200K | 250K | Anthropic's long-context scores drop past about 256K. |
 | 200K or less | 160K | A 200K window compacts at 200K, so the tick leaves room before that. |
 
-The sources are in [research-context-size.md](../../openspec/changes/archive/2026-10-03-session-bar-visual-redesign/research-context-size.md).
+The sources are in [research-context-size.md](docs/research-context-size.md).
 
 ```
 ctx ╾─╂────── 60K        1M window: the tick is after cell 2
@@ -143,3 +143,17 @@ When the band is too narrow, the parts go in this order:
 5. The repo name is cut.
 
 A cut part ends with `…`. The agent, the model and the parts in the right zone are never cut. While a survey shows above the prompt, the row is hidden.
+
+## How it works
+
+These rules are for whoever changes the plugin. The tests in `tests/` hold the exact rows for each case.
+
+- **Drawing.** One hooks module draws the row in the `AbovePrompt` band, on the terminal and desktop surfaces. It never uses Claude Code's `statusLine` setting. It fits the row in the band's `bodyColumns`. A drawing writes no state.
+- **Git.** `git --no-optional-locks status --porcelain=v2 --branch`, run with `$.process.run` in `$.session.root()`, with a 2-second limit. A slow or failed run leaves out the git part, and the band still draws. A detached HEAD with no commit reads `HEAD`.
+- **Repo name.** The last part of the path of the first tree that `git worktree list --porcelain` names. A failed read keeps the last value. The name is written to state only when it changes.
+- **Refresh.** A `$.clock.every(30000)` timer and each `session.measure` bump a `tick` state value, so countdowns move while idle and new usage shows at once. Git is read at session start, at each turn's end, on the timer, and when the band draws with a root other than the one last read.
+- **Subagents.** The band reads `e.props.view`. The plugin learns each subagent's model and input tokens (uncached, cache read and cache written) from `turn.step` events that carry `agentId`. It writes state only when a reading changes. Main-loop steps write nothing. The type comes from `$.agent.list()`.
+- **Model label.** `claude-<name>-<major>-<minor>`, with an optional `-<8-digit date>` and `[1m]`, reads `<Name> <major>.<minor>`. An id of any other shape shows as given.
+- **Inputs are parsed where they enter.** A rate limit with a `percentUsed` that is not a finite number is left out. A `resetsAt` that does not parse counts as no reset time. A context with no finite `tokens`, or a `window` that is not above 0, is left out. Rate-limit kinds other than `five_hour`, `seven_day` and `spend_limit` are ignored.
+- **Pace.** `mark` = the share of the window gone × 100, and `delta` = percent − mark. 100% or more is used up. Within 5 points is on pace. Ahead by more than 20 is far ahead. The tick stands at cell boundary round(mark / 12.5). The meter has halves = round(percent / 100 × 16), capped at 16.
+- **Colors.** Orange `#E69F00`, vermillion `#D55E00`, sky blue `#56B4E9`, with bold `#000000` text, fixed in every theme.

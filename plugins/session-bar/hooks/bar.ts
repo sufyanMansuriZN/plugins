@@ -167,7 +167,7 @@ const DETAILS: readonly Detail[] = [
   { meter: false, word: false },
 ]
 
-// [largest window, tokens]: the ctx tick, from research-context-size.md (openspec archive 2026-10-03).
+// [largest window, tokens]: the ctx tick, from docs/research-context-size.md.
 // Long-context scores drop past 256K on a 1M window; a 200K window compacts at its edge, so it marks 160K.
 const CTX_TICKS: readonly (readonly [number, number])[] = [
   [200_000, 160_000],

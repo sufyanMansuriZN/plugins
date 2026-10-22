@@ -1,1 +1,1 @@
-{ "name": "session-bar", "version": "3.1.2", "description": "Session bar above the prompt: git, model, context and usage windows, following the transcript in view", "types": "./types/index.d.ts" }
+{ "name": "session-bar", "version": "3.1.3", "description": "Session bar above the prompt: git, model, context and usage windows, following the transcript in view", "types": "./types/index.d.ts" }

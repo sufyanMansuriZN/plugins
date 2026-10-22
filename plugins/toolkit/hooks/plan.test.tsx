@@ -187,3 +187,27 @@ test('the call and result rows are hidden, except under ctrl+o', async ($, on) =
     await shown.unmount()
   }
 })
+
+const LONG = Array.from({ length: 9 }, (_, index) => ({ content: `Step ${index + 1}`, status: index < 7 ? 'completed' : index === 7 ? 'in_progress' : 'pending' }))
+
+test('a long list shows five steps around the one in progress and counts the rest, as Claude Code cuts its own lists', async ($, on) => {
+  engine(on)
+  await $.tool.call({ tool: TOOL, items: LONG.map(step => ({ ...step, status: step.content === 'Step 2' ? 'in_progress' : 'pending' })) })
+  expect((await spinner($)).filter(words => words.startsWith('Step') || words.startsWith('…'))).toEqual(['Step 1', 'Step 2', 'Step 3', 'Step 4', 'Step 5', '… +4 more'])
+  await $.tool.call({ tool: TOOL, items: LONG })
+  expect((await spinner($)).filter(words => words.startsWith('Step') || words.startsWith('…'))).toEqual(['Step 5', 'Step 6', 'Step 7', 'Step 8', 'Step 9', '… +4 more'])
+})
+
+test('above the prompt a long list fits the rows the band has, leaving one for a status bar', async ($, on) => {
+  engine(on)
+  await $.tool.call({ tool: TOOL, items: LONG })
+  const ui = await $.ui.mount({
+    plugin: 'toolkit',
+    surface: 'terminal',
+    component: 'AbovePrompt',
+    props: { hasSurvey: false, isWorking: false, maxRows: 6, bodyColumns: 100, scroll: { offset: 0, bodyRows: 6 }, view: {} },
+  })
+  const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text.trim()).filter(words => words.startsWith('Step') || words.startsWith('…'))
+  await ui.unmount()
+  expect(texts).toEqual(['Step 7', 'Step 8', 'Step 9', '… +6 more'])
+})

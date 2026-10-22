@@ -9,6 +9,10 @@ export const PLAN_TOOL = `mcp__toolkit__${NAME}`
 const PLAN = { plugin: 'toolkit', key: 'plan' } as const
 const STEPS_MAX = 12
 const STATUSES: PlanStatus[] = ['pending', 'in_progress', 'completed']
+// A long list shows five steps and a "… +N more" row, as Claude Code cuts its own lists short.
+const STEP_ROWS = 6
+// Above the prompt the list leaves room for its count and a status bar's row.
+const BAND_ROWS = 2
 
 const DESCRIPTION = `Keep the task list the terminal shows above the prompt while you work. Every request that edits files or runs more than one command gets one (implement-and-test, investigate-then-fix, anything the user listed); only a single-command answer or pure conversation does not.
 
@@ -102,11 +106,26 @@ const MARKS: Record<PlanStatus, { mark: string; color?: 'success' | 'claude' }> 
   completed: { mark: '✔', color: 'success' },
 }
 
-function drawSteps(elements: Elements['terminal'], plan: PlanStep[]) {
+/**
+ * The steps a list of at most `rows` rows shows: the step in progress (or the first open one),
+ * the one done before it, then what comes next. A longer plan gives a row to the count it leaves out.
+ */
+export function windowSteps(plan: PlanStep[], rows: number): { shown: [number, PlanStep][]; hidden: number } {
+  const all = plan.map((step, index): [number, PlanStep] => [index, step])
+  if (plan.length <= rows) return { shown: all, hidden: 0 }
+  const size = Math.max(1, rows - 1)
+  const current = plan.findIndex(step => step.status === 'in_progress')
+  const anchor = current >= 0 ? current : Math.max(0, plan.findIndex(step => step.status !== 'completed'))
+  const first = Math.max(0, Math.min(anchor - 1, plan.length - size))
+  return { shown: all.slice(first, first + size), hidden: plan.length - size }
+}
+
+function drawSteps(elements: Elements['terminal'], plan: PlanStep[], rows: number) {
   const { Box, Text } = elements
+  const { shown, hidden } = windowSteps(plan, rows)
   return (
     <Box flexDirection="column" flexGrow={1}>
-      {plan.map((step, index) => (
+      {shown.map(([index, step]) => (
         <Box key={`step:${index}`} flexDirection="row">
           <Text color={MARKS[step.status].color}>{`${MARKS[step.status].mark} `}</Text>
           <Text weight={step.status === 'in_progress' ? 'bold' : undefined} dimColor={step.status === 'completed'} strikethrough={step.status === 'completed'}>
@@ -114,6 +133,7 @@ function drawSteps(elements: Elements['terminal'], plan: PlanStep[]) {
           </Text>
         </Box>
       ))}
+      {hidden > 0 ? <Text dimColor>{`  … +${hidden} more`}</Text> : null}
     </Box>
   )
 }
@@ -126,13 +146,13 @@ export function drawPlan(elements: Elements['terminal'], plan: PlanStep[]) {
       <Box width={5} minWidth={5}>
         <Text dimColor>{'  ⎿  '}</Text>
       </Box>
-      {drawSteps(elements, plan)}
+      {drawSteps(elements, plan, STEP_ROWS)}
     </Box>
   )
 }
 
-/** The list above the prompt once Claude stops with steps still open. */
-export function drawOpenPlan(elements: Elements['terminal'], plan: PlanStep[]) {
+/** The list above the prompt once Claude stops with steps still open, in at most `rows` rows besides its count. */
+export function drawOpenPlan(elements: Elements['terminal'], plan: PlanStep[], rows: number) {
   const { Box, Text } = elements
   const done = plan.filter(step => step.status === 'completed').length
   return (
@@ -145,7 +165,7 @@ export function drawOpenPlan(elements: Elements['terminal'], plan: PlanStep[]) {
         <Text dimColor weight="bold">{String(plan.length - done)}</Text>
         <Text dimColor>{' open)'}</Text>
       </Box>
-      {drawSteps(elements, plan)}
+      {drawSteps(elements, plan, rows)}
     </Box>
   )
 }
@@ -176,7 +196,7 @@ export const register: Register = on => {
     const { Box } = elements
     return (
       <Box flexDirection="column">
-        {drawOpenPlan(elements, plan.steps)}
+        {drawOpenPlan(elements, plan.steps, Math.min(STEP_ROWS, e.props.maxRows - BAND_ROWS))}
         {below}
       </Box>
     )

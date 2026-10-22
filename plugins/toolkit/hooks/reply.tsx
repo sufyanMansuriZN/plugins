@@ -54,6 +54,8 @@ export const register: Register = on => {
     const drawn = await Promise.all(
       parts.map(async (part, index) => {
         if (part.kind === 'text') return <Markdown text={part.text} />
+        // No blank row above the first block, so the reply's bullet stands beside its first line.
+        const marginTop = index === 0 ? 0 : 1
         if (part.kind === 'quote') {
           const { quote } = part
           const quoteNo = parts.slice(0, index).filter(earlier => earlier.kind === 'quote').length + 1
@@ -66,7 +68,7 @@ export const register: Register = on => {
             $.ui.toast(copied.isCopied ? `Copied ${which} ${lines}` : `Could not copy ${which}: ${copied.reason}`)
           }
           return (
-            <Box flexDirection="column" marginY={1}>
+            <Box flexDirection="column" marginTop={marginTop} marginBottom={1}>
               <Markdown text={quote.markdown} />
               {links(`quote-buttons:${quoteNo}`, link(`quote:${quoteNo}`, 'copy text', copy))}
             </Box>
@@ -94,7 +96,7 @@ export const register: Register = on => {
             else await copyPlain(tsv, 'tab-separated cells (a formatted copy needs an X11 desktop)')
           }
           return (
-            <Box flexDirection="column" marginY={1}>
+            <Box flexDirection="column" marginTop={marginTop} marginBottom={1}>
               <Markdown text={table.markdown} />
               {links(
                 `buttons:${tableNo}`,
@@ -106,7 +108,7 @@ export const register: Register = on => {
         }
 
         const withSource = (note: string, ...items: ReturnType<typeof link>[]) => (
-          <Box flexDirection="column" marginY={1}>
+          <Box flexDirection="column" marginTop={marginTop} marginBottom={1}>
             <Markdown text={part.fence} />
             {note ? <Text dimColor>{note}</Text> : null}
             {items.length ? links(`links-${index}`, ...items) : null}
@@ -174,7 +176,7 @@ export const register: Register = on => {
           if (run.exitCode !== 0) $.ui.toast(`Could not open the diagram: ${reasonOf(run.stderr, opener, run.exitCode)}`)
         }
         return (
-          <Box flexDirection="column" marginY={1}>
+          <Box flexDirection="column" marginTop={marginTop} marginBottom={1}>
             <Box marginLeft={2}>
               <Image source={{ file: picture.file, format: 'png' }} columns={fit.columns} rows={fit.rows} alt={part.fence} />
             </Box>

@@ -34,8 +34,8 @@ declare module 'claude-code' {
       cdPending: { dir: string; task: string } | null
       /** The label of the next step button pressed, by the call's tool_use_id; null until one is. */
       wrapUpAnswer: StateFamily<string | null>
-      /** The task list drawn above the prompt; null when there is none. */
-      plan: PlanStep[] | null
+      /** The task list drawn above the prompt, and how many prompts the transcript held when it was made; null when there is none. */
+      plan: { steps: PlanStep[]; prompts: number } | null
     }
   }
 }

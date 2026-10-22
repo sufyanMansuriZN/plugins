@@ -10,7 +10,7 @@ const PLAN = [
 ]
 
 // Beneath the plugin: the engine's own rows and spinner, the session's tools, and turns.
-function engine(on: On): string[] {
+function engine(on: On, prompts = () => 1): string[] {
   const registered: string[] = []
   on('ui.render', ($, e) => {
     const { Text } = $.ui.resolve(e)
@@ -23,6 +23,7 @@ function engine(on: On): string[] {
   on('turn.start', (_$, e) => ({ turnId: e.turnId }))
   on('turn.complete', (_$, e) => ({ text: 'answer' in e ? e.answer : '' }))
   on('prompt.submit', (_$, e) => ({ text: e.text }))
+  on('session.turns', () => ({ value: prompts() }))
   return registered
 }
 
@@ -147,9 +148,8 @@ test('once Claude stops, open steps stay above the prompt and a finished list go
 })
 
 test('a rewind past the prompt the list was made under takes the list away', async ($, on) => {
-  engine(on)
   let prompts = 2
-  on('session.turns', () => prompts)
+  engine(on, () => prompts)
   const band = async () => {
     const ui = await $.ui.mount({
       plugin: 'toolkit',

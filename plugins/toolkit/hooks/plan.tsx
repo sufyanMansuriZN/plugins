@@ -158,23 +158,25 @@ export const register: Register = on => {
   })
   on('tool.call', { tool: PLAN_TOOL }, async ($, e) => {
     let result: PlanStep[] | { deny: string } = { deny: 'The plan could not be saved.' }
+    const prompts = await $.session.turns()
     await update($, PLAN, was => {
-      result = applyPlan(was ?? null, e)
-      return 'deny' in result ? (was ?? null) : result
+      result = applyPlan(was?.steps ?? null, e)
+      return 'deny' in result ? (was ?? null) : { steps: result, prompts }
     })
     return 'deny' in result ? result : { result: summary(result) }
   })
 
   // Claude Code keeps an unfinished list above the prompt once the turn stops, and a finished one goes.
+  // A rewind sends no event: it only takes prompts out of the transcript, the one the list was made under too.
   on('ui.render', { surface: 'terminal', component: 'AbovePrompt' }, async ($, e, next) => {
     const plan = await read($, PLAN)
-    if (e.props.hasSurvey || e.props.isWorking || !plan || isDone(plan)) return next(e)
+    if (e.props.hasSurvey || e.props.isWorking || !plan || isDone(plan.steps) || (await $.session.turns()) < plan.prompts) return next(e)
     const below = await next(e)
     const elements = $.ui.resolve(e)
     const { Box } = elements
     return (
       <Box flexDirection="column">
-        {drawOpenPlan(elements, plan)}
+        {drawOpenPlan(elements, plan.steps)}
         {below}
       </Box>
     )
@@ -200,14 +202,14 @@ export const register: Register = on => {
   // Where Claude Code draws its own task list: under the spinner, so it shows while the turn runs.
   on('ui.render', { surface: 'terminal', component: 'Spinner' }, async ($, e, next) => {
     const plan = await read($, PLAN)
-    if (!plan) return next(e)
+    if (!plan || (await $.session.turns()) < plan.prompts) return next(e)
     const spinner = await next(e)
     const elements = $.ui.resolve(e)
     const { Box } = elements
     return (
       <Box flexDirection="column">
         {spinner}
-        {drawPlan(elements, plan)}
+        {drawPlan(elements, plan.steps)}
       </Box>
     )
   })

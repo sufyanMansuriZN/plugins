@@ -15,9 +15,9 @@
       "description": "Always-on lean ADHD output rules plus ASD-STE100-style simple English"
     },
     {
-      "name": "mermaid-preview",
-      "source": "./plugins/mermaid-preview",
-      "description": "Draws each mermaid block of a reply as a picture in the chat, in Ghostty or kitty"
+      "name": "toolkit",
+      "source": "./plugins/toolkit",
+      "description": "Expands Claude Code with tools: a mermaid preview, table copy and a change session directory tool"
     }
   ]
 }

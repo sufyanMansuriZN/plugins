@@ -11,6 +11,12 @@ export type Diagram =
   | ({ status: 'drawn'; turned?: Pair } & Pair)
   | { status: 'failed'; reason: string }
 
+/** A button of the next step box: what it says, and what a press sends as the user's prompt. */
+export type Answer = { label: string; message: string }
+
+/** What Claude sent to `wrap_up`, parsed. */
+export type WrapUp = { recap: string; ask?: string; answers: Answer[]; isBlocked: boolean }
+
 declare module 'claude-code' {
   interface PluginState {
     toolkit: {
@@ -21,6 +27,8 @@ declare module 'claude-code' {
       mermaidIsSource: StateFamily<boolean>
       /** A move the change session directory tool started, until its task is submitted. */
       cdPending: { dir: string; task: string } | null
+      /** The label of the next step button pressed, by the call's tool_use_id; null until one is. */
+      wrapUpAnswer: StateFamily<string | null>
     }
   }
 }

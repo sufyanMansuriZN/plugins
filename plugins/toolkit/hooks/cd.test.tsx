@@ -55,7 +55,7 @@ async function settle(clock: { advance: (ms: number) => Promise<void> }) {
 test('session start registers the change_session_directory tool', async ($, on) => {
   const host = engine(on)
   await start($, on)
-  expect(host.registered).toEqual(['change_session_directory'])
+  expect(host.registered).toContain('change_session_directory')
 })
 
 test('a path that is not a directory is denied without asking', async ($, on) => {

@@ -78,6 +78,36 @@ Gives Claude a tool, `update_plan`, with the Claude desktop app's name and trigg
 
 It runs in an interactive terminal session only. The Claude desktop app has its own list, and a `claude -p` run has no band to draw in.
 
+### Other sessions (`start_session`, `dismiss_task`, `list_sessions`)
+
+Gives Claude the Claude desktop app's way to hand work to a separate session: its `start_session` and `dismiss_task` tools, with Desktop's names, fields and rule. In the terminal, a new session is a background session (`claude --bg`). You can open it with `claude attach <id>`, talk to it and stop it, and it shows in `claude agents`.
+
+- **Who asks.** As on Desktop, `initiation` says whose task it is.
+  - **user_asked.** You told Claude to start it, so it starts now.
+  - **offer.** You named a task ("suggest a session for X"). Claude Code's question dialog asks **New session** or **Do it here**, and Claude waits for your answer.
+  - **own_initiative.** Claude proposes a follow-up it found. It shows as a card with **Start** and **Dismiss**, and nothing runs until you press Start or tell Claude to start it. A card expires after a week. Claude withdraws a stale card with `dismiss_task`.
+- **The row.** The call's row shows the session's name, its state (`starting`, `working`, `idle`, `done`, `stopped`, `failed` or `removed`) and its branch. Under it are **claude attach &lt;id&gt;**, which copies that command, and **stop** while it works.
+- **You are told when it ends.** When a session Claude started ends a turn and none is still working, Claude is continued with a `<side-sessions-event>` message. It holds the first 400 characters of the session's report: its next step box recap, then its last message. Claude checks the result before it tells you the work is done. After five reports in a row with no word from you, or after a turn of Claude's that was stopped or failed, reports wait for your next prompt. A turn that one of these reports or another automated message starts (a background task, another session, a schedule) may propose sessions but not start them. Claude Code reports a turn that Claude's own `SendMessage` follow-up started, so the toolkit does not report that one again.
+- **Where it works.**
+  - `context` "fork" gets the whole conversation (`--resume --fork-session`).
+  - "fresh" gets the brief and the background only.
+  - From a worktree session, a new session gets its own worktree under `.claude/worktrees/` on a `claude/<name>-<suffix>` branch. A fresh one is cut from the default branch, and a fork from this branch's tip. From a plain checkout it shares the folder unless Claude passes `use_worktree`.
+  - `cwd` names another folder. `target` "cloud" runs `claude --cloud`, which never reports back.
+  - SSH hosts and presets do not exist in the terminal, so those fields are refused with the reason.
+- **Never more permission than yours.** A session starts in this session's permission mode, or a lower one Claude asks for, and always with an explicit `--permission-mode`. A higher mode is refused. A mod cannot read the permission mode, so a plain command hook (`hooks/save-mode.sh`, on UserPromptSubmit) saves it to `~/.claude/toolkit/permission-mode/<session id>` with each prompt. If it cannot be read, the mode is `default`.
+- **`list_sessions`.** `{"linked": true}` lists the sessions this one started. Without it, Claude gets `claude agents --json`.
+- **Why there is a rule at session start.** Desktop's "Starting other sessions" section of its system prompt says when to start, offer or propose a session. The toolkit gives Claude the same section (`hooks/sessions-rule.md`) from the same command hook as the other rules.
+
+Left out, because nothing behind them exists in the terminal yet:
+- Desktop's `hand_off_to_session` and `mark_chapter`.
+- The linked sessions note that Desktop keeps current in Claude's context. Claude gets the list in each start result and report instead.
+- Clickable session links.
+- `list_start_targets`.
+
+The linked sessions and the cards live in the session's plugin state, so a restart of Claude Code forgets them. The sessions themselves keep running.
+
+It runs in an interactive terminal session only. The Claude desktop app has its own sessions, and a `claude -p` run has no one to answer a card.
+
 ## Add a tool
 
 1. Write the tool as one file in `hooks/`, for example `hooks/my-tool.ts`. Export `register` from it. Put its tests beside it in `hooks/my-tool.test.ts`.

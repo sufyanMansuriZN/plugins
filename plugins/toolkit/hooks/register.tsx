@@ -4,6 +4,7 @@ import { register as cd } from './cd'
 import { register as mermaid } from './mermaid'
 import { register as plan } from './plan'
 import { register as reply } from './reply'
+import { register as sessions } from './sessions'
 import { register as wrapUp } from './wrap-up'
 
 // One line per tool, every tool always on. The loader refuses `on` passed to anything but a function
@@ -15,4 +16,5 @@ export const register: Register = (on, options) => {
   cd(on, options)
   wrapUp(on, options)
   plan(on, options)
+  sessions(on, options)
 }

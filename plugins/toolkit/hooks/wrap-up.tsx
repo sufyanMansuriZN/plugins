@@ -164,8 +164,8 @@ export const register: Register = on => {
   })
 
   // The call's row draws the box from the call's own input, so it survives a reload and /resume.
-  on('ui.render', { component: 'ToolUse', props: { tool: WRAP_UP_TOOL } }, async ($, e, next) => {
-    if (e.surface !== 'terminal' || e.props.isExpanded || e.props.isRunning || e.props.isErrored) return next(e)
+  on('ui.render', { surface: 'terminal', component: 'ToolUse', props: { tool: WRAP_UP_TOOL } }, async ($, e, next) => {
+    if (e.props.isExpanded || e.props.isRunning || e.props.isErrored) return next(e)
     const wrapUp = parseWrapUp(e.props.input)
     if ('deny' in wrapUp) return next(e)
     const answerRef = { plugin: 'toolkit', key: 'wrapUpAnswer', id: e.props.tool_use_id } as const
@@ -184,8 +184,8 @@ export const register: Register = on => {
   })
 
   // The box above already says it all, so the result the model read stays out of view.
-  on('ui.render', { component: 'ToolResult', props: { tool: WRAP_UP_TOOL } }, async ($, e, next) => {
-    if (e.surface !== 'terminal' || e.props.isExpanded || e.props.isErrored) return next(e)
+  on('ui.render', { surface: 'terminal', component: 'ToolResult', props: { tool: WRAP_UP_TOOL } }, async ($, e, next) => {
+    if (e.props.isExpanded || e.props.isErrored) return next(e)
     const { Box } = $.ui.resolve(e)
     return <Box />
   })

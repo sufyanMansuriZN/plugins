@@ -33,8 +33,6 @@ Fields. recap and ask are said to the user, in the second person. A reply button
 - ask: just that ONE decision in one short sentence, never two joined by "and" ("Which fix first?"), with no reason or recommendation and without listing the options the buttons give. Your pick, actions[0], is drawn first. At most 100 characters.
 Every field is a top-level parameter holding plain prose (actions: a JSON array); none contains markup or another field.`
 
-const REMINDER = `Next step box: when your reply would end by asking the user to choose or approve something (a "Next: tell me whether …" line, "Want me to …?", "Should I …?", "X or Y?"), do not write that question as text. Call ${WRAP_UP_TOOL} with the question and 1 or 2 answer labels, then write your closing message without the question. This holds in long sessions and after skills or other instructions that shape your reply. Skip the tool only when nothing waits on the user.`
-
 const INPUT_SCHEMA = {
   type: 'object',
   properties: {
@@ -159,21 +157,10 @@ export function drawWrapUp(elements: Elements['terminal'], wrapUp: WrapUp, answe
 }
 
 export const register: Register = on => {
-  let isOffered = false
-
   // Desktop draws its own wrap_up, and a -p run has no one to press a button.
   on('session.start', { surface: 'terminal', isInteractive: true }, async ($, e, next) => {
     await $.tool.register({ name: NAME, description: DESCRIPTION, inputSchema: INPUT_SCHEMA, isDeferred: false })
-    isOffered = true
     return next(e)
-  })
-
-  // In a long session the tool's description alone loses to the habit of a text "Next:" line, so the
-  // rule rides with each prompt. Not the system prompt: the built-in security guard skips a plugin's
-  // prompt.compose hook.
-  on('prompt.submit', async ($, e, next) => {
-    if (!isOffered) return next(e)
-    return next({ ...e, context: [...(e.context ?? []), REMINDER] })
   })
 
   on('tool.call', { tool: WRAP_UP_TOOL }, async ($, e) => {

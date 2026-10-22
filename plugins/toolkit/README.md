@@ -57,7 +57,6 @@ If you still have the `auto-cd` dev mod, remove it. With both, Claude sees two t
 Gives Claude a tool, `wrap_up`, that it calls at the end of a turn only when you have a decision to make, such as a go-ahead to commit or a choice of fix. The terminal draws it as Claude Code draws a tool call: `● Next step`, then a line of context under `⎿`, then one question and one or two links that answer it, separated by `·`. Claude writes its closing message after it, without repeating it.
 
 - **Only for a decision.** A turn with nothing for you to decide ends as it does without the toolkit. The tool refuses a call with no question, so Claude cannot use it as a summary.
-- **A reminder with each prompt.** In a long session, Claude tends to write a "Next: tell me whether…" line instead of calling the tool. So each prompt you send carries a short reminder to use the box for such a question. It does not go in the system prompt, because Claude Code's built-in security guard skips a plugin's changes there.
 
 - **A link sends your answer.** A press sends the link's label, exactly as you see it, as your own prompt. Nothing hidden goes with it: the tool refuses a button that carries more text than its label. The links then give way to one dim line that names your choice, and they cannot be pressed again.
 - **Common steps.** Claude can offer a common step, such as **Commit**, **Create PR** or **Fix CI**. In the terminal no app is behind these, so a press sends the label, and Claude does the step.

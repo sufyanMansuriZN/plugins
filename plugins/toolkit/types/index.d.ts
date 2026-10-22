@@ -15,7 +15,7 @@ export type Diagram =
 export type Answer = { label: string; message: string }
 
 /** What Claude sent to `wrap_up`, parsed. */
-export type WrapUp = { recap: string; ask?: string; answers: Answer[]; isBlocked: boolean }
+export type WrapUp = { recap: string; ask: string; answers: Answer[]; isBlocked: boolean }
 
 declare module 'claude-code' {
   interface PluginState {

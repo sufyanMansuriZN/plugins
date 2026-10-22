@@ -66,10 +66,11 @@ test('bad input is denied with a reason Claude can act on', async ($, on) => {
     {},
     { recap: '  ' },
     { recap: RECAP, ask: ASK },
-    { recap: RECAP, actions: [{ label: 'A' }, { label: 'B' }, { label: 'C' }] },
-    { recap: RECAP, actions: [{ label: 'A label that is far too long to be a button' }] },
-    { recap: RECAP, actions: [{ label: 'Clear', message: '/clear' }] },
-    { recap: RECAP, actions: [{ action: 'archive' }] },
+    { recap: RECAP, ask: ASK, actions: [] },
+    { recap: RECAP, ask: ASK, actions: [{ label: 'A' }, { label: 'B' }, { label: 'C' }] },
+    { recap: RECAP, ask: ASK, actions: [{ label: 'A label that is far too long to be a button' }] },
+    { recap: RECAP, ask: ASK, actions: [{ label: 'Clear', message: '/clear' }] },
+    { recap: RECAP, ask: ASK, actions: [{ action: 'archive' }] },
   ]
   for (const input of bad) {
     const call = await $.tool.call({ tool: TOOL, ...input })
@@ -77,25 +78,30 @@ test('bad input is denied with a reason Claude can act on', async ($, on) => {
   }
 })
 
-test('the result tells Claude whether the box asks its question', async ($, on) => {
+test('a call with nothing to decide is refused, so a turn never ends in a recap alone', async ($, on) => {
   engine(on)
-  const plain = await $.tool.call({ tool: TOOL, recap: RECAP })
+  const call = await $.tool.call({ tool: TOOL, recap: RECAP })
+  expect(call.deny).toContain('only when the user has a decision')
+})
+
+test('the result names the question and tells Claude not to repeat it', async ($, on) => {
+  engine(on)
   const asked = await $.tool.call({ tool: TOOL, recap: RECAP, ask: ASK, actions: [{ label: 'Commit' }] })
-  expect(plain.result).toContain('no question')
   expect(asked.result).toContain(`"${ASK}"`)
+  expect(asked.result).toContain('without repeating')
 })
 
 test('a blocked call notifies the user with its question', async ($, on) => {
   const host = engine(on)
   await $.tool.call({ tool: TOOL, recap: RECAP, ask: ASK, actions: [{ label: 'Yes' }], blocked: true })
-  await $.tool.call({ tool: TOOL, recap: RECAP })
+  await $.tool.call({ tool: TOOL, recap: RECAP, ask: ASK, actions: [{ label: 'Yes' }] })
   expect(host.notified).toEqual([ASK])
 })
 
-test('a recap-only call draws the recap with no buttons', async ($, on) => {
+test('a row whose input has no question is left to the engine', async ($, on) => {
   engine(on)
   const ui = await mountRow($, { recap: RECAP })
-  expect(await shown(ui)).toEqual(['Text: Next step', `Text: ${RECAP}`])
+  expect(await shown(ui)).toEqual(['Text: engine: ToolUse'])
   await ui.unmount()
 })
 

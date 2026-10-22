@@ -29,6 +29,11 @@ export const register: Register = on => {
   on('ui.render', { component: 'AssistantMessage' }, async ($, e, next) => {
     // $.ui.copy has no path to a remote surface's clipboard yet, and only a terminal draws pictures.
     if (e.surface !== 'terminal' || e.props.isSummary) return next(e)
+    // After a next step box Claude may still send a placeholder such as `_` or a zero-width space; it says nothing, so it draws nothing.
+    if (/^[\s​_.…-]*$/.test(e.props.text)) {
+      const { Box } = $.ui.resolve(e)
+      return <Box />
+    }
     // Empty until session start finds a terminal that draws pictures; till then fences stay text.
     const dir = (e.props.text.includes('```mermaid') ? await read($, { plugin: 'toolkit', key: 'mermaidDir' } as const) : undefined) ?? ''
     const parts = blocks(e.props.text, { mermaid: dir !== '' })

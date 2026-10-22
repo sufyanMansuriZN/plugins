@@ -84,17 +84,19 @@ test('a button with hidden text behind its label is refused', async ($, on) => {
   expect(call.deny).toContain('sends only the label')
 })
 
-test('a call with nothing to decide is refused, so a turn never ends in a recap alone', async ($, on) => {
-  engine(on)
-  const call = await $.tool.call({ tool: TOOL, recap: RECAP })
-  expect(call.deny).toContain('only when the user has a decision')
+test('a call with nothing pending is accepted and says no box is shown', async ($, on) => {
+  const host = engine(on)
+  const call = await $.tool.call({ tool: TOOL, recap: RECAP, blocked: true })
+  expect(call.deny).toBeUndefined()
+  expect(call.result).toContain('no box is shown')
+  expect(host.notified).toEqual([])
 })
 
-test('the result names the question and tells Claude not to repeat it', async ($, on) => {
+test('the result names the question and tells Claude to write nothing after the box', async ($, on) => {
   engine(on)
   const asked = await $.tool.call({ tool: TOOL, recap: RECAP, ask: ASK, actions: [{ label: 'Commit' }] })
   expect(asked.result).toContain(`"${ASK}"`)
-  expect(asked.result).toContain('without repeating')
+  expect(asked.result).toContain('write no text after this call')
 })
 
 test('a blocked call notifies the user with its question', async ($, on) => {
@@ -104,10 +106,10 @@ test('a blocked call notifies the user with its question', async ($, on) => {
   expect(host.notified).toEqual([ASK])
 })
 
-test('a row whose input has no question is left to the engine', async ($, on) => {
+test('a row whose input has no question draws nothing', async ($, on) => {
   engine(on)
   const ui = await mountRow($, { recap: RECAP })
-  expect(await shown(ui)).toEqual(['Text: engine: ToolUse'])
+  expect(await shown(ui)).toEqual([])
   await ui.unmount()
 })
 

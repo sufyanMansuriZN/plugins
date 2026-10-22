@@ -118,6 +118,18 @@ test('desktop and replies without a table are left to the engine', async ($, on)
   }
 })
 
+test('a placeholder reply after a next step box draws nothing, and a short real reply still draws', async ($, on) => {
+  await engine(on)
+  for (const text of ['_', '​', ' . ']) {
+    const ui = await mount($, text)
+    expect(await ui.findAll({ type: 'Text' })).toHaveLength(0)
+    await ui.unmount()
+  }
+  const ok = await mount($, 'OK')
+  expect((await ok.find({ type: 'Text', text: /engine:/ }))?.text).toBe('engine: OK')
+  await ok.unmount()
+})
+
 test('a summary is left to the engine', async ($, on) => {
   await engine(on)
   const ui = await $.ui.mount({ plugin: 'toolkit', surface: 'terminal', component: 'AssistantMessage', props: { text: REPLY, isFirstOfReply: true, isSummary: true } })

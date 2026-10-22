@@ -1,7 +1,7 @@
 import { read, update } from 'claude-code'
 import type { Elements, Register } from 'claude-code'
 
-import type { WrapUp } from '../types'
+import type { WrapUp, WrapUpQuestion } from '../types'
 
 const NAME = 'wrap_up'
 export const WRAP_UP_TOOL = `mcp__toolkit__${NAME}`
@@ -22,15 +22,13 @@ export const APP_ACTIONS: Record<AppAction, string> = {
   verify: 'Verify',
 }
 
-const DESCRIPTION = `Show the "next step" line the terminal draws at the end of your turn: one question for the user, with one or two buttons that answer it, under a short line of context. A press sends the button's label, exactly as the user sees it, as the user's answer to your question.
+const DESCRIPTION = `Fill the "next step" box the terminal shows at the end of your turn: a two-or-three-sentence recap and, when this turn leaves the user a decision to make or a step to take, one question and buttons that answer it; a turn with nothing pending ends with the recap alone, and the terminal then draws no box. Call it once in EVERY turn in which you kept a task list, changed files, ran commands, or completed multi-step work, as the very last thing in the turn. Skip it for short answers, pure conversation, or a brief read-and-explain turn — a reply that names a follow-up is not brief: ask or propose it, and call this.
 
-Call it only when this turn leaves the user a decision that the buttons can answer: a choice of approach, a go-ahead to fix, commit, push, post or send, an approval. Call it once, when this turn's work is done, before your closing message. Do not call it when nothing waits on the user, and never only to summarize: a turn with no decision ends with your message alone.
+Write your answer to the user in full first, as ordinary text; the recap never replaces it. Then call this, and write no text after it: the box is drawn where the call is, so it sits at the end of your reply where the user looks. Ask the box's question only in the box, never also in your text.
 
-Your closing message is ordinary text right after this call, the last thing you say this turn: your answer to the user in full. Do not repeat the recap or the question in it, and do not ask the question again.
-
-Fields. recap and ask are said to the user, in the second person. A reply button's label is the user's whole answer back to you, so it must make sense on its own as a reply to ask.
-- recap: one or two short sentences of context for the question: what is now true, and what is not done or not verified (for example: nothing committed). About 200 characters, in the project's own words. No recommendation here.
-- ask: just that ONE decision in one short sentence, never two joined by "and" ("Which fix first?"), with no reason or recommendation and without listing the options the buttons give. Your pick, actions[0], is drawn first. At most 100 characters.
+Fields — recap and ask are said to the user, in the second person; a reply button's label is the user's whole answer back to you:
+- recap: what is now true or changed, then where it stands, including what is not done or not verified (for example: nothing committed, or not checked in the app). Two or three short sentences, about 40 words / 300 characters, in the project's own words. No recommendation here.
+- ask (with actions, only when the next move is the user's call — a choice of approach, a go-ahead to fix, commit, push, post or send, an approval): just that ONE decision in one short sentence, never two joined by "and" ("Which fix first?"), with no reason or recommendation and without listing the options the buttons give: your pick, actions[0], is drawn first. At most 100 characters.
 Every field is a top-level parameter holding plain prose (actions: a JSON array); none contains markup or another field.`
 
 const INPUT_SCHEMA = {
@@ -39,13 +37,13 @@ const INPUT_SCHEMA = {
     recap: {
       type: 'string',
       description:
-        'One or two short sentences of context for the question (about 200 characters): what is now true, and what is not done or not verified.',
+        'Two or three short sentences to the user (≤300 chars): what is now true or changed, then where it stands, including what is not done or not verified.',
     },
     ask: {
       type: 'string',
       maxLength: ASK_MAX,
       description:
-        'The one question the user decides (a choice, a go-ahead, an approval): the decision alone, with no reason or recommendation and without listing the options the buttons give (actions[0] is your pick).',
+        'The one question (≤100 chars) when the next move is the user\'s call — a choice, a go-ahead (to act here on what this turn found, say), an approval: the decision alone, with no reason or recommendation and without listing the options the buttons give (actions[0] is your pick). Omit it, and actions, when nothing waits on the user.',
     },
     actions: {
       type: 'array',
@@ -76,7 +74,7 @@ const INPUT_SCHEMA = {
       description: 'true when your work stops here until the user answers (the user gets a notification); omit when the answer can wait.',
     },
   },
-  required: ['recap', 'ask', 'actions'],
+  required: ['recap'],
 }
 
 const isAppAction = (value: unknown): value is AppAction => typeof value === 'string' && Object.hasOwn(APP_ACTIONS, value)
@@ -99,9 +97,11 @@ function parseAnswer(item: unknown, index: number): { label: string } | string {
 /** What Claude sent, as a `WrapUp`, or the reason it cannot be drawn. */
 export function parseWrapUp(input: unknown): WrapUp | { deny: string } {
   const { recap, ask, actions, blocked } = (input ?? {}) as { recap?: unknown; ask?: unknown; actions?: unknown; blocked?: unknown }
-  const noDecision = 'Call wrap_up only when the user has a decision to make: give ask and 1 or 2 actions. With nothing to decide, end the turn with your message alone.'
-  if (typeof recap !== 'string' || recap.trim() === '') return { deny: 'recap is required: one or two sentences of context for the question.' }
-  if (typeof ask !== 'string' || ask.trim() === '' || !Array.isArray(actions) || actions.length === 0) return { deny: noDecision }
+  if (typeof recap !== 'string' || recap.trim() === '') return { deny: 'recap is required: two or three sentences on what is now true and where it stands.' }
+  const hasAsk = typeof ask === 'string' && ask.trim() !== ''
+  const hasActions = Array.isArray(actions) && actions.length > 0
+  if (!hasAsk && !hasActions) return { recap, question: null }
+  if (!hasAsk || !hasActions) return { deny: 'Give ask and 1 or 2 actions together, or neither when nothing waits on the user.' }
   if (ask.length > ASK_MAX) return { deny: `ask must be at most ${ASK_MAX} characters.` }
   if (actions.length > 2) return { deny: 'Give at most 2 actions: your pick first, then one realistic alternative.' }
   const answers: string[] = []
@@ -110,14 +110,14 @@ export function parseWrapUp(input: unknown): WrapUp | { deny: string } {
     if (typeof answer === 'string') return { deny: answer }
     answers.push(answer.label)
   }
-  return { recap, ask, answers, isBlocked: blocked === true }
+  return { recap, question: { ask, answers, isBlocked: blocked === true } }
 }
 
 /** The whole look of the box: swap this to change the layout. `answered` is the label pressed. */
-export function drawWrapUp(elements: Elements['terminal'], wrapUp: WrapUp, answered: string | null, onPress: (answer: string) => void) {
+export function drawWrapUp(elements: Elements['terminal'], recap: string, question: WrapUpQuestion, answered: string | null, onPress: (answer: string) => void) {
   const { Box, Button, Text } = elements
   // Plain dim links like table copy's; hover underlines the nearest keyed Box, so each gets its own.
-  const links = wrapUp.answers.flatMap((answer, index) => {
+  const links = question.answers.flatMap((answer, index) => {
     const link = (
       <Box key={`hover:${index}`}>
         <Button key={`answer:${index}`} plain dimColor={index > 0} hover={{ underline: true }} label={answer} onPress={() => onPress(answer)} />
@@ -130,7 +130,7 @@ export function drawWrapUp(elements: Elements['terminal'], wrapUp: WrapUp, answe
       <Text dimColor>{`You chose: ${answered}`}</Text>
     ) : (
       <Box flexDirection="row" flexWrap="wrap">
-        <Text>{`${wrapUp.ask}  `}</Text>
+        <Text>{`${question.ask}  `}</Text>
         {links}
       </Box>
     )
@@ -148,7 +148,7 @@ export function drawWrapUp(elements: Elements['terminal'], wrapUp: WrapUp, answe
           <Text dimColor>{'  ⎿  '}</Text>
         </Box>
         <Box flexDirection="column" flexGrow={1}>
-          <Text>{wrapUp.recap}</Text>
+          <Text>{recap}</Text>
           {choice}
         </Box>
       </Box>
@@ -162,13 +162,14 @@ export const register: Register = on => {
     await $.tool.register({ name: NAME, description: DESCRIPTION, inputSchema: INPUT_SCHEMA, isDeferred: false })
     return next(e)
   })
-
   on('tool.call', { tool: WRAP_UP_TOOL }, async ($, e) => {
     const wrapUp = parseWrapUp(e)
     if ('deny' in wrapUp) return wrapUp
-    if (wrapUp.isBlocked) void $.ui.notify(wrapUp.ask).catch(() => undefined)
+    const { question } = wrapUp
+    if (question === null) return { result: 'Nothing waits on the user, so no box is shown. Write your answer to the user in full now, unless you already wrote it before this call.' }
+    if (question.isBlocked) void $.ui.notify(question.ask).catch(() => undefined)
     return {
-      result: `The user sees your question "${wrapUp.ask}" with its buttons. Write your closing message now, without repeating the recap or asking the question again.`,
+      result: `The user sees your question "${question.ask}" with its buttons at the end of your reply. The box ends your turn: write no text after this call.`,
     }
   })
 
@@ -177,6 +178,10 @@ export const register: Register = on => {
     if (e.props.isExpanded || e.props.isRunning || e.props.isErrored) return next(e)
     const wrapUp = parseWrapUp(e.props.input)
     if ('deny' in wrapUp) return next(e)
+    const { Box } = $.ui.resolve(e)
+    // As on Desktop, a turn with nothing pending draws no box, and no tool row either.
+    if (wrapUp.question === null) return <Box />
+    const { question } = wrapUp
     const answerRef = { plugin: 'toolkit', key: 'wrapUpAnswer', id: e.props.tool_use_id } as const
     const answered = (await read($, answerRef)) ?? null
     const press = async (answer: string) => {
@@ -189,7 +194,7 @@ export const register: Register = on => {
       // The prompt runs as a turn of its own once the session is idle, so the press does not wait for it.
       void $.prompt.submit({ text: answer, asUser: true }).catch(err => $.ui.toast(`toolkit: could not send "${answer}": ${String(err)}`))
     }
-    return drawWrapUp($.ui.resolve(e), wrapUp, answered, answer => void press(answer))
+    return drawWrapUp($.ui.resolve(e), wrapUp.recap, question, answered, answer => void press(answer))
   })
 
   // The box above already says it all, so the result the model read stays out of view.

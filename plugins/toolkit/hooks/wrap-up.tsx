@@ -24,7 +24,7 @@ export const APP_ACTIONS: Record<AppAction, string> = {
 
 const DESCRIPTION = `Fill the "next step" box the terminal shows at the end of your turn: a two-or-three-sentence recap and, when this turn leaves the user a decision to make or a step to take, one question and buttons that answer it; a turn with nothing pending ends with the recap alone, and the terminal then draws no box. Call it once in EVERY turn in which you kept a task list, changed files, ran commands, or completed multi-step work, as the very last thing in the turn. Skip it for short answers, pure conversation, or a brief read-and-explain turn — a reply that names a follow-up is not brief: ask or propose it, and call this.
 
-Write your answer to the user in full first, as ordinary text; the recap never replaces it. Then call this, and write no text after it: the box is drawn where the call is, so it sits at the end of your reply where the user looks. Ask the box's question only in the box, never also in your text.
+Write your answer to the user in full first, as ordinary text; the recap never replaces it. Then call this, and after it write only a single period (.), nothing else: the box is drawn where the call is, so it sits at the end of your reply where the user looks, and the terminal hides the period. Your reply above the box is visible to the user; never write it again. Ask the box's question only in the box, never also in your text.
 
 Fields — recap and ask are said to the user, in the second person; a reply button's label is the user's whole answer back to you:
 - recap: what is now true or changed, then where it stands, including what is not done or not verified (for example: nothing committed, or not checked in the app). Two or three short sentences, about 40 words / 300 characters, in the project's own words. No recommendation here.
@@ -169,7 +169,7 @@ export const register: Register = on => {
     if (question === null) return { result: 'Nothing waits on the user, so no box is shown. Write your answer to the user in full now, unless you already wrote it before this call.' }
     if (question.isBlocked) void $.ui.notify(question.ask).catch(() => undefined)
     return {
-      result: `The user sees your question "${question.ask}" with its buttons at the end of your reply. The box ends your turn: write no text after this call.`,
+      result: `The user sees your question "${question.ask}" with its buttons at the end of your reply, and your reply above it is visible. The box ends your turn: write only a single period (.) now, which the terminal hides. If you are later told your response had no visible output, write only a period again; never repeat your reply.`,
     }
   })
 

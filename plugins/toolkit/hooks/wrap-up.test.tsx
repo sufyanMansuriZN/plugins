@@ -96,7 +96,8 @@ test('the result names the question and tells Claude to write nothing after the 
   engine(on)
   const asked = await $.tool.call({ tool: TOOL, recap: RECAP, ask: ASK, actions: [{ label: 'Commit' }] })
   expect(asked.result).toContain(`"${ASK}"`)
-  expect(asked.result).toContain('write no text after this call')
+  expect(asked.result).toContain('write only a single period')
+  expect(asked.result).toContain('never repeat your reply')
 })
 
 test('a blocked call notifies the user with its question', async ($, on) => {

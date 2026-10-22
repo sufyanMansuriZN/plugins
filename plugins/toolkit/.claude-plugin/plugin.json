@@ -1,6 +1,6 @@
 {
   "name": "toolkit",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Expands Claude Code with tools: a mermaid preview, table copy, quote copy, a change session directory tool and a next step box",
   "license": "MIT",
   "types": "./types/index.d.ts"

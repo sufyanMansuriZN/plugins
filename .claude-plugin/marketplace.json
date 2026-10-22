@@ -17,7 +17,7 @@
     {
       "name": "toolkit",
       "source": "./plugins/toolkit",
-      "description": "Expands Claude Code with tools: a mermaid preview, table copy, quote copy, a change session directory tool and a next step box"
+      "description": "Expands Claude Code with tools: a mermaid preview, table copy, quote copy, a change session directory tool, a next step box and a task list"
     }
   ]
 }

@@ -7,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "[ \"$CLAUDE_CODE_ENTRYPOINT\" = cli ] && cat \"$CLAUDE_PLUGIN_ROOT/hooks/next-step-rule.md\" || true"
+            "command": "[ \"$CLAUDE_CODE_ENTRYPOINT\" = cli ] && cat \"$CLAUDE_PLUGIN_ROOT/hooks/plan-rule.md\" \"$CLAUDE_PLUGIN_ROOT/hooks/next-step-rule.md\" || true"
           }
         ]
       }

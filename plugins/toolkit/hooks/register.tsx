@@ -2,6 +2,7 @@ import type { Register } from 'claude-code'
 
 import { register as cd } from './cd'
 import { register as mermaid } from './mermaid'
+import { register as plan } from './plan'
 import { register as reply } from './reply'
 import { register as wrapUp } from './wrap-up'
 
@@ -13,4 +14,5 @@ export const register: Register = (on, options) => {
   reply(on, options)
   cd(on, options)
   wrapUp(on, options)
+  plan(on, options)
 }

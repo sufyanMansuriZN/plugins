@@ -17,6 +17,11 @@ export type WrapUpQuestion = { ask: string; answers: string[]; isBlocked: boolea
 /** What Claude sent to `wrap_up`, parsed; `question` is null for a turn with nothing pending, which draws no box. */
 export type WrapUp = { recap: string; question: WrapUpQuestion | null }
 
+export type PlanStatus = 'pending' | 'in_progress' | 'completed'
+
+/** One step of the task list Claude keeps with `update_plan`. */
+export type PlanStep = { content: string; status: PlanStatus }
+
 declare module 'claude-code' {
   interface PluginState {
     toolkit: {
@@ -29,6 +34,8 @@ declare module 'claude-code' {
       cdPending: { dir: string; task: string } | null
       /** The label of the next step button pressed, by the call's tool_use_id; null until one is. */
       wrapUpAnswer: StateFamily<string | null>
+      /** The task list drawn above the prompt; null when there is none. */
+      plan: PlanStep[] | null
     }
   }
 }

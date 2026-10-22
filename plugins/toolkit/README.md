@@ -58,8 +58,8 @@ Gives Claude a tool, `wrap_up`, that it calls at the end of a turn only when you
 
 - **Only for a decision.** A turn with nothing for you to decide ends as it does without the toolkit. The tool refuses a call with no question, so Claude cannot use it as a summary.
 
-- **A link sends your answer.** A press sends the link's message as your own prompt, as if you typed it. The links then give way to one dim line that names your choice, and they cannot be pressed again.
-- **Common steps.** Claude can offer a common step, such as **Commit**, **Create PR** or **Fix CI**. In the terminal no app is behind these, so a press asks Claude in words to do it.
+- **A link sends your answer.** A press sends the link's label, exactly as you see it, as your own prompt. Nothing hidden goes with it: the tool refuses a button that carries more text than its label. The links then give way to one dim line that names your choice, and they cannot be pressed again.
+- **Common steps.** Claude can offer a common step, such as **Commit**, **Create PR** or **Fix CI**. In the terminal no app is behind these, so a press sends the label, and Claude does the step.
 - **Waiting on you.** When Claude cannot go on until you answer, you also get a notification.
 - **Full view.** ctrl+o shows the call and its result as Claude Code draws them.
 

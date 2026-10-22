@@ -11,11 +11,8 @@ export type Diagram =
   | ({ status: 'drawn'; turned?: Pair } & Pair)
   | { status: 'failed'; reason: string }
 
-/** A button of the next step box: what it says, and what a press sends as the user's prompt. */
-export type Answer = { label: string; message: string }
-
-/** What Claude sent to `wrap_up`, parsed. */
-export type WrapUp = { recap: string; ask: string; answers: Answer[]; isBlocked: boolean }
+/** What Claude sent to `wrap_up`, parsed. Each answer is a button's label, which is also all a press sends. */
+export type WrapUp = { recap: string; ask: string; answers: string[]; isBlocked: boolean }
 
 declare module 'claude-code' {
   interface PluginState {

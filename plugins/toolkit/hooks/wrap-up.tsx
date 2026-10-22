@@ -1,35 +1,34 @@
 import { read, update } from 'claude-code'
 import type { Elements, Register } from 'claude-code'
 
-import type { Answer, WrapUp } from '../types'
+import type { WrapUp } from '../types'
 
 const NAME = 'wrap_up'
 export const WRAP_UP_TOOL = `mcp__toolkit__${NAME}`
 
 const LABEL_MAX = 24
 const ASK_MAX = 100
-const MESSAGE_MAX = 300
 
 type AppAction = 'commit' | 'create_pr' | 'merge' | 'fix_ci' | 'address_comments' | 'resolve_conflicts' | 'verify'
 
-// Desktop's app actions have no app behind them in the terminal, so a press asks Claude in words.
-export const APP_ACTIONS: Record<AppAction, Answer> = {
-  commit: { label: 'Commit', message: 'Commit the changes.' },
-  create_pr: { label: 'Create PR', message: 'Open a pull request for these changes.' },
-  merge: { label: 'Merge', message: 'Merge the pull request.' },
-  fix_ci: { label: 'Fix CI', message: 'Fix the failing CI checks.' },
-  address_comments: { label: 'Address comments', message: 'Address the review comments on the pull request.' },
-  resolve_conflicts: { label: 'Resolve conflicts', message: 'Resolve the merge conflicts.' },
-  verify: { label: 'Verify', message: 'Verify that the change works.' },
+// Desktop's app actions have no app behind them in the terminal, so a press sends the label as an answer.
+export const APP_ACTIONS: Record<AppAction, string> = {
+  commit: 'Commit',
+  create_pr: 'Create PR',
+  merge: 'Merge',
+  fix_ci: 'Fix CI',
+  address_comments: 'Address comments',
+  resolve_conflicts: 'Resolve conflicts',
+  verify: 'Verify',
 }
 
-const DESCRIPTION = `Show the "next step" line the terminal draws at the end of your turn: one question for the user, with one or two buttons that answer it, under a short line of context. A press sends the button's message as the user's next prompt.
+const DESCRIPTION = `Show the "next step" line the terminal draws at the end of your turn: one question for the user, with one or two buttons that answer it, under a short line of context. A press sends the button's label, exactly as the user sees it, as the user's answer to your question.
 
 Call it only when this turn leaves the user a decision that the buttons can answer: a choice of approach, a go-ahead to fix, commit, push, post or send, an approval. Call it once, when this turn's work is done, before your closing message. Do not call it when nothing waits on the user, and never only to summarize: a turn with no decision ends with your message alone.
 
 Your closing message is ordinary text right after this call, the last thing you say this turn: your answer to the user in full. Do not repeat the recap or the question in it, and do not ask the question again.
 
-Fields. recap and ask are said to the user, in the second person. A reply button's label and message are the user's words back to you.
+Fields. recap and ask are said to the user, in the second person. A reply button's label is the user's whole answer back to you, so it must make sense on its own as a reply to ask.
 - recap: one or two short sentences of context for the question: what is now true, and what is not done or not verified (for example: nothing committed). About 200 characters, in the project's own words. No recommendation here.
 - ask: just that ONE decision in one short sentence, never two joined by "and" ("Which fix first?"), with no reason or recommendation and without listing the options the buttons give. Your pick, actions[0], is drawn first. At most 100 characters.
 Every field is a top-level parameter holding plain prose (actions: a JSON array); none contains markup or another field.`
@@ -60,20 +59,16 @@ const INPUT_SCHEMA = {
           action: {
             type: 'string',
             enum: Object.keys(APP_ACTIONS),
-            description: 'A common next step, drawn with its own label; a press asks you to do it. Omit for a reply.',
+            description: 'A common next step, drawn with its own label; a press sends that label as the answer. Omit for a reply.',
           },
           label: {
             type: 'string',
             maxLength: LABEL_MAX,
             description:
-              'For a reply: the button text, 1 to 3 words (4 only when three cannot say it), at most 24 characters: "Yes, fix 1", "Fix 2 instead", "Not now". A button, not a sentence; the detail goes in message. No leading / or !. Ignored with action.',
-          },
-          message: {
-            type: 'string',
-            maxLength: MESSAGE_MAX,
-            description: 'For a reply: what the press sends, up to 300 characters of plain text, no leading / or !. Omit when the label is the whole message.',
+              'For a reply: the button text and the whole answer a press sends, 1 to 3 words (4 only when three cannot say it), at most 24 characters: "Yes, fix 1", "Fix 2 instead", "Leave uncommitted". It must answer ask on its own. No leading / or !. Ignored with action.',
           },
         },
+        additionalProperties: false,
       },
     },
     blocked: {
@@ -85,20 +80,20 @@ const INPUT_SCHEMA = {
 }
 
 const isAppAction = (value: unknown): value is AppAction => typeof value === 'string' && Object.hasOwn(APP_ACTIONS, value)
-// A press submits the text as the user's prompt, where a leading / or ! would run a command.
+// A press submits the label as the user's prompt, where a leading / or ! would run a command.
 const isCommand = (text: string) => /^\s*[/!]/.test(text)
 
-function parseAnswer(item: unknown, index: number): Answer | string {
+/** The label a button shows and sends, or the reason it cannot be one. */
+function parseAnswer(item: unknown, index: number): { label: string } | string {
   if (typeof item !== 'object' || item === null) return `actions[${index}] must be an object.`
   const { action, label, message } = item as { action?: unknown; label?: unknown; message?: unknown }
-  if (action !== undefined) return isAppAction(action) ? APP_ACTIONS[action] : `actions[${index}].action must be one of ${Object.keys(APP_ACTIONS).join(', ')}.`
+  // A press sends only what the button shows, so text the user cannot see is refused, not dropped.
+  if (message !== undefined) return `actions[${index}] has a message: a press sends only the label, so put the whole answer in the label.`
+  if (action !== undefined) return isAppAction(action) ? { label: APP_ACTIONS[action] } : `actions[${index}].action must be one of ${Object.keys(APP_ACTIONS).join(', ')}.`
   if (typeof label !== 'string' || label.trim() === '') return `actions[${index}] needs a label.`
-  if (label.length > LABEL_MAX) return `actions[${index}].label must be at most ${LABEL_MAX} characters; put the detail in message.`
-  if (message !== undefined && (typeof message !== 'string' || message.trim() === '')) return `actions[${index}].message must be text; leave it out when the label says it all.`
-  const sent = message ?? label
-  if (sent.length > MESSAGE_MAX) return `actions[${index}].message must be at most ${MESSAGE_MAX} characters.`
-  if (isCommand(label) || isCommand(sent)) return `actions[${index}] must not start with / or !.`
-  return { label, message: sent }
+  if (label.length > LABEL_MAX) return `actions[${index}].label must be at most ${LABEL_MAX} characters.`
+  if (isCommand(label)) return `actions[${index}] must not start with / or !.`
+  return { label }
 }
 
 /** What Claude sent, as a `WrapUp`, or the reason it cannot be drawn. */
@@ -109,23 +104,23 @@ export function parseWrapUp(input: unknown): WrapUp | { deny: string } {
   if (typeof ask !== 'string' || ask.trim() === '' || !Array.isArray(actions) || actions.length === 0) return { deny: noDecision }
   if (ask.length > ASK_MAX) return { deny: `ask must be at most ${ASK_MAX} characters.` }
   if (actions.length > 2) return { deny: 'Give at most 2 actions: your pick first, then one realistic alternative.' }
-  const answers: Answer[] = []
+  const answers: string[] = []
   for (const [index, item] of actions.entries()) {
     const answer = parseAnswer(item, index)
     if (typeof answer === 'string') return { deny: answer }
-    answers.push(answer)
+    answers.push(answer.label)
   }
   return { recap, ask, answers, isBlocked: blocked === true }
 }
 
 /** The whole look of the box: swap this to change the layout. `answered` is the label pressed. */
-export function drawWrapUp(elements: Elements['terminal'], wrapUp: WrapUp, answered: string | null, onPress: (answer: Answer) => void) {
+export function drawWrapUp(elements: Elements['terminal'], wrapUp: WrapUp, answered: string | null, onPress: (answer: string) => void) {
   const { Box, Button, Text } = elements
   // Plain dim links like table copy's; hover underlines the nearest keyed Box, so each gets its own.
   const links = wrapUp.answers.flatMap((answer, index) => {
     const link = (
       <Box key={`hover:${index}`}>
-        <Button key={`answer:${index}`} plain dimColor={index > 0} hover={{ underline: true }} label={answer.label} onPress={() => onPress(answer)} />
+        <Button key={`answer:${index}`} plain dimColor={index > 0} hover={{ underline: true }} label={answer} onPress={() => onPress(answer)} />
       </Box>
     )
     return index === 0 ? [link] : [<Text dimColor>{'  ·  '}</Text>, link]
@@ -184,15 +179,15 @@ export const register: Register = on => {
     if ('deny' in wrapUp) return next(e)
     const answerRef = { plugin: 'toolkit', key: 'wrapUpAnswer', id: e.props.tool_use_id } as const
     const answered = (await read($, answerRef)) ?? null
-    const press = async (answer: Answer) => {
+    const press = async (answer: string) => {
       let isFirst = false
       await update($, answerRef, was => {
         isFirst = was == null
-        return was ?? answer.label
+        return was ?? answer
       })
       if (!isFirst) return
       // The prompt runs as a turn of its own once the session is idle, so the press does not wait for it.
-      void $.prompt.submit({ text: answer.message, asUser: true }).catch(err => $.ui.toast(`toolkit: could not send "${answer.label}": ${String(err)}`))
+      void $.prompt.submit({ text: answer, asUser: true }).catch(err => $.ui.toast(`toolkit: could not send "${answer}": ${String(err)}`))
     }
     return drawWrapUp($.ui.resolve(e), wrapUp, answered, answer => void press(answer))
   })

@@ -69,13 +69,19 @@ test('bad input is denied with a reason Claude can act on', async ($, on) => {
     { recap: RECAP, ask: ASK, actions: [] },
     { recap: RECAP, ask: ASK, actions: [{ label: 'A' }, { label: 'B' }, { label: 'C' }] },
     { recap: RECAP, ask: ASK, actions: [{ label: 'A label that is far too long to be a button' }] },
-    { recap: RECAP, ask: ASK, actions: [{ label: 'Clear', message: '/clear' }] },
+    { recap: RECAP, ask: ASK, actions: [{ label: '/clear' }] },
     { recap: RECAP, ask: ASK, actions: [{ action: 'archive' }] },
   ]
   for (const input of bad) {
     const call = await $.tool.call({ tool: TOOL, ...input })
     expect(typeof call.deny).toBe('string')
   }
+})
+
+test('a button with hidden text behind its label is refused', async ($, on) => {
+  engine(on)
+  const call = await $.tool.call({ tool: TOOL, recap: RECAP, ask: ASK, actions: [{ label: 'Yes', message: 'Yes, and push to main too.' }] })
+  expect(call.deny).toContain('sends only the label')
 })
 
 test('a call with nothing to decide is refused, so a turn never ends in a recap alone', async ($, on) => {
@@ -107,17 +113,17 @@ test('a row whose input has no question is left to the engine', async ($, on) =>
 
 test('a call with a question and two answers draws both buttons under it', async ($, on) => {
   engine(on)
-  const ui = await mountRow($, { recap: RECAP, ask: ASK, actions: [{ label: 'Yes, commit' }, { label: 'Not now', message: 'Leave it uncommitted.' }] })
-  expect(await shown(ui)).toEqual(['Text: Next step', `Text: ${RECAP}`, `Text: ${ASK}`, 'Button: Yes, commit', 'Button: Not now'])
+  const ui = await mountRow($, { recap: RECAP, ask: ASK, actions: [{ label: 'Yes, commit' }, { label: 'Leave uncommitted' }] })
+  expect(await shown(ui)).toEqual(['Text: Next step', `Text: ${RECAP}`, `Text: ${ASK}`, 'Button: Yes, commit', 'Button: Leave uncommitted'])
   await ui.unmount()
 })
 
-test('a press sends its message as the user and leaves only the choice', async ($, on) => {
+test('a press sends exactly its label as the user and leaves only the choice', async ($, on) => {
   const host = engine(on)
-  const ui = await mountRow($, { recap: RECAP, ask: ASK, actions: [{ label: 'Yes, commit' }, { label: 'Not now', message: 'Leave it uncommitted.' }] })
+  const ui = await mountRow($, { recap: RECAP, ask: ASK, actions: [{ label: 'Yes, commit' }, { label: 'Leave uncommitted' }] })
   await ui.press({ key: 'answer:1' })
-  expect(host.prompts).toEqual([{ text: 'Leave it uncommitted.', asUser: true }])
-  expect(await shown(ui)).toEqual(['Text: Next step', `Text: ${RECAP}`, 'Text: You chose: Not now'])
+  expect(host.prompts).toEqual([{ text: 'Leave uncommitted', asUser: true }])
+  expect(await shown(ui)).toEqual(['Text: Next step', `Text: ${RECAP}`, 'Text: You chose: Leave uncommitted'])
   await ui.unmount()
 
   const again = await mountRow($, { recap: RECAP, ask: ASK, actions: [{ label: 'Yes, commit' }] })
@@ -125,12 +131,12 @@ test('a press sends its message as the user and leaves only the choice', async (
   await again.unmount()
 })
 
-test('an app action draws its own label and asks Claude in words', async ($, on) => {
+test('an app action draws its own label and sends that label', async ($, on) => {
   const host = engine(on)
   const ui = await mountRow($, { recap: RECAP, ask: ASK, actions: [{ action: 'create_pr', label: 'ignored' }] })
   expect((await ui.findAll({ type: 'Button' })).map(button => button.text)).toEqual(['Create PR'])
   await ui.press({ key: 'answer:0' })
-  expect(host.prompts).toEqual([{ text: 'Open a pull request for these changes.', asUser: true }])
+  expect(host.prompts).toEqual([{ text: 'Create PR', asUser: true }])
   await ui.unmount()
 })
 

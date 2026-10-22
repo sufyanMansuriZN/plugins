@@ -37,6 +37,7 @@ export const register: Register = on => {
     const { Box, Button, Image, Markdown, Text } = $.ui.resolve(e)
     const viewport = { columns: e.viewport?.columns ?? 80, rows: e.viewport?.rows ?? 24 }
     const tableCount = parts.filter(part => part.kind === 'table').length
+    const quoteCount = parts.filter(part => part.kind === 'quote').length
 
     // A plain dim link. hover underlines the nearest keyed Box, so each button gets its own.
     const link = (key: string, label: string, onPress: () => unknown) => (
@@ -53,6 +54,24 @@ export const register: Register = on => {
     const drawn = await Promise.all(
       parts.map(async (part, index) => {
         if (part.kind === 'text') return <Markdown text={part.text} />
+        if (part.kind === 'quote') {
+          const { quote } = part
+          const quoteNo = parts.slice(0, index).filter(earlier => earlier.kind === 'quote').length + 1
+          const which = quoteCount === 1 ? 'quote' : `quote ${quoteNo}`
+          const lineCount = quote.text.split('\n').length
+          // Plain text only, unlike a table's copy: Slack would read HTML as rich content.
+          const copy = async () => {
+            const copied = await $.ui.copy({ text: quote.text, surface: 'terminal' })
+            const lines = `(${lineCount} ${lineCount === 1 ? 'line' : 'lines'})`
+            $.ui.toast(copied.isCopied ? `Copied ${which} ${lines}` : `Could not copy ${which}: ${copied.reason}`)
+          }
+          return (
+            <Box flexDirection="column" marginY={1}>
+              <Markdown text={quote.markdown} />
+              {links(`quote-buttons:${quoteNo}`, link(`quote:${quoteNo}`, 'copy text', copy))}
+            </Box>
+          )
+        }
         if (part.kind === 'table') {
           const { table } = part
           const tableNo = parts.slice(0, index).filter(earlier => earlier.kind === 'table').length + 1

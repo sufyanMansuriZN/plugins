@@ -125,6 +125,28 @@ test('a summary is left to the engine', async ($, on) => {
   await ui.unmount()
 })
 
+const DRAFT = '> Hi Ana,\n>\n> The fix is in **main**.\n>> done?'
+
+test('copy text under a quote copies it without the quote marks', async ($, on) => {
+  const host = await engine(on)
+  const ui = await mount($, `Draft:\n\n${DRAFT}\n\nSend it?`)
+  expect(await shown(ui)).toEqual(['Markdown: Draft:', `Markdown: ${DRAFT}`, 'Button: copy text', 'Markdown: Send it?'])
+  await ui.press({ key: 'quote:1' })
+  expect(host.copied).toEqual(['Hi Ana,\n\nThe fix is in **main**.\n> done?'])
+  expect(host.runs).toEqual([])
+  expect(host.toasts).toEqual(['Copied quote (4 lines)'])
+  await ui.unmount()
+})
+
+test('a reply with two quotes names each in its toast', async ($, on) => {
+  const host = await engine(on)
+  const ui = await mount($, `> first\n\nAnd:\n\n> second`)
+  await ui.press({ key: 'quote:2' })
+  expect(host.copied).toEqual(['second'])
+  expect(host.toasts).toEqual(['Copied quote 2 (1 line)'])
+  await ui.unmount()
+})
+
 test('a reply with text, a table and a diagram draws both, under one bullet', async ($, on) => {
   await engine(on)
   const ui = await mount($, `${REPLY}\n\n${FENCE}`, )

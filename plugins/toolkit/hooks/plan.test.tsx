@@ -146,6 +146,28 @@ test('once Claude stops, open steps stay above the prompt and a finished list go
   expect((await band()).texts).toEqual(['engine: AbovePrompt'])
 })
 
+test('a rewind past the prompt the list was made under takes the list away', async ($, on) => {
+  engine(on)
+  let prompts = 2
+  on('session.turns', () => prompts)
+  const band = async () => {
+    const ui = await $.ui.mount({
+      plugin: 'toolkit',
+      surface: 'terminal',
+      component: 'AbovePrompt',
+      props: { hasSurvey: false, isWorking: false, maxRows: 20, bodyColumns: 100, scroll: { offset: 0, bodyRows: 20 }, view: {} },
+    })
+    const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
+    await ui.unmount()
+    return texts
+  }
+  await $.tool.call({ tool: TOOL, items: PLAN })
+  expect(await band()).toContain('Read the parser')
+  prompts = 1
+  expect(await band()).toEqual(['engine: AbovePrompt'])
+  expect(await spinner($)).toEqual(['engine: Spinner'])
+})
+
 test('the call and result rows are hidden, except under ctrl+o', async ($, on) => {
   engine(on)
   const row = (component: 'ToolUse' | 'ToolResult', isExpanded: boolean) =>

@@ -40,10 +40,14 @@ function mountRow($: Engine, input: unknown, props: { tool?: string; isExpanded?
   })
 }
 
-// What the row shows, top to bottom.
+// The words the row shows, top to bottom, without the row's bullet, ⎿ and · marks.
 async function shown(ui: Awaited<ReturnType<typeof mountRow>>): Promise<string[]> {
   const all = await ui.findAll({})
-  return all.flatMap(found => (found.type === 'Text' || found.type === 'Button' ? [`${found.type}: ${found.text}`] : []))
+  return all.flatMap(found => {
+    if (found.type !== 'Text' && found.type !== 'Button') return []
+    const words = found.text.trim()
+    return ['', '●', '⎿', '·'].includes(words) ? [] : [`${found.type}: ${words}`]
+  })
 }
 
 test('the tool is offered only in an interactive terminal session', async ($, on) => {

@@ -123,27 +123,43 @@ export function parseWrapUp(input: unknown): WrapUp | { deny: string } {
 /** The whole look of the box: swap this to change the layout. `answered` is the label pressed. */
 export function drawWrapUp(elements: Elements['terminal'], wrapUp: WrapUp, answered: string | null, onPress: (answer: Answer) => void) {
   const { Box, Button, Text } = elements
+  // Plain dim links like table copy's; hover underlines the nearest keyed Box, so each gets its own.
+  const links = wrapUp.answers.flatMap((answer, index) => {
+    const link = (
+      <Box key={`hover:${index}`}>
+        <Button key={`answer:${index}`} plain dimColor={index > 0} hover={{ underline: true }} label={answer.label} onPress={() => onPress(answer)} />
+      </Box>
+    )
+    return index === 0 ? [link] : [<Text dimColor>{'  ·  '}</Text>, link]
+  })
   const choice = () => {
     if (wrapUp.answers.length === 0) return null
     if (answered !== null) return <Text dimColor>{`You chose: ${answered}`}</Text>
     return (
-      <Box flexDirection="column">
-        {wrapUp.ask === undefined ? null : <Text weight="semibold">{wrapUp.ask}</Text>}
-        <Box flexDirection="row" gap={2}>
-          {wrapUp.answers.map((answer, index) => (
-            <Button key={`answer:${index}`} label={answer.label} dimColor={index > 0} onPress={() => onPress(answer)} />
-          ))}
-        </Box>
+      <Box flexDirection="row" flexWrap="wrap">
+        {wrapUp.ask === undefined ? null : <Text>{`${wrapUp.ask}  `}</Text>}
+        {links}
       </Box>
     )
   }
+  // Drawn as the engine draws a tool row: a bullet and the name, then the result under ⎿.
   return (
-    <Box flexDirection="column" marginTop={1} borderStyle="round" paddingX={1} gap={1}>
-      <Box flexDirection="column">
-        <Text dimColor>Next step</Text>
-        <Text>{wrapUp.recap}</Text>
+    <Box flexDirection="column" marginTop={1}>
+      <Box flexDirection="row">
+        <Box width={2} minWidth={2}>
+          <Text>●</Text>
+        </Box>
+        <Text weight="semibold">Next step</Text>
       </Box>
-      {choice()}
+      <Box flexDirection="row">
+        <Box width={5} minWidth={5}>
+          <Text dimColor>{'  ⎿  '}</Text>
+        </Box>
+        <Box flexDirection="column" flexGrow={1}>
+          <Text>{wrapUp.recap}</Text>
+          {choice()}
+        </Box>
+      </Box>
     </Box>
   )
 }

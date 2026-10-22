@@ -54,9 +54,9 @@ If you still have the `auto-cd` dev mod, remove it. With both, Claude sees two t
 
 ### Next step box (`wrap_up`)
 
-Gives Claude a tool, `wrap_up`, that it calls at the end of a turn with real work in it. The terminal draws a box with a short recap of where the work stands. When the next move is yours, the box also shows one question and one or two buttons that answer it. Claude writes its closing message after the box.
+Gives Claude a tool, `wrap_up`, that it calls at the end of a turn with real work in it. The terminal draws it as Claude Code draws a tool call: `● Next step`, then a short recap of where the work stands under `⎿`. When the next move is yours, a line under the recap shows one question and one or two links that answer it, separated by `·`. Claude writes its closing message after it.
 
-- **A button sends your answer.** A press sends the button's message as your own prompt, as if you typed it. The buttons then give way to one dim line that names your choice, and they cannot be pressed again.
+- **A link sends your answer.** A press sends the link's message as your own prompt, as if you typed it. The links then give way to one dim line that names your choice, and they cannot be pressed again.
 - **Common steps.** Claude can offer a common step, such as **Commit**, **Create PR** or **Fix CI**. In the terminal no app is behind these, so a press asks Claude in words to do it.
 - **Waiting on you.** When Claude cannot go on until you answer, you also get a notification.
 - **Full view.** ctrl+o shows the call and its result as Claude Code draws them.

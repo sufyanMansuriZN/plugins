@@ -19,6 +19,8 @@ declare module 'claude-code' {
       mermaidOpener: string
       mermaidDiagram: StateFamily<Diagram>
       mermaidIsSource: StateFamily<boolean>
+      /** A move the change session directory tool started, until its task is submitted. */
+      cdPending: { dir: string; task: string } | null
     }
   }
 }

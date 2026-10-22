@@ -46,7 +46,7 @@ A quote inside a code fence is not a quote.
 
 Gives Claude a tool, `change_session_directory`, that moves the session to another folder, the same as when you type `/cd`. Claude uses it when the work belongs to another project. After the move, Claude continues with the task it named.
 
-The tool asks nothing of its own. The move runs when Claude's turn ends. Claude Code's normal permission check for the tool still applies, so you are asked unless an allow rule or auto mode lets the call through. A path that is not a folder is refused.
+The tool asks nothing of its own. The move runs when Claude's turn ends. Then Claude gets its task back as a new prompt, once, even when the move reloads the plugin. Claude Code's normal permission check for the tool still applies, so you are asked unless an allow rule or auto mode lets the call through. A path that is not a folder is refused.
 
 If you still have the `auto-cd` dev mod, remove it. With both, Claude sees two tools that do the same thing.
 
@@ -57,7 +57,7 @@ If you still have the `auto-cd` dev mod, remove it. With both, Claude sees two t
 3. Do not give a tool an on/off option. A model tool is declared at session start, and the plugin API cannot take it back, so an option switched off mid-session leaves the model a tool that fails.
 4. Start each `$.state` key of the tool with its key, for example `myToolCount`, and declare it in `types/index.d.ts`.
 
-The mermaid preview uses the state keys `mermaidDir`, `mermaidDiagram` and `mermaidIsSource`. Its pictures have a transparent background, grey borders and `#D77757` arrowheads.
+The mermaid preview uses the state keys `mermaidDir`, `mermaidDiagram` and `mermaidIsSource`. The change session directory tool keeps a started move in `cdPending` until its task is submitted. Its pictures have a transparent background, grey borders and `#D77757` arrowheads.
 
 A tool that draws part of a reply does not get its own `ui.render` hook. The one hook runs on the terminal surface only, never for a summary. It splits the reply into text, mermaid blocks, quotes and tables (a table inside a mermaid block or a quote is not a table), and leaves a reply with only text, or any reply on the desktop, to the engine. It adds a block kind to `hooks/blocks.ts` and draws it in `hooks/reply.tsx`. A render hook on `AssistantMessage` draws the whole reply, so a second one would hide the first one's work.
 

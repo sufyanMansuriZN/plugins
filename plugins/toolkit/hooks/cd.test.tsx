@@ -138,3 +138,39 @@ test('a directory change that is not a pending move submits nothing', async ($, 
   await settle(clock)
   expect(host.prompts).toEqual([])
 })
+
+const CALL = { tool_use_id: 't1', tool: TOOL, input: { path: '/home/me/Projects/app', task: 'Run the tests.' }, isRunning: false, isErrored: false, isInterrupted: false }
+const RESULT = { tool_use_id: 't1', tool: TOOL, output: 'The move to /home/me/Projects/app runs when your turn ends, so end your turn now.', isErrored: false }
+
+// Beneath the plugin: the engine's own drawing, and a home folder.
+function drawing(on: On) {
+  mock.env(on, { HOME: '/home/me' })
+  on('ui.render', ($, e) => {
+    const { Text } = $.ui.resolve(e)
+    return <Text>engine drawing</Text>
+  })
+}
+
+test('the call shows as one row with the folder, home as ~, and no task', async ($, on) => {
+  drawing(on)
+  const ui = await $.ui.mount({ plugin: 'toolkit', surface: 'terminal', component: 'ToolUse', props: CALL })
+  expect((await ui.findAll({ type: 'Text' })).map(found => found.text)).toEqual(['●', 'Move session ~/Projects/app', 'Move session'])
+  await ui.unmount()
+})
+
+test('ctrl+o shows the whole call', async ($, on) => {
+  drawing(on)
+  const ui = await $.ui.mount({ plugin: 'toolkit', surface: 'terminal', component: 'ToolUse', props: { ...CALL, isExpanded: true } })
+  expect(await ui.find({ type: 'Text', text: 'engine drawing' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('the result is one short line, and an error keeps its reason', async ($, on) => {
+  drawing(on)
+  const ui = await $.ui.mount({ plugin: 'toolkit', surface: 'terminal', component: 'ToolResult', props: RESULT })
+  expect((await ui.findAll({ type: 'Text' })).map(found => found.text)).toEqual(['  ⎿  moves when this turn ends'])
+  await ui.unmount()
+  const errored = await $.ui.mount({ plugin: 'toolkit', surface: 'terminal', component: 'ToolResult', props: { ...RESULT, output: 'x is not a directory.', isErrored: true } })
+  expect(await errored.find({ type: 'Text', text: 'engine drawing' })).toBeDefined()
+  await errored.unmount()
+})

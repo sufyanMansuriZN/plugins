@@ -1,6 +1,7 @@
 import type { EngineInterface, Register } from 'claude-code'
 
 const NAME = 'change_session_directory'
+const TOOL = `mcp__toolkit__${NAME}`
 
 const DESCRIPTION = `Moves this Claude Code session to another directory, the same as the person typing /cd. After the move, the project root, CLAUDE.md files, project settings, permission rules, hooks, MCP servers and skills come from the new directory, and relative paths resolve from it.
 
@@ -60,7 +61,7 @@ export const register: Register = on => {
     return next(e)
   })
 
-  on('tool.call', { tool: `mcp__toolkit__${NAME}` }, async ($, e) => {
+  on('tool.call', { tool: TOOL }, async ($, e) => {
     const { path, task } = e as unknown as { path?: unknown; task?: unknown }
     if (typeof path !== 'string' || path === '') return { deny: 'path must be a directory path.' }
 
@@ -89,5 +90,32 @@ export const register: Register = on => {
   on('classic.CwdChanged', async ($, e, next) => {
     await finishLater($, e.new_cwd)
     return next(e)
+  })
+
+  // A one-line row in place of the call with its long task. ctrl+o still shows the whole call.
+  on('ui.render', { surface: 'terminal', component: 'ToolUse', props: { tool: TOOL } }, async ($, e, next) => {
+    const { path } = (e.props.input ?? {}) as { path?: unknown }
+    if (e.props.isExpanded || typeof path !== 'string') return next(e)
+    const home = (await $.env.get('HOME')) ?? ''
+    const shown = home !== '' && (path === home || path.startsWith(`${home}/`)) ? `~${path.slice(home.length)}` : path
+    const { Box, Text } = $.ui.resolve(e)
+    const bullet = e.props.isRunning ? <Text dimColor>●</Text> : <Text color={e.props.isErrored ? 'error' : 'success'}>●</Text>
+    return (
+      <Box flexDirection="row" marginTop={1}>
+        <Box width={2} minWidth={2}>
+          {bullet}
+        </Box>
+        <Text>
+          <Text bold>Move session</Text> {shown}
+        </Text>
+      </Box>
+    )
+  })
+
+  // An error keeps the engine's drawing, so its reason shows.
+  on('ui.render', { surface: 'terminal', component: 'ToolResult', props: { tool: TOOL } }, ($, e, next) => {
+    if (e.props.isExpanded || e.props.isErrored) return next(e)
+    const { Text } = $.ui.resolve(e)
+    return <Text dimColor>{'  ⎿  moves when this turn ends'}</Text>
   })
 }

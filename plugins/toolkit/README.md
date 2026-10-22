@@ -48,6 +48,8 @@ Gives Claude a tool, `change_session_directory`, that moves the session to anoth
 
 The tool asks nothing of its own. The move runs when Claude's turn ends. Then Claude gets its task back as a new prompt, once, even when the move reloads the plugin. Claude Code's normal permission check for the tool still applies, so you are asked unless an allow rule or auto mode lets the call through. A path that is not a folder is refused.
 
+In the terminal, the call shows as one row, **Move session** and the folder, with `~` for your home folder. The task is not shown. Under it, `moves when this turn ends`. An error shows its reason. Press ctrl+o to see the whole call.
+
 If you still have the `auto-cd` dev mod, remove it. With both, Claude sees two tools that do the same thing.
 
 ## Add a tool

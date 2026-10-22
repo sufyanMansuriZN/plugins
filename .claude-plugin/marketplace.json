@@ -17,7 +17,7 @@
     {
       "name": "toolkit",
       "source": "./plugins/toolkit",
-      "description": "Expands Claude Code with tools, each one on until you turn it off in /plugin"
+      "description": "Expands Claude Code with tools: a mermaid preview, table copy and a change session directory tool"
     }
   ]
 }

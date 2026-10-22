@@ -1,7 +1,7 @@
 # toolkit Specification
 
 ## Purpose
-TBD - created by archiving change toolkit-plugin. Update Purpose after archive.
+`toolkit` is one plugin that holds the small tools that expand Claude Code, so a user installs them once: the mermaid preview, table copy and the change session directory tool. Every tool is always on. Disabling the plugin is the off switch.
 
 ## Requirements
 

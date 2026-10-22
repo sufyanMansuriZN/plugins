@@ -11,7 +11,7 @@ Do not use it to:
 - read or edit a file somewhere else: use the file's absolute path
 - work in a git worktree of this repository: use EnterWorktree
 
-Every call asks the person to approve the move in a dialog. If they choose Stay or type an answer, the call fails with their words; do not retry the same move unless they ask. If they approve, the move runs after your turn ends, so end your turn right after the call with one line that says where you are going. A new turn then starts in the new directory and gives you back your \`task\` text.`
+The move runs after your turn ends, so end your turn right after the call with one line that says where you are going. A new turn then starts in the new directory and gives you back your \`task\` text.`
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
@@ -28,7 +28,7 @@ export const register: Register = on => {
           task: {
             type: 'string',
             description:
-              'What you will do after the move, in one sentence. The person reads it in the approval dialog, and you get it back as the first message in the new directory, so write it so you can continue from it alone.',
+              'What you will do after the move, in one sentence. You get it back as the first message in the new directory, so write it so you can continue from it alone.',
           },
         },
         required: ['path', 'task'],
@@ -47,16 +47,6 @@ export const register: Register = on => {
 
     const dir = target.realPath
     const plan = typeof task === 'string' && task !== '' ? task : 'Continue the task you were on.'
-    // Every move waits for the person: permission rules and auto mode let a tool call through unasked.
-    // Stay is listed first so a dialog that answers itself while the person is away picks it; the engine
-    // refuses a plugin's direct AskUserQuestion call, so that case cannot be told apart here.
-    const answer = await $.ui
-      .ask(`Move this session to ${dir}?\nClaude's plan there: ${plan}`, ['Stay', 'Move'])
-      .catch(() => undefined)
-    if (answer === undefined) return { deny: "The move needs the person's approval, and none was given." }
-    if (answer === 'Stay') return { deny: 'The person chose to stay in the current directory.' }
-    if (answer !== 'Move') return { deny: `The person did not approve the move and said: ${answer}` }
-
     // A command run straight from a tool hook is refused, so it waits for the timer.
     $.clock.after(0, () => {
       void $.command
@@ -64,6 +54,6 @@ export const register: Register = on => {
         .then(() => $.prompt.submit({ text: `The session now runs in ${dir}. ${plan}` }))
         .catch(err => $.ui.toast(`toolkit: the move to ${dir} failed: ${String(err)}`))
     })
-    return { result: `The person approved. The move to ${dir} runs when your turn ends, so end your turn now.` }
+    return { result: `The move to ${dir} runs when your turn ends, so end your turn now.` }
   })
 }

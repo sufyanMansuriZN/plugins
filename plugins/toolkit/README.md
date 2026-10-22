@@ -38,14 +38,7 @@ If you still have the `table-copy` dev mod, remove it. With both, each table get
 
 Gives Claude a tool, `change_session_directory`, that moves the session to another folder, the same as when you type `/cd`. Claude uses it when the work belongs to another project. After the move, Claude continues with the task it named.
 
-Claude cannot move the session without you. Each move opens a dialog that shows the folder and Claude's plan there:
-
-- **Move** moves the session when Claude's turn ends.
-- **Stay** keeps the session where it is.
-- If you type an answer, the session stays and Claude gets your words.
-- If you close the dialog, or no one can answer it (a `claude -p` run), the session stays.
-
-No permission rule, auto mode or option skips this dialog.
+The tool asks nothing of its own. The move runs when Claude's turn ends. Claude Code's normal permission check for the tool still applies, so you are asked unless an allow rule or auto mode lets the call through. A path that is not a folder is refused.
 
 If you still have the `auto-cd` dev mod, remove it. With both, Claude sees two tools that do the same thing.
 

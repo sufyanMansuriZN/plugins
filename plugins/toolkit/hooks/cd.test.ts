@@ -8,12 +8,10 @@ const APP = '/w/app'
 const LINK = '/w/link-to-app'
 
 type Host = { registered: string[]; asked: unknown[]; commands: { command: string; args: string }[]; prompts: string[] }
-// What the person does with the dialog; `absent` is a `-p` run, where no dialog answers.
-type Person = { answers: string } | 'dismisses' | 'absent'
 
-// Beneath the plugin: a disk where LINK leads to APP and `notes.md` is a file, the person at the
-// dialog, and the session's commands and prompts.
-function engine(on: On, person: Person = { answers: 'Move' }): Host {
+// Beneath the plugin: a disk where LINK leads to APP and `notes.md` is a file, a person who would
+// answer any dialog, and the session's commands and prompts.
+function engine(on: On): Host {
   const host: Host = { registered: [], asked: [], commands: [], prompts: [] }
   on('tool.register', (_$, e) => {
     host.registered.push(e.name)
@@ -24,14 +22,10 @@ function engine(on: On, person: Person = { answers: 'Move' }): Host {
     if (e.path === `${ROOT}/notes.md`) return { value: { kind: 'file', size: 1, mtimeMs: 0, isLink: false, realPath: `${ROOT}/notes.md` } }
     return { value: { kind: 'other', size: 0, mtimeMs: 0, isLink: false } }
   })
-  if (person !== 'absent') {
-    on('tool.call', { tool: 'AskUserQuestion' }, (_$, e) => {
-      host.asked.push(e.questions)
-      if (person === 'dismisses') return { deny: 'The person dismissed the dialog.' }
-      const question = (e.questions[0] as { question: string }).question
-      return { result: { questions: e.questions, answers: { [question]: person.answers } } }
-    })
-  }
+  on('tool.call', { tool: 'AskUserQuestion' }, (_$, e) => {
+    host.asked.push(e.questions)
+    return { result: { questions: e.questions, answers: {} } }
+  })
   on('command.run', (_$, e) => {
     host.commands.push({ command: e.command, args: e.args })
     return {}
@@ -73,22 +67,19 @@ test('a path that is not a directory is denied without asking', async ($, on) =>
   expect(host.commands).toEqual([])
 })
 
-test('an approved move runs /cd on the real path, then submits the task', async ($, on) => {
+test('a move runs /cd on the real path with no dialog, then submits the task', async ($, on) => {
   const host = engine(on)
   const clock = mock.clock(on)
   await start($, on)
   const call = await $.tool.call({ tool: TOOL, path: LINK, task: 'Run the tests.' })
   expect(call.deny).toBeUndefined()
-  expect(host.asked).toMatchObject([[{
-    question: `Move this session to ${APP}?\nClaude's plan there: Run the tests.`,
-    options: [{ label: 'Stay' }, { label: 'Move' }],
-  }]])
   await settle(clock)
+  expect(host.asked).toEqual([])
   expect(host.commands).toEqual([{ command: 'cd', args: APP }])
   expect(host.prompts).toEqual([`The session now runs in ${APP}. Run the tests.`])
 })
 
-test('an approved move from a call that left out its task asks the model to carry on', async ($, on) => {
+test('a move from a call that left out its task asks the model to carry on', async ($, on) => {
   const host = engine(on)
   const clock = mock.clock(on)
   await start($, on)
@@ -96,24 +87,3 @@ test('an approved move from a call that left out its task asks the model to carr
   await settle(clock)
   expect(host.prompts).toEqual([`The session now runs in ${APP}. Continue the task you were on.`])
 })
-
-const NO_APPROVAL = "The move needs the person's approval, and none was given."
-const refusals: { name: string; person: Person; isInteractive?: boolean; reason: string }[] = [
-  { name: 'Stay', person: { answers: 'Stay' }, reason: 'The person chose to stay in the current directory.' },
-  { name: 'text typed under Other', person: { answers: 'not now' }, reason: 'The person did not approve the move and said: not now' },
-  { name: 'a dismissed dialog', person: 'dismisses', reason: NO_APPROVAL },
-  { name: 'a -p run with no one to ask', person: 'absent', isInteractive: false, reason: NO_APPROVAL },
-]
-
-for (const refusal of refusals) {
-  test(`${refusal.name} denies the move and runs no command`, async ($, on) => {
-    const host = engine(on, refusal.person)
-    const clock = mock.clock(on)
-    await start($, on, refusal.isInteractive)
-    const call = await $.tool.call({ tool: TOOL, path: LINK, task: 'Run the tests.' })
-    expect(call).toEqual({ deny: refusal.reason })
-    await settle(clock)
-    expect(host.commands).toEqual([])
-    expect(host.prompts).toEqual([])
-  })
-}

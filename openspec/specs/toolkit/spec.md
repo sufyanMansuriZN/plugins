@@ -94,35 +94,19 @@ Under each table of a reply, the plugin SHALL draw the row `copy as markdown  ·
 - **THEN** the toast says `Copied table 2 (2 rows)`
 
 ### Requirement: Change session directory tool
-The `cd` tool SHALL register a model tool named `change_session_directory`, called as `mcp__toolkit__change_session_directory`. Its description SHALL say what the tool does, when to use it and when not to. Its input SHALL require `path` and `task`. A path that is not a directory SHALL be denied before anything is asked.
+The `cd` tool SHALL register a model tool named `change_session_directory`, called as `mcp__toolkit__change_session_directory`. Its description SHALL say what the tool does, when to use it and when not to. Its input SHALL require `path` and `task`. A path that is not a directory SHALL be denied.
 
 #### Scenario: Not a directory
 - **WHEN** the model calls the tool with a path that leads to a file or nowhere
-- **THEN** the call is denied with a reason that names the path, no dialog opens and no command runs
+- **THEN** the call is denied with a reason that names the path, and no command runs
 
 #### Scenario: Registered
 - **WHEN** a session starts
 - **THEN** the tool `change_session_directory` is registered with `path` and `task` required
 
-### Requirement: Every move needs the person's approval
-For a directory, the tool SHALL ask the person in a dialog `Move this session to <realPath>?` with `Claude's plan there: <task>`, and the options `Stay` then `Move`, `Stay` first. Only `Move` SHALL queue the move: `/cd <realPath>` from a timer, then a prompt that names the directory and the task. Every other outcome SHALL deny the call and run no command. No option, setting, permission rule or auto mode SHALL skip the dialog.
+### Requirement: A move runs without a dialog of its own
+For a directory, the tool SHALL open no dialog of its own; Claude Code's permission check for the tool is the only gate. It SHALL queue the move: `/cd <realPath>` from a timer, then a prompt that names the directory and the task.
 
-#### Scenario: Approve
-- **WHEN** the model calls the tool with a link that resolves to `/w/app` and task `Run the tests.`, and the person chooses `Move`
-- **THEN** the call answers at once, then `/cd /w/app` runs and the prompt `The session now runs in /w/app. Run the tests.` is submitted
-
-#### Scenario: Stay
-- **WHEN** the person chooses `Stay`
-- **THEN** the call is denied with `The person chose to stay in the current directory.` and no command runs
-
-#### Scenario: Other text
-- **WHEN** the person types `not now` under Other
-- **THEN** the call is denied with `The person did not approve the move and said: not now` and no command runs
-
-#### Scenario: Dismissed
-- **WHEN** the person closes the dialog
-- **THEN** the call is denied with `The move needs the person's approval, and none was given.` and no command runs
-
-#### Scenario: Headless
-- **WHEN** the tool is called in a `claude -p` run, where no one can answer the dialog
-- **THEN** the call is denied with `The move needs the person's approval, and none was given.` and no command runs
+#### Scenario: Move
+- **WHEN** the model calls the tool with a link that resolves to `/w/app` and task `Run the tests.`
+- **THEN** the call answers at once with no dialog, then `/cd /w/app` runs and the prompt `The session now runs in /w/app. Run the tests.` is submitted

@@ -1,6 +1,6 @@
 # toolkit
 
-Expands Claude Code with tools. Every tool is on when you install the plugin. The mermaid preview and table copy are always on. You can turn the change session directory tool off.
+Expands Claude Code with tools. Every tool is always on. To stop using them, disable the plugin in `/plugin`.
 
 ```sh
 claude plugin install toolkit@plugins
@@ -49,19 +49,11 @@ No permission rule, auto mode or option skips this dialog.
 
 If you still have the `auto-cd` dev mod, remove it. With both, Claude sees two tools that do the same thing.
 
-## Turn the change session directory tool off
-
-1. Run `/plugin`.
-2. Select `toolkit` and configure it.
-3. Set `cd` to off.
-
-When `cd` is off, the tool adds no hooks. Claude Code reloads the plugin with the new options.
-
 ## Add a tool
 
 1. Write the tool as one file in `hooks/`, for example `hooks/my-tool.ts`. Export `register` from it. Put its tests beside it in `hooks/my-tool.test.ts`.
 2. Add one line to `hooks/register.tsx`: `myTool(on, options)`.
-3. To let people turn the tool off, gate that line, `if (options.myTool !== false) myTool(on, options)`, and add one boolean field to `userConfig` in `.claude-plugin/plugin.json`, with the same key, a title, a description and `"default": true`.
+3. Do not give a tool an on/off option. A model tool is declared at session start, and the plugin API cannot take it back, so an option switched off mid-session leaves the model a tool that fails.
 4. Start each `$.state` key of the tool with its key, for example `myToolCount`, and declare it in `types/index.d.ts`.
 
 A tool that draws part of a reply does not get its own `ui.render` hook. It adds a block kind to `hooks/blocks.ts` and draws it in `hooks/reply.tsx`. A render hook on `AssistantMessage` draws the whole reply, so a second one would hide the first one's work.

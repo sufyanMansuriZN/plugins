@@ -61,12 +61,6 @@ test('session start registers the change_session_directory tool', async ($, on) 
   expect(host.registered).toEqual(['change_session_directory'])
 })
 
-test('with cd off, session start registers no tool', { options: { cd: false } }, async ($, on) => {
-  const host = engine(on)
-  await start($, on)
-  expect(host.registered).toEqual([])
-})
-
 test('a path that is not a directory is denied without asking', async ($, on) => {
   const host = engine(on)
   const clock = mock.clock(on)

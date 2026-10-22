@@ -1,26 +1,22 @@
 ## ADDED Requirements
 
 ### Requirement: One plugin for many tools
-The marketplace SHALL ship a plugin named `toolkit` that expands Claude Code with tools. It SHALL load one hooks module, `hooks/register.tsx`. Each tool SHALL live in its own file under `hooks/` and export `register`. The root module SHALL hold one line per tool that calls that tool's `register`, gated on the tool's option when it has one.
+The marketplace SHALL ship a plugin named `toolkit` that expands Claude Code with tools. It SHALL load one hooks module, `hooks/register.tsx`. Each tool SHALL live in its own file under `hooks/` and export `register`. The root module SHALL hold one line per tool that calls that tool's `register`.
 
 #### Scenario: Install
 - **WHEN** a user runs `claude plugin install toolkit@plugins`
-- **THEN** the mermaid preview, table copy and the change session directory tool are all active, with no option set
+- **THEN** the mermaid preview, table copy and the change session directory tool are all active
 
 #### Scenario: Adding a tool
 - **WHEN** a maintainer adds a tool
-- **THEN** the change is one new file in `hooks/` and one line in `hooks/register.tsx`, plus one field in `userConfig` when the tool can be turned off
+- **THEN** the change is one new file in `hooks/` and one line in `hooks/register.tsx`
 
-### Requirement: The change session directory tool can be turned off
-The manifest's `userConfig` SHALL have one boolean field, `cd`, with a plain title and description and a default of `true`. When it is `false`, the change session directory tool SHALL register no hooks. The mermaid preview and table copy SHALL have no option and SHALL always be on. The plugin's own hooks SHALL NOT add rows to `/config`.
+### Requirement: Every tool is always on
+The manifest SHALL have no `userConfig`, and every tool SHALL always be on. The plugin's own hooks SHALL NOT add rows to `/config`.
 
-#### Scenario: Default
-- **WHEN** no option is stored for `toolkit`
-- **THEN** every tool registers its hooks
-
-#### Scenario: cd off
-- **WHEN** the `cd` option is `false`
-- **THEN** session start registers no `change_session_directory` tool
+#### Scenario: No option
+- **WHEN** a session starts with `toolkit` enabled
+- **THEN** every tool registers its hooks, and `/plugin` shows no option for `toolkit`
 
 ### Requirement: Tool state is named per tool
 Every `$.state` key the plugin uses SHALL be under the `toolkit` plugin and SHALL start with its tool's key. The mermaid preview SHALL use `mermaidDir`, `mermaidDiagram` and `mermaidIsSource`.
@@ -100,7 +96,7 @@ The `cd` tool SHALL register a model tool named `change_session_directory`, call
 - **THEN** the call is denied with a reason that names the path, no dialog opens and no command runs
 
 #### Scenario: Registered
-- **WHEN** a session starts with the `cd` option on
+- **WHEN** a session starts
 - **THEN** the tool `change_session_directory` is registered with `path` and `task` required
 
 ### Requirement: Every move needs the person's approval

@@ -9,8 +9,8 @@ The engine loads one hooks module per plugin (`hooks/hooks.json` names one path)
 ## Goals / Non-Goals
 
 **Goals:**
-- One plugin, many tools. Adding a tool is one new file and one line in `hooks/register.tsx`, plus one `userConfig` field when it can be turned off.
-- Every tool is on by default. The change session directory tool can be turned off in `/plugin`. The mermaid preview and table copy cannot: each one only adds to a reply, and leaves it to the engine where it has nothing to add.
+- One plugin, many tools. Adding a tool is one new file and one line in `hooks/register.tsx`.
+- Every tool is always on. The mermaid preview and table copy only add to a reply, and leave it to the engine where they have nothing to add. The change session directory tool never moves the session without approval.
 - Mermaid preview behaves as before. Table copy behaves as the dev copy does, but needs no clipboard tool installed. The change session directory tool behaves as the dev copy does, and never moves the session without the person's approval.
 
 **Non-Goals:**
@@ -21,7 +21,7 @@ The engine loads one hooks module per plugin (`hooks/hooks.json` names one path)
 
 ## Decisions
 
-**The root module is a list of gated calls, not a loop over a table.** The planned shape was a table `{ mermaid, cd }` and a loop that calls each entry when its option is not `false`. The loader refuses it: `on` may only be passed to a function named at the top of the module or imported from the plugin's own files, so `TOOLS[key](on, options)` fails the load. So `register.tsx` holds one line per tool, `if (options.<key> !== false) <tool>(on, options)` for a tool with an option and `<tool>(on, options)` for one without. Each line is the registry entry. It stays one line per tool, and a test per gated tool proves the gate.
+**The root module is a list of calls, not a loop over a table.** The planned shape was a table `{ mermaid, cd }` and a loop that calls each entry when its option is not `false`. The loader refuses it: `on` may only be passed to a function named at the top of the module or imported from the plugin's own files, so `TOOLS[key](on, options)` fails the load. So `register.tsx` holds one line per tool, `<tool>(on, options)`. Each line is the registry entry.
 
 **One hook draws a reply.** The mermaid preview and table copy each draw part of a reply, and a render hook on `AssistantMessage` returns the whole reply. Stacked, the outer hook draws its text parts as plain Markdown, so the inner hook's diagrams or buttons are lost. So `hooks/reply.tsx` holds the one render hook. `hooks/blocks.ts` splits the reply into a typed list, `text`, `mermaid` (a closed fence) or `table`. Mermaid fences come out first, so a table inside one is never a table. Fences come out only once session start has found a terminal that draws pictures. A reply with no block but text goes to the engine unchanged. Otherwise the hook draws each block in order inside the engine's frame: a blank row above, the bullet on the first block of a reply, every block indented two columns. This is mermaid's frame, so the bullet shows once. The dev copy of table copy passed the text up to the first table to the engine instead, but a reply can open with a diagram or a table, and then there is no text to pass. A later tool that draws part of a reply adds a block kind and its drawing here. `$` cannot be passed to a helper, so the drawing stays inside the hook, and the parsing stays in pure files.
 
@@ -29,13 +29,13 @@ The engine loads one hooks module per plugin (`hooks/hooks.json` names one path)
 
 **Only one tool may hook an event with no matcher.** The loader also refuses a module that hooks one event twice without a matcher. Both tools hook `session.start`. Mermaid's hook now matches `{ surface: 'terminal' }`, because it only draws in a terminal; a `-p` run or an SDK host starts with no surface, and mermaid has nothing to draw there. The change session directory tool keeps its hook unmatched, because the desktop app needs the tool too. A later tool that hooks `session.start` must give a matcher of its own, or the hooks move to the root.
 
-**A tool that is off registers no hooks.** The gate is at registration, not inside each hook. An off tool costs nothing per event, and a tool file needs no knowledge of options. A change in `/plugin` reloads the module with new options, so no hook has to read the option at run time.
+**No tool has an option.** The change session directory tool had a `cd` switch in `userConfig`, gated at registration. The live check showed it cannot work: the tool is declared to the model with `$.tool.register` at session start, and the plugin API has no way to take a declared tool back. Switched off mid-session, the module reloads without its `tool.call` hook, the model still lists the tool, and its call fails. So the switch is gone and every tool is always on. Disabling the plugin is the off switch.
 
 **One file per tool.** `hooks/mermaid.ts` and `hooks/cd.ts` each export `register`. Tests sit beside them (`mermaid.test.tsx`, `cd.test.ts`). Pure helpers stay exported from the tool file, as before. Table copy has no hooks of its own: its parser is `hooks/tables.ts`, and the reply hook draws its buttons.
 
 **State keys carry the tool's name.** `$.state` is keyed by plugin, and all tools now share `toolkit`. Mermaid's keys become `mermaidDir`, `mermaidDiagram` and `mermaidIsSource`, so a later tool cannot collide with them.
 
-**The tool is named `change_session_directory`.** The model picks tools by name and description, and `cd` reads like a shell command. The name, the description (what it does, when to use it, when not to), the input schema and the texts come verbatim from the live-tested dev copy. Tools a plugin registers are listed to the model as `mcp__<plugin>__<name>`, so it becomes `mcp__toolkit__change_session_directory`. The option key stays `cd`.
+**The tool is named `change_session_directory`.** The model picks tools by name and description, and `cd` reads like a shell command. The name, the description (what it does, when to use it, when not to), the input schema and the texts come verbatim from the live-tested dev copy. Tools a plugin registers are listed to the model as `mcp__<plugin>__<name>`, so it becomes `mcp__toolkit__change_session_directory`. The `mcp__` prefix is the engine's name for every plugin tool; no MCP server is involved.
 
 **The tool asks the person itself.** In a live test, auto mode let the call through with no prompt, so permission rules cannot be the gate. After the directory check, the hook calls `$.ui.ask` with `Stay` first, then `Move`. Only the exact answer `Move` queues the move. `Stay`, text typed under Other, and a rejected ask (a closed dialog, or a `-p` run) all return `{ deny }` with a reason the model reads, and queue nothing. There is no "don't ask again".
 

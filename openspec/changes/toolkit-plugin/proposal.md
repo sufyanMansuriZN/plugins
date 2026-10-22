@@ -2,13 +2,12 @@
 
 ## Why
 
-Small mods that each add one tool to Claude Code pile up as separate plugins. Each one needs its own install, its own entry in the marketplace and its own README. Three exist now: `mermaid-preview`, a published plugin, `auto-cd`, a dev mod that lets the model move the session with `/cd`, and `table-copy`, a dev mod that copies a reply's tables. More will follow. One plugin that holds them all is one install. A tool that acts for the user, like a move of the session, is one switch in `/plugin`.
-
+Small mods that each add one tool to Claude Code pile up as separate plugins. Each one needs its own install, its own entry in the marketplace and its own README. Three exist now: `mermaid-preview`, a published plugin, `auto-cd`, a dev mod that lets the model move the session with `/cd`, and `table-copy`, a dev mod that copies a reply's tables. More will follow. One plugin that holds them all is one install. 
 ## What Changes
 
 - Add a plugin, `toolkit`, under `plugins/toolkit/`. It "expands Claude Code with tools". Version 0.1.0, license MIT.
-- Each tool is one file in `hooks/`, with its tests beside it. The root module `hooks/register.tsx` has one line per tool. A tool that can be turned off is gated on its `userConfig` field.
-- The mermaid preview and table copy are always on and have no option. The change session directory tool has one boolean field, `cd`, `true` by default, and the user turns it off in `/plugin`. The plugin adds no `/config` rows of its own.
+- Each tool is one file in `hooks/`, with its tests beside it. The root module `hooks/register.tsx` has one line per tool.
+- Every tool is always on, with no option. The plugin adds no `/config` rows of its own.
 - Move mermaid preview in, behaviour unchanged but for its session start hook, which now runs on the terminal surface only. Its state keys become `mermaidDir`, `mermaidDiagram` and `mermaidIsSource` under the `toolkit` plugin.
 - Port the `table-copy` dev mod as table copy: under each table of a reply, `copy as markdown` and `copy table`. `copy table` puts HTML and tab-separated cells on the X11 clipboard at once through a `python3` script that talks to libX11, and copies the cells alone where that fails. No clipboard tool has to be installed.
 - One `ui.render` hook on `AssistantMessage`, `hooks/reply.tsx`, draws a reply for both the mermaid preview and table copy, so a reply with a diagram and a table shows both.

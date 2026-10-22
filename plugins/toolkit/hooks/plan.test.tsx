@@ -27,10 +27,11 @@ function engine(on: On, prompts = () => 1): string[] {
   return registered
 }
 
-// The spinner's lines, top to bottom, without the ⎿ mark.
-async function spinner($: Engine): Promise<string[]> {
+// The spinner's lines and links, top to bottom, without the ⎿ mark; `press` clicks a link first.
+async function spinner($: Engine, press?: string): Promise<string[]> {
   const ui = await $.ui.mount({ plugin: 'toolkit', surface: 'terminal', component: 'Spinner', props: { word: 'Baking', message: null, suffix: '…', mode: 'tool-use' } })
-  const texts = await ui.findAll({ type: 'Text' })
+  if (press) await ui.press({ key: press })
+  const texts = (await ui.findAll({})).filter(found => found.type === 'Text' || found.type === 'Button')
   await ui.unmount()
   return texts.map(found => found.text.trim()).filter(words => words !== '' && words !== '⎿')
 }
@@ -101,13 +102,23 @@ test('bad calls are denied with a reason Claude can act on, and the plan stays',
   expect((await spinner($))[2]).toBe('Read the parser')
 })
 
-test('a prompt typed while Claude is idle starts a new request and clears the list', async ($, on) => {
+test('a side question typed while Claude is idle keeps the list, and advance goes on from it', async ($, on) => {
   engine(on)
   await typed($, 'fix it')
   await turn($, 't1', () => $.tool.call({ tool: TOOL, items: PLAN }))
+  await typed($, 'why that parser?')
   expect(await spinner($)).toContain('Read the parser')
+  let call: Awaited<ReturnType<typeof $.tool.call>> | undefined
+  await turn($, 't2', async () => (call = await $.tool.call({ tool: TOOL, advance: true })))
+  expect(call?.result).toBe('Plan updated: 1 of 3 done. Now on step 2: Fix blank lines.')
+})
+
+test('a new whole list replaces the old one', async ($, on) => {
+  engine(on)
+  await $.tool.call({ tool: TOOL, items: PLAN })
   await typed($, 'something else')
-  expect(await spinner($)).toEqual(['engine: Spinner'])
+  await $.tool.call({ tool: TOOL, items: [{ content: 'Look at the logs', status: 'in_progress' }] })
+  expect(await spinner($)).toEqual(['engine: Spinner', '◼', 'Look at the logs'])
 })
 
 test('a message typed mid-turn and a turn a background task wakes keep the list', async ($, on) => {
@@ -196,6 +207,7 @@ test('a long list shows five steps around the one in progress and counts the res
   expect((await spinner($)).filter(words => words.startsWith('Step') || words.startsWith('…'))).toEqual(['Step 1', 'Step 2', 'Step 3', 'Step 4', 'Step 5', '… +4 more'])
   await $.tool.call({ tool: TOOL, items: LONG })
   expect((await spinner($)).filter(words => words.startsWith('Step') || words.startsWith('…'))).toEqual(['Step 5', 'Step 6', 'Step 7', 'Step 8', 'Step 9', '… +4 more'])
+  expect((await spinner($, 'toggle')).filter(words => /^(Step|…|show)/.test(words))).toEqual([...LONG.map(step => step.content), 'show less'])
 })
 
 test('above the prompt a long list fits the rows the band has, leaving one for a status bar', async ($, on) => {
@@ -207,7 +219,34 @@ test('above the prompt a long list fits the rows the band has, leaving one for a
     component: 'AbovePrompt',
     props: { hasSurvey: false, isWorking: false, maxRows: 6, bodyColumns: 100, scroll: { offset: 0, bodyRows: 6 }, view: {} },
   })
-  const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text.trim()).filter(words => words.startsWith('Step') || words.startsWith('…'))
+  const texts = (await ui.findAll({}))
+    .filter(found => found.type === 'Text' || found.type === 'Button')
+    .map(found => found.text.trim())
+    .filter(words => words.startsWith('Step') || words.startsWith('…'))
   await ui.unmount()
   expect(texts).toEqual(['Step 7', 'Step 8', 'Step 9', '… +6 more'])
+})
+
+test('above the prompt "… +N more" opens the whole list and "show less" folds it, for later draws too', async ($, on) => {
+  engine(on)
+  await $.tool.call({ tool: TOOL, items: LONG })
+  const mount = () =>
+    $.ui.mount({
+      plugin: 'toolkit',
+      surface: 'terminal',
+      component: 'AbovePrompt',
+      props: { hasSurvey: false, isWorking: false, maxRows: 20, bodyColumns: 100, scroll: { offset: 0, bodyRows: 20 }, view: {} },
+    })
+  const shown = async (ui: Awaited<ReturnType<typeof mount>>) =>
+    (await ui.findAll({})).filter(found => found.type === 'Text' || found.type === 'Button').map(found => found.text.trim()).filter(words => /^(Step|…|show)/.test(words))
+  const ui = await mount()
+  expect(await shown(ui)).toEqual(['Step 5', 'Step 6', 'Step 7', 'Step 8', 'Step 9', '… +4 more'])
+  await ui.press({ key: 'toggle' })
+  expect(await shown(ui)).toEqual([...LONG.map(step => step.content), 'show less'])
+  await ui.unmount()
+  const again = await mount()
+  expect(await shown(again)).toEqual([...LONG.map(step => step.content), 'show less'])
+  await again.press({ key: 'toggle' })
+  expect(await shown(again)).toEqual(['Step 5', 'Step 6', 'Step 7', 'Step 8', 'Step 9', '… +4 more'])
+  await again.unmount()
 })

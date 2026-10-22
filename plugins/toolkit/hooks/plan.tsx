@@ -7,6 +7,7 @@ const NAME = 'update_plan'
 export const PLAN_TOOL = `mcp__toolkit__${NAME}`
 
 const PLAN = { plugin: 'toolkit', key: 'plan' } as const
+const IS_OPEN = { plugin: 'toolkit', key: 'planIsOpen' } as const
 const STEPS_MAX = 12
 const STATUSES: PlanStatus[] = ['pending', 'in_progress', 'completed']
 // A long list shows five steps and a "… +N more" row, as Claude Code cuts its own lists short.
@@ -120,9 +121,22 @@ export function windowSteps(plan: PlanStep[], rows: number): { shown: [number, P
   return { shown: all.slice(first, first + size), hidden: plan.length - size }
 }
 
-function drawSteps(elements: Elements['terminal'], plan: PlanStep[], rows: number) {
-  const { Box, Text } = elements
-  const { shown, hidden } = windowSteps(plan, rows)
+/** Whether a long list shows every step, and what pressing its "… +N more" or "show less" row does. */
+type Toggle = { isOpen: boolean; onPress: () => unknown }
+
+function drawSteps(elements: Elements['terminal'], plan: PlanStep[], rows: number, toggle?: Toggle) {
+  const { Box, Button, Text } = elements
+  const isOpen = toggle?.isOpen === true && plan.length > rows
+  const { shown, hidden } = windowSteps(plan, isOpen ? plan.length : rows)
+  // A plain dim link, as the next step box draws its answers; hover underlines the nearest keyed Box.
+  const link = (label: string) =>
+    toggle ? (
+      <Box key="hover:toggle" paddingLeft={2}>
+        <Button key="toggle" plain dimColor hover={{ underline: true }} label={label} onPress={async () => void (await toggle.onPress())} />
+      </Box>
+    ) : (
+      <Text dimColor>{`  ${label}`}</Text>
+    )
   return (
     <Box flexDirection="column" flexGrow={1}>
       {shown.map(([index, step]) => (
@@ -133,26 +147,26 @@ function drawSteps(elements: Elements['terminal'], plan: PlanStep[], rows: numbe
           </Text>
         </Box>
       ))}
-      {hidden > 0 ? <Text dimColor>{`  … +${hidden} more`}</Text> : null}
+      {hidden > 0 ? link(`… +${hidden} more`) : isOpen ? link('show less') : null}
     </Box>
   )
 }
 
 /** The list under the spinner while Claude works. */
-export function drawPlan(elements: Elements['terminal'], plan: PlanStep[]) {
+export function drawPlan(elements: Elements['terminal'], plan: PlanStep[], toggle?: Toggle) {
   const { Box, Text } = elements
   return (
     <Box flexDirection="row">
       <Box width={5} minWidth={5}>
         <Text dimColor>{'  ⎿  '}</Text>
       </Box>
-      {drawSteps(elements, plan, STEP_ROWS)}
+      {drawSteps(elements, plan, STEP_ROWS, toggle)}
     </Box>
   )
 }
 
 /** The list above the prompt once Claude stops with steps still open, in at most `rows` rows besides its count. */
-export function drawOpenPlan(elements: Elements['terminal'], plan: PlanStep[], rows: number) {
+export function drawOpenPlan(elements: Elements['terminal'], plan: PlanStep[], rows: number, toggle?: Toggle) {
   const { Box, Text } = elements
   const done = plan.filter(step => step.status === 'completed').length
   return (
@@ -165,7 +179,7 @@ export function drawOpenPlan(elements: Elements['terminal'], plan: PlanStep[], r
         <Text dimColor weight="bold">{String(plan.length - done)}</Text>
         <Text dimColor>{' open)'}</Text>
       </Box>
-      {drawSteps(elements, plan, rows)}
+      {drawSteps(elements, plan, rows, toggle)}
     </Box>
   )
 }
@@ -187,49 +201,36 @@ export const register: Register = on => {
   })
 
   // Claude Code keeps an unfinished list above the prompt once the turn stops, and a finished one goes.
+  // A typed prompt keeps it too, since a side question mid-task is not a new plan; a new list replaces it.
   // A rewind sends no event: it only takes prompts out of the transcript, the one the list was made under too.
   on('ui.render', { surface: 'terminal', component: 'AbovePrompt' }, async ($, e, next) => {
     const plan = await read($, PLAN)
     if (e.props.hasSurvey || e.props.isWorking || !plan || isDone(plan.steps) || (await $.session.turns()) < plan.prompts) return next(e)
+    const isOpen = (await read($, IS_OPEN)) === true
     const below = await next(e)
     const elements = $.ui.resolve(e)
     const { Box } = elements
+    const toggle = { isOpen, onPress: () => update($, IS_OPEN, was => !was) }
     return (
       <Box flexDirection="column">
-        {drawOpenPlan(elements, plan.steps, Math.min(STEP_ROWS, e.props.maxRows - BAND_ROWS))}
+        {drawOpenPlan(elements, plan.steps, Math.min(STEP_ROWS, e.props.maxRows - BAND_ROWS), toggle)}
         {below}
       </Box>
     )
-  })
-
-  // As on Desktop, a list belongs to the request that sent it, so a plan Claude dropped halfway
-  // never sits under the next one. A turn a background task wakes, or a message typed while
-  // Claude works, goes on with the same request and keeps the list.
-  let isWorking = false
-  on('turn.start', async ($, e, next) => {
-    if (e.agentId === undefined) isWorking = true
-    return next(e)
-  })
-  on('turn.complete', async ($, e, next) => {
-    if (e.agentId === undefined) isWorking = false
-    return next(e)
-  })
-  on('prompt.submit', async ($, e, next) => {
-    if (!isWorking && e.origin.kind === 'composer') await update($, PLAN, () => null)
-    return next(e)
   })
 
   // Where Claude Code draws its own task list: under the spinner, so it shows while the turn runs.
   on('ui.render', { surface: 'terminal', component: 'Spinner' }, async ($, e, next) => {
     const plan = await read($, PLAN)
     if (!plan || (await $.session.turns()) < plan.prompts) return next(e)
+    const isOpen = (await read($, IS_OPEN)) === true
     const spinner = await next(e)
     const elements = $.ui.resolve(e)
     const { Box } = elements
     return (
       <Box flexDirection="column">
         {spinner}
-        {drawPlan(elements, plan.steps)}
+        {drawPlan(elements, plan.steps, { isOpen, onPress: () => update($, IS_OPEN, was => !was) })}
       </Box>
     )
   })

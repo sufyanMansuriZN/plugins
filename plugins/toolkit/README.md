@@ -71,7 +71,8 @@ Gives Claude a tool, `update_plan`, with the Claude desktop app's name and trigg
 
 - **Where it shows.** While Claude works, the list is under the spinner line, after `⎿`. When Claude stops with steps still open, it stays above the prompt under a `3 tasks (1 done, 2 open)` line. A list with every step done goes when the turn ends. Only the band's `[-]` mark differs from Claude Code's own list.
 - **No extra round trip.** Claude sends the call together with another tool call, never alone. Claude Code's own task tools are off for Opus 4.8, Sonnet 5 and newer models (changelog 2.1.233 and 2.1.268), and those cost a call of their own.
-- **One list per request.** As on Desktop, a list belongs to the request that sent it. A prompt you send while Claude is idle starts a new request, and the list goes away, even one Claude left unfinished. A turn that goes on with the plan sends the whole list again. A message you type while Claude works, and a turn that a finished background task starts, keep the list.
+- **The list stays until Claude replaces or finishes it.** A prompt you type keeps the list, so a side question in the middle of the work does not remove it, and Claude can go on ticking steps off. The list goes away when Claude sends a new whole list, when every step is done, or when you rewind past the prompt it was made under.
+- **Long lists.** A list of more than six steps shows five steps and a `… +N more` row. Click `… +N more` to show every step, and click `show less` to fold the list again. This works under the spinner and above the prompt, and the choice stays for the session.
 - **No rows in the transcript.** The list shows each change, so the calls and their results are hidden. ctrl+o shows them.
 - **Why there is a rule at session start.** For the same reason as the next step box, Claude gets a short rule (`hooks/plan-rule.md`) from the same command hook.
 - Desktop's `scope` field and its links to other sessions are left out, because the terminal has no session cards to open.
@@ -115,7 +116,7 @@ It runs in an interactive terminal session only. The Claude desktop app has its 
 3. Do not give a tool an on/off option. A model tool is declared at session start, and the plugin API cannot take it back, so an option switched off mid-session leaves the model a tool that fails.
 4. Start each `$.state` key of the tool with its key, for example `myToolCount`, and declare it in `types/index.d.ts`.
 
-The mermaid preview uses the state keys `mermaidDir`, `mermaidDiagram` and `mermaidIsSource`. Its pictures have a transparent background, grey borders and `#D77757` arrowheads. The change session directory tool keeps a started move in `cdPending` until its task is submitted. The next step box uses `wrapUpAnswer`. The task list keeps the current list in `plan`.
+The mermaid preview uses the state keys `mermaidDir`, `mermaidDiagram` and `mermaidIsSource`. Its pictures have a transparent background, grey borders and `#D77757` arrowheads. The change session directory tool keeps a started move in `cdPending` until its task is submitted. The next step box uses `wrapUpAnswer`. The task list keeps the current list in `plan`, and whether a long list above the prompt is open in `planIsOpen`.
 
 A tool that draws part of a reply does not get its own `ui.render` hook. The one hook runs on the terminal surface only, never for a summary. It splits the reply into text, mermaid blocks, quotes and tables (a table inside a mermaid block or a quote is not a table), and leaves a reply with only text, or any reply on the desktop, to the engine. It adds a block kind to `hooks/blocks.ts` and draws it in `hooks/reply.tsx`. A render hook on `AssistantMessage` draws the whole reply, so a second one would hide the first one's work.
 

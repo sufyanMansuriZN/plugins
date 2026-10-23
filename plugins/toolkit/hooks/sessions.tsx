@@ -1,7 +1,7 @@
 import { read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Brief, LinkedSession, PermissionMode, Proposal, SessionNote } from '../types'
+import type { Brief, LinkedSession, Proposal } from '../types'
 import {
   BACKGROUND_MIN,
   EFFORTS,
@@ -9,16 +9,16 @@ import {
   NAME_MAX,
   PROPOSALS_PER_TURN,
   backgroundedId,
-  eventText,
-  isMode,
   isAlive,
-  isTurnEnd,
   latestReport,
+  linkPath,
   linkedLines,
-  lowerMode,
   makeBrief,
   parseAgents,
+  parseLink,
   planStart,
+  reportText,
+  shortId,
   startCommand,
   transcriptPath,
 } from './sessions-model'
@@ -29,13 +29,11 @@ export const DISMISS_TOOL = 'mcp__toolkit__dismiss_task'
 export const LIST_TOOL = 'mcp__toolkit__list_sessions'
 
 const LINKED = { plugin: 'toolkit', key: 'linked' } as const
-const NOTES = { plugin: 'toolkit', key: 'notes' } as const
 const PROPOSALS = { plugin: 'toolkit', key: 'proposals' } as const
+const LAUNCHING = { plugin: 'toolkit', key: 'launching' } as const
 
 const POLL_MS = 4000
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000
-// Past this many reports in a row with no word from the user, reports wait for the user's next prompt.
-const WAKES_MAX = 5
 
 const START_DESCRIPTION = `Start a separate Claude Code session for a task while you stay with the user (when: see "Starting other sessions"). It runs as a background session (\`claude --bg\`) the user can open with \`claude attach\`, talk to and stop. \`initiation\` says who wants it: "user_asked" starts it now and returns its name and id; "offer" is for a task the user named in their latest message (new work here, or "suggest / split off / make a task or session for X"): called with a title alone, it asks the user "New session" or "Do it here" and WAITS for their answer, so it must be the only call in that message (no update_plan, no other tool); the result then tells you to carry on here, or to send the brief with proposal_id so the session starts; "own_initiative" is for work you propose yourself that the user has not told you to do — something you noticed, or the follow-up your own answer or work turned up (when your reply calls work a follow-up or a separate PR, propose it here rather than only saying so, unless it acts on what this session just found and so stays here), never what "Starting other sessions" keeps here or gives to a subagent; the user sees a card and nothing runs until they start it, by pressing Start on it or by telling you (then call this again with just proposal_id).
 "user_asked" and "own_initiative" both need a \`prompt\` — the brief: the task, the files or area, what done looks like — and the call is refused without it; \`background\` does not stand in for it. Only an "offer" is a title alone.
@@ -88,7 +86,7 @@ const START_SCHEMA = {
     permission_mode: {
       type: 'string',
       enum: MODES,
-      description: "Optional, local starts only: the permission mode it starts in — this session's own or a lower one (omit to inherit it). A higher mode is refused; only the user can raise a session.",
+      description: "Optional, local starts only: the permission mode it starts in, only when the user asked for one. Omitted, it starts in the user's own default mode.",
     },
     target: {
       type: 'string',
@@ -104,7 +102,7 @@ const START_SCHEMA = {
     wake_when_done: {
       type: 'boolean',
       description:
-        'Once this session (and any sibling still working) ends its turn, or fails to start, and you are idle, you are continued, whether or not this is set. Default false; not with own_initiative; ignored with target "cloud", which never continues you.',
+        'Each time this session ends a turn, it sends you its report as a message, which wakes you when you are idle, whether or not this is set. Default false; not with own_initiative; ignored with target "cloud", which never reports back.',
     },
   },
 }
@@ -134,26 +132,12 @@ async function git($: EngineInterface, cwd: string, args: string[]): Promise<str
   return run?.exitCode === 0 ? run.stdout.trim() : null
 }
 
-// Saved before each call by hooks/save-mode.sh; unknown reads as default, so a start never gets more than the user allowed.
-async function permissionMode($: EngineInterface, sessionId: string): Promise<PermissionMode> {
-  const home = (await $.env.get('HOME')) ?? ''
-  const saved = await $.fs.read(`${home}/.claude/toolkit/permission-mode/${sessionId}`).catch(() => '')
-  const mode = String(saved).trim()
-  return isMode(mode) ? mode : 'default'
-}
-
-// Linked sessions this one sent a message to: Claude Code itself reports the turn that message
-// starts, so the toolkit does not report it again.
-const messaged = new Set<string>()
 // Whether each queued prompt came from the user, by its text, until its turn starts.
 const queued = new Map<string, boolean>()
 let isEventTurn = false
-// Set when this session's own turn was stopped or failed: reports then wait for the user's next prompt.
-let isHeld = false
-let wakes = 0
 let proposedThisTurn = 0
 let stopPolling: (() => void) | null = null
-// Ticks and deliveries run one at a time, so no two read the same notes or overwrite each other.
+// Looks run one at a time, so no two overwrite each other's states.
 let serial: Promise<unknown> = Promise.resolve()
 const inTurn = <T,>(work: () => Promise<T>): Promise<T> => {
   const run = serial.then(work, work)
@@ -170,7 +154,6 @@ async function caller($: EngineInterface): Promise<Caller> {
     cwd,
     sessionId,
     model,
-    mode: await permissionMode($, sessionId),
     isWorktree: gitDir !== null && commonDir !== null && gitDir !== commonDir,
     isEventTurn,
     names: linked.map(s => s.name),
@@ -205,6 +188,17 @@ async function prepare($: EngineInterface, brief: Brief): Promise<{ cwd: string;
 
 /** Starts the session and links it here, or says why it could not start. */
 async function launch($: EngineInterface, brief: Brief, callId: string): Promise<{ text: string } | { error: string }> {
+  // The call's row says "starting…" until the session is linked or the start fails.
+  const launching = { ...LAUNCHING, id: callId }
+  await $.state.set(launching, true)
+  try {
+    return await launchNow($, brief, callId)
+  } finally {
+    await $.state.set(launching, false)
+  }
+}
+
+async function launchNow($: EngineInterface, brief: Brief, callId: string): Promise<{ text: string } | { error: string }> {
   const ready = await prepare($, brief)
   if ('error' in ready) return ready
   const sessionId = await $.session.id()
@@ -215,12 +209,15 @@ async function launch($: EngineInterface, brief: Brief, callId: string): Promise
   }
   const id = backgroundedId(run.stdout)
   if (run.exitCode !== 0 || id === null) return { error: `The session did not start: ${(run.stderr || run.stdout).trim().slice(0, 500) || `exit code ${run.exitCode}`}` }
-  const session: LinkedSession = { name: brief.name, title: brief.title, id, sessionId: null, cwd: ready.cwd, branch: ready.branch, state: 'starting', reported: null, startedAt: Date.now(), callId }
+  // The new session's toolkit reads this to send its reports here; its first turn takes longer than the write.
+  const home = (await $.env.get('HOME')) ?? ''
+  await $.fs.write(linkPath(home, id), JSON.stringify({ parent: sessionId, name: brief.name }))
+  const session: LinkedSession = { name: brief.name, title: brief.title, id, sessionId: null, cwd: ready.cwd, branch: ready.branch, state: 'starting', startedAt: Date.now(), callId }
   await update($, LINKED, was => [...(was ?? []), session])
   watch($)
   const where = ready.branch ? `its own worktree ${ready.cwd} on branch ${ready.branch}` : ready.cwd
   return {
-    text: `Started session "${brief.name}" (id ${id}) in ${where}, in ${brief.permissionMode} mode. It is a real session: the user can open it with \`claude attach ${id}\`. When it ends a turn and no session you started is still working, you are continued with a <side-sessions-event> message; never poll it. Follow-ups go to it with SendMessage (to "${brief.name}").\nLinked sessions now:\n${linkedLines((await read($, LINKED)) ?? [])}`,
+    text: `Started session "${brief.name}" (id ${id}) in ${where}, in ${brief.permissionMode ?? "the user's default"} mode. It is a real session: the user can open it with \`claude attach ${id}\`. Each time it ends a turn, it sends you its report as a message from that session; never poll it. Follow-ups go to it with SendMessage (to "${brief.name}").\nLinked sessions now:\n${linkedLines((await read($, LINKED)) ?? [])}`,
   }
 }
 
@@ -232,7 +229,10 @@ async function transcriptTail($: EngineInterface, path: string): Promise<string>
 
 const tick = ($: EngineInterface) => inTurn(() => look($))
 
-/** One look at the linked sessions: new states, and a note for each turn that ended. */
+/**
+ * One look at the linked sessions, for their rows. Reports come from the sessions themselves; a
+ * session whose process ends gets a toast too, as one that crashed or was stopped sends none.
+ */
 async function look($: EngineInterface) {
   const linked = (await read($, LINKED)) ?? []
   if (linked.length === 0) return
@@ -240,49 +240,38 @@ async function look($: EngineInterface) {
   if (listing === null || listing.exitCode !== 0) return
   const rows = parseAgents(listing.stdout)
   const home = (await $.env.get('HOME')) ?? ''
-  const notes: SessionNote[] = []
-  const changes = new Map<string, Pick<LinkedSession, 'state' | 'sessionId' | 'reported'>>()
+  const changes = new Map<string, Pick<LinkedSession, 'state' | 'sessionId'>>()
   for (const session of linked) {
     const row = rows.get(session.id)
     let state = row?.state ?? 'gone'
     const sessionId = row?.sessionId ?? session.sessionId
-    let reported = session.reported
-    if (isTurnEnd(state)) {
+    // Listed as idle a moment before its first turn starts.
+    if (state === 'idle' && session.state === 'starting') {
       const jsonl = sessionId === null ? '' : await transcriptTail($, transcriptPath(home, row?.cwd || session.cwd, sessionId))
-      const latest = latestReport(jsonl, session.startedAt)
-      if (latest !== null && latest.uuid !== reported) {
-        reported = latest.uuid
-        if (!messaged.delete(session.id)) notes.push({ name: session.name, id: session.id, state, branch: session.branch, report: latest.report })
-      } else if (latest === null && state === 'idle') {
-        // Listed as idle a moment before its first turn starts.
-        state = 'starting'
-      } else if (latest === null && session.state !== state) {
-        notes.push({ name: session.name, id: session.id, state, branch: session.branch, report: 'It ended before it answered: it did not start, or it was stopped or removed.' })
-      }
+      if (latestReport(jsonl, session.startedAt) === null) state = 'starting'
     }
-    changes.set(session.id, { state, sessionId, reported })
+    if (isAlive(session.state) && !isAlive(state)) $.ui.toast(`toolkit: session ${session.name} (${session.id}) ${state === 'gone' ? 'was removed' : `ended: ${state}`}`)
+    changes.set(session.id, { state, sessionId })
   }
   // Merged by id, so a session started while this look ran is kept.
   const next = await update($, LINKED, was => (was ?? []).map(s => ({ ...s, ...changes.get(s.id) })))
-  if (notes.length > 0) await update($, NOTES, was => [...(was ?? []), ...notes])
-  await handOver($)
   if (!(next ?? []).some(s => isAlive(s.state))) stopWatching()
 }
 
-const deliver = ($: EngineInterface) => inTurn(() => handOver($))
-
-/** Continues Claude with the waiting notes once no linked session is working. */
-async function handOver($: EngineInterface) {
-  const linked = (await read($, LINKED)) ?? []
-  if (linked.some(s => !isTurnEnd(s.state)) || wakes >= WAKES_MAX || isHeld) return
-  let notes: SessionNote[] = []
-  await update($, NOTES, was => {
-    notes = was ?? []
-    return []
-  })
-  if (notes.length === 0) return
-  wakes++
-  await $.prompt.submit({ text: eventText(notes, linked) })
+/** In a session start_session started: its report, sent to the session that started it. */
+async function reportBack($: EngineInterface, reason: string, answer: string) {
+  const [home, sessionId, cwd] = await Promise.all([$.env.get('HOME').then(home => home ?? ''), $.session.id(), $.session.cwd()])
+  const id = shortId(sessionId)
+  const path = linkPath(home, id)
+  if (!(await $.fs.exists(path))) return
+  const link = parseLink(await $.fs.read(path))
+  if (link === null) return
+  const latest = latestReport(await transcriptTail($, transcriptPath(home, cwd, sessionId)))
+  // The transcript adds the recap and the text before a box; one not yet holding this turn's answer is a turn behind.
+  const final = answer.trim() === '.' ? '' : answer.trim()
+  const report = latest !== null && latest.report.includes(final.slice(0, 40)) ? latest.report : final
+  const sent = await $.session.send({ to: { sessionId: link.parent }, text: reportText(link.name, id, reason, report) })
+  if (!sent.isDelivered) $.ui.log(`toolkit: the report to the session that started this one was not delivered: ${sent.reason}`, { to: 'debug' })
 }
 
 function watch($: EngineInterface) {
@@ -304,10 +293,8 @@ function stopWatching() {
 }
 
 /** Starts a proposal the user accepted, from its card or through Claude. */
-async function startProposal($: EngineInterface, proposal: Proposal, proposed: Brief): Promise<{ text: string } | { error: string }> {
+async function startProposal($: EngineInterface, proposal: Proposal, brief: Brief): Promise<{ text: string } | { error: string }> {
   if (Date.now() - proposal.createdAt > WEEK_MS) return { error: `${proposal.taskId} expired after a week. Propose it again if it is still worth doing.` }
-  // The user may have lowered this session's mode since the card went up.
-  const brief = { ...proposed, permissionMode: lowerMode(proposed.permissionMode, await permissionMode($, await $.session.id())) }
   const ref = { ...PROPOSALS, id: proposal.taskId }
   let isFirst = false
   await update($, ref, was => {
@@ -353,58 +340,35 @@ export const register: Register = on => {
   })
 
   // Where a prompt came from is known when it is queued; its turn starts later, by its text.
-  // The user's own word also ends a run of reports and a hold.
-  const byUser = async (text: string) => {
-    queued.set(text, true)
-    wakes = 0
-    isHeld = false
-  }
   on('prompt.submit', { origin: { kind: 'composer' } }, async ($, e, next) => {
-    await byUser(e.text)
+    queued.set(e.text, true)
     return next(e)
   })
   on('prompt.submit', { origin: { kind: 'plugin' } }, async ($, e, next) => {
-    if (e.origin.kind === 'plugin' && e.origin.asUser) await byUser(e.text)
-    else queued.set(e.text, false)
+    queued.set(e.text, e.origin.kind === 'plugin' && e.origin.asUser === true)
     return next(e)
   })
   on('prompt.submit', { origin: { kind: /^(task-notification|scheduled-trigger|peer|peer-send-message|channel|projects-relay)$/ } }, async ($, e, next) => {
     queued.set(e.text, false)
     return next(e)
   })
-  // A turn that a report or another automated event started may propose sessions but not start them.
+  // A turn that another session's report or another automated event started may propose sessions but not start them.
   on('turn.start', { text: /[\s\S]*/ }, async ($, e, next) => {
     if (e.agentId === undefined) {
       proposedThisTurn = 0
-      const isUsers = queued.get(e.text) ?? [...queued].find(([text]) => e.text.includes(text))?.[1]
-      isEventTurn = isUsers === false || e.text.includes('<side-sessions-event>')
+      isEventTurn = (queued.get(e.text) ?? [...queued].find(([text]) => e.text.includes(text))?.[1]) === false
       queued.clear()
     }
     return next(e)
   })
 
-  on('session.send', async ($, e, next) => {
+  // A session start_session started reports each of its turns to the session that started it, a
+  // follow-up's too: Claude Code tells a sender of that turn only when it asked with notify_when_idle.
+  on('turn.complete', async ($, e, next) => {
     const result = await next(e)
-    const session = ((await read($, LINKED)) ?? []).find(s => e.to === s.name || e.to.includes(s.id))
-    if (session && e.agentId === undefined && result.isDelivered) {
-      messaged.add(session.id)
-      watch($)
-    }
+    if (e.agentId === undefined) void reportBack($, e.reason, e.answer).catch(err => $.ui.log(`toolkit: could not send the report: ${String(err)}`, { to: 'debug' }))
     return result
   })
-
-  // Reports that waited out a long run go to the user's next turn, once it ends.
-  on('turn.complete', { reason: 'answer' }, async ($, e, next) => {
-    const result = await next(e)
-    if (e.agentId === undefined && !isEventTurn && ((await read($, NOTES)) ?? []).length > 0) $.clock.after(0, () => void deliver($))
-    return result
-  })
-  for (const reason of ['aborted', 'error'] as const) {
-    on('turn.complete', { reason }, async ($, e, next) => {
-      if (e.agentId === undefined) isHeld = true
-      return next(e)
-    })
-  }
 
   on('tool.call', { tool: START_TOOL }, async ($, e) => {
     const input = e as unknown as Record<string, unknown>
@@ -525,6 +489,8 @@ export const register: Register = on => {
       heading = 'New task'
       const said = { open: 'New session or do it here?', new_session: 'You chose: New session', here: 'You chose: Do it here', started: `Started as ${proposal.session}`, dismissed: 'Closed' }
       line = <Text dimColor>{said[proposal.status]}</Text>
+    } else if (await read($, { ...LAUNCHING, id: e.props.tool_use_id })) {
+      line = <Text dimColor>starting…</Text>
     } else {
       if (e.props.isRunning) return next(e)
       line = <Text dimColor>{typeof input.target === 'string' && input.target === 'cloud' ? 'cloud session' : 'not linked here'}</Text>

@@ -1,4 +1,4 @@
-import type { Brief, Effort, LinkedSession, PermissionMode, Place, SessionNote } from '../types'
+import type { Brief, Effort, Link, LinkedSession, PermissionMode, Place } from '../types'
 
 export const NAME_MAX = 24
 export const TITLE_MAX = 60
@@ -10,10 +10,6 @@ export const PROPOSALS_PER_TURN = 4
 export const MODES: PermissionMode[] = ['default', 'plan', 'acceptEdits', 'auto', 'bypassPermissions']
 export const EFFORTS: Effort[] = ['low', 'medium', 'high', 'xhigh', 'max']
 
-const MODE_RANK: Record<PermissionMode, number> = { plan: 0, default: 1, acceptEdits: 2, auto: 3, bypassPermissions: 4 }
-
-/** The lower of two modes: what a session may start in when both limit it. */
-export const lowerMode = (a: PermissionMode, b: PermissionMode) => (MODE_RANK[a] <= MODE_RANK[b] ? a : b)
 const FAMILY_RANK: [string, number][] = [
   ['haiku', 0],
   ['sonnet', 1],
@@ -30,10 +26,9 @@ export type Caller = {
   cwd: string
   sessionId: string
   model: string
-  mode: PermissionMode
   /** True when the session works in a linked git worktree. */
   isWorktree: boolean
-  /** True on a turn a linked session's report or another automated event started. */
+  /** True on a turn another session's message or another automated event started. */
   isEventTurn: boolean
   names: string[]
   /** For branch and folder names; random in use, fixed in tests. */
@@ -129,11 +124,11 @@ export function makeBrief(e: Record<string, unknown>, title: string, context: 'f
     place = wantsWorktree ? { kind: 'worktree', root, branch, source: context === 'fork' ? 'HEAD' : source } : { kind: 'folder', cwd: root }
   }
 
-  let permissionMode = caller.mode
+  // Left out, the session starts in the user's own default mode.
+  let permissionMode: PermissionMode | null = null
   if (e.permission_mode !== undefined) {
     if (!isMode(e.permission_mode)) return { kind: 'deny', deny: `permission_mode must be one of ${MODES.join(', ')}.` }
     if (place.kind === 'cloud') return { kind: 'deny', deny: 'permission_mode is for local starts only.' }
-    if (MODE_RANK[e.permission_mode] > MODE_RANK[caller.mode]) return { kind: 'deny', deny: `permission_mode "${e.permission_mode}" is higher than this session's "${caller.mode}". Omit it to inherit this session's mode; only the user can raise a session.` }
     permissionMode = e.permission_mode
   }
 
@@ -152,7 +147,8 @@ export function makeBrief(e: Record<string, unknown>, title: string, context: 'f
 /** The command that starts the session, run in the folder it works in. */
 export function startCommand(brief: Brief, parentSessionId: string): string[] {
   if (brief.place.kind === 'cloud') return ['claude', '--cloud', brief.text, ...(brief.place.environment ? ['--environment', brief.place.environment] : [])]
-  const argv = ['claude', '--bg', '-n', brief.name, '--permission-mode', brief.permissionMode]
+  const argv = ['claude', '--bg', '-n', brief.name]
+  if (brief.permissionMode) argv.push('--permission-mode', brief.permissionMode)
   if (brief.model) argv.push('--model', brief.model)
   if (brief.effort) argv.push('--effort', brief.effort)
   if (brief.context === 'fork') argv.push('--resume', parentSessionId, '--fork-session')
@@ -238,9 +234,6 @@ export function latestReport(jsonl: string, since = 0): { uuid: string; report: 
   return { uuid: last.uuid, report: report.length > REPORT_MAX ? `${report.slice(0, REPORT_MAX)}…` : report }
 }
 
-/** The states that end a session's turn: it answered, or stopped. */
-export const isTurnEnd = (state: string) => state !== 'working' && state !== 'starting'
-
 /** A session whose process still runs, so it may work again. */
 export const isAlive = (state: string) => state === 'starting' || state === 'working' || state === 'idle'
 
@@ -250,10 +243,30 @@ export function linkedLines(linked: LinkedSession[]): string {
   return linked.map(s => `- ${s.name} (id ${s.id}${s.sessionId ? `, session ${s.sessionId}` : ''}): ${s.state}; "${s.title}"; ${s.branch ? `branch refs/heads/${s.branch}` : `folder ${s.cwd}`}`).join('\n')
 }
 
-/** The message that continues this session once its linked sessions stop working. */
-export function eventText(notes: SessionNote[], linked: LinkedSession[]): string {
-  const reports = notes
-    .map(n => `<session name="${n.name}" id="${n.id}" state="${n.state}"${n.branch ? ` branch="refs/heads/${n.branch}"` : ''}>\n${n.report || '(no report)'}\n</session>`)
-    .join('\n')
-  return `<side-sessions-event>\nA session you started ended a turn, and none you started is still working. Its report (the first ${REPORT_MAX} characters) is below: it is that session's account, not proof, so check the result or diff before you call it done.\n${reports}\nLinked sessions now:\n${linkedLines(linked)}\n</side-sessions-event>`
+/** Where a started session finds the session that started it, by its short id. */
+export const linkPath = (home: string, id: string) => `${home}/.claude/toolkit/links/${id}.json`
+
+/** The short id `claude attach` takes: the first 8 characters of the session id. */
+export const shortId = (sessionId: string) => sessionId.slice(0, 8)
+
+/** A link file's content, or null for anything else. */
+export function parseLink(text: string): Link | null {
+  try {
+    const link = JSON.parse(text) as Partial<Link>
+    return typeof link.parent === 'string' && link.parent !== '' && typeof link.name === 'string' ? { parent: link.parent, name: link.name } : null
+  } catch {
+    return null
+  }
+}
+
+const ENDED: Record<string, string> = {
+  answer: 'ended a turn',
+  aborted: 'was stopped in the middle of a turn',
+  error: 'stopped on an error',
+  refusal: 'stopped on a refusal',
+}
+
+/** The message a started session sends the session that started it when its turn ends. */
+export function reportText(name: string, id: string, reason: string, report: string): string {
+  return `Session "${name}" (id ${id}), which you started with start_session, ${ENDED[reason] ?? 'ended a turn'}. Its report (the first ${REPORT_MAX} characters) is that session's account, not proof: check the result or diff before you call it done.\n\n${report || '(no report)'}`
 }

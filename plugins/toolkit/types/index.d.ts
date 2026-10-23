@@ -41,7 +41,8 @@ export type Brief = {
   place: Place
   model: string | null
   effort: Effort | null
-  permissionMode: PermissionMode
+  /** The mode Claude asked for; null starts the session in the user's own default mode. */
+  permissionMode: PermissionMode | null
 }
 
 /**
@@ -60,8 +61,6 @@ export type LinkedSession = {
   cwd: string
   branch: string | null
   state: SessionState
-  /** The uuid of the last reply already reported back, so each turn end is told once. */
-  reported: string | null
   startedAt: number
   /** The start_session call that started it, so that call's row shows its state. */
   callId: string
@@ -80,8 +79,8 @@ export type Proposal = {
   createdAt: number
 }
 
-/** A turn end of a linked session, waiting to be told to this one. */
-export type SessionNote = { name: string; id: string; state: SessionState; branch: string | null; report: string }
+/** What a started session reads from its link file: the session id that started it, and its own name there. */
+export type Link = { parent: string; name: string }
 
 declare module 'claude-code' {
   interface PluginState {
@@ -101,10 +100,10 @@ declare module 'claude-code' {
       planIsOpen: boolean
       /** The sessions this one started, oldest first. */
       linked: LinkedSession[]
+      /** Whether a start_session call is still starting its session, by the call's tool_use_id (a proposal's task id for a card's start). */
+      launching: StateFamily<boolean>
       /** start_session's cards, by task id. */
       proposals: StateFamily<Proposal | null>
-      /** Turn ends of linked sessions not yet told to Claude. */
-      notes: SessionNote[]
     }
   }
 }

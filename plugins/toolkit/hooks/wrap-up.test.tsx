@@ -84,11 +84,13 @@ test('a button with hidden text behind its label is refused', async ($, on) => {
   expect(call.deny).toContain('sends only the label')
 })
 
-test('a call with nothing pending is accepted and says no box is shown', async ($, on) => {
+test('a call with nothing pending is accepted and asks for the full answer, not a period', async ($, on) => {
   const host = engine(on)
   const call = await $.tool.call({ tool: TOOL, recap: RECAP, blocked: true })
   expect(call.deny).toBeUndefined()
-  expect(call.result).toContain('no box is shown')
+  expect(call.result).toContain('nothing is shown')
+  expect(call.result).toContain('write your full answer')
+  expect(call.result).not.toContain('write only a single period')
   expect(host.notified).toEqual([])
 })
 

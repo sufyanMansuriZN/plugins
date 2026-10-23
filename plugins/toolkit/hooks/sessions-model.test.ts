@@ -1,13 +1,12 @@
 import { expect, test } from 'claude-code/testing'
 
-import { backgroundedId, eventText, latestReport, lowerMode, parseAgents, planStart, sessionName, startCommand } from './sessions-model'
+import { backgroundedId, latestReport, linkPath, parseAgents, parseLink, planStart, reportText, sessionName, shortId, startCommand } from './sessions-model'
 import type { Caller } from './sessions-model'
 
 const caller = (over: Partial<Caller> = {}): Caller => ({
   cwd: '/repo',
   sessionId: 'parent-uuid',
   model: 'claude-opus-5-5',
-  mode: 'acceptEdits',
   isWorktree: false,
   isEventTurn: false,
   names: [],
@@ -17,29 +16,22 @@ const caller = (over: Partial<Caller> = {}): Caller => ({
 const BACKGROUND = 'The parser drops blank lines between list items; we agreed to keep the old public API and fix it in place.'
 const asked = { initiation: 'user_asked', title: 'Fix blank lines', prompt: 'Fix `parse()` in `src/parse.ts`; done when its tests pass.', background: BACKGROUND }
 
-test('a user_asked start inherits this session\'s mode and works in this folder', () => {
+test('a user_asked start takes the user\'s default mode and works in this folder', () => {
   const plan = planStart(asked, caller())
   expect(plan.kind).toBe('start')
   if (plan.kind !== 'start') return
-  expect(plan.brief.permissionMode).toBe('acceptEdits')
+  expect(plan.brief.permissionMode).toBe(null)
   expect(plan.brief.place).toEqual({ kind: 'folder', cwd: '/repo' })
   expect(plan.brief.name).toBe('fix-blank-lines')
   expect(plan.brief.text).toBe(`${BACKGROUND}\n\n## Your task\n${asked.prompt}`)
+  expect(startCommand(plan.brief, 'parent-uuid')).not.toContain('--permission-mode')
 })
 
-test('a mode above this session\'s is refused, and an unknown session mode reads as default', () => {
-  expect(planStart({ ...asked, permission_mode: 'auto' }, caller()).kind).toBe('deny')
-  expect(planStart({ ...asked, permission_mode: 'bypassPermissions' }, caller({ mode: 'default' })).kind).toBe('deny')
-  const lower = planStart({ ...asked, permission_mode: 'plan' }, caller())
-  expect(lower.kind === 'start' && lower.brief.permissionMode).toBe('plan')
-})
-
-test('plan is the lowest mode, so a plan session cannot start one that edits', () => {
-  expect(planStart({ ...asked, permission_mode: 'default' }, caller({ mode: 'plan' })).kind).toBe('deny')
-  const inherited = planStart(asked, caller({ mode: 'plan' }))
-  expect(inherited.kind === 'start' && inherited.brief.permissionMode).toBe('plan')
-  expect(lowerMode('auto', 'default')).toBe('default')
-  expect(lowerMode('plan', 'acceptEdits')).toBe('plan')
+test('any mode Claude asks for is passed on, and an unknown one refused', () => {
+  const auto = planStart({ ...asked, permission_mode: 'bypassPermissions' }, caller())
+  expect(auto.kind === 'start' && auto.brief.permissionMode).toBe('bypassPermissions')
+  expect(planStart({ ...asked, permission_mode: 'yolo' }, caller()).kind).toBe('deny')
+  expect(planStart({ ...asked, target: 'cloud', permission_mode: 'plan' }, caller()).kind).toBe('deny')
 })
 
 test('a fresh start needs a brief and enough background', () => {
@@ -99,7 +91,7 @@ test('names stay unique handles', () => {
 })
 
 test('the start command passes the mode and the brief after --', () => {
-  const plan = planStart({ ...asked, context: 'fork', prompt: '-starts with a dash' }, caller())
+  const plan = planStart({ ...asked, context: 'fork', prompt: '-starts with a dash', permission_mode: 'acceptEdits' }, caller())
   if (plan.kind !== 'start') throw new Error(plan.kind)
   expect(startCommand(plan.brief, 'parent-uuid')).toEqual(['claude', '--bg', '-n', 'fix-blank-lines', '--permission-mode', 'acceptEdits', '--resume', 'parent-uuid', '--fork-session', '--', '-starts with a dash'])
 })
@@ -155,11 +147,19 @@ test('a fork reports nothing until it answers, though its transcript opens with 
   expect(latestReport(answered.join('\n'), startedAt)).toEqual({ uuid: 'f2', report: 'PELICAN' })
 })
 
-test('the event names each report and the linked sessions', () => {
-  const text = eventText([{ name: 'fix', id: 'abc123', state: 'done', branch: 'claude/fix-a1', report: 'Done.' }], [
-    { name: 'fix', title: 'Fix', id: 'abc123', sessionId: 'uuid', cwd: '/repo', branch: 'claude/fix-a1', state: 'done', reported: 'a4', startedAt: 0, callId: 't' },
-  ])
-  expect(text.startsWith('<side-sessions-event>')).toBe(true)
-  expect(text).toContain('<session name="fix" id="abc123" state="done" branch="refs/heads/claude/fix-a1">\nDone.\n</session>')
-  expect(text).toContain('- fix (id abc123, session uuid): done; "Fix"; branch refs/heads/claude/fix-a1')
+test('a started session finds the session that started it by its short id', () => {
+  expect(shortId('ce30fbe1-9987-4a7a-ac71-6c7c89f2d79e')).toBe('ce30fbe1')
+  expect(linkPath('/home/me', 'ce30fbe1')).toBe('/home/me/.claude/toolkit/links/ce30fbe1.json')
+  expect(parseLink(JSON.stringify({ parent: 'parent-uuid', name: 'fix' }))).toEqual({ parent: 'parent-uuid', name: 'fix' })
+  expect(parseLink('{"name":"fix"}')).toBe(null)
+  expect(parseLink('not json')).toBe(null)
+})
+
+test('the report names the session and how its turn ended', () => {
+  const text = reportText('fix', 'abc12345', 'answer', 'Done.')
+  expect(text).toContain('Session "fix" (id abc12345), which you started with start_session, ended a turn.')
+  expect(text).toContain('not proof')
+  expect(text.endsWith('\n\nDone.')).toBe(true)
+  expect(reportText('fix', 'abc12345', 'aborted', '')).toContain('was stopped in the middle of a turn')
+  expect(reportText('fix', 'abc12345', 'error', '').endsWith('(no report)')).toBe(true)
 })

@@ -144,13 +144,13 @@ test('once Claude stops, open steps stay above the prompt and a finished list go
     })
     const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
     await ui.unmount()
-    return { first: texts.slice(0, 6).join(''), texts }
+    return { first: texts.slice(0, 7).join(''), texts }
   }
   expect((await band()).texts).toEqual(['engine: AbovePrompt'])
   await $.tool.call({ tool: TOOL, items: PLAN })
   await $.tool.call({ tool: TOOL, advance: true })
   const open = await band()
-  expect(open.first).toBe('3 tasks (1 done, 2 open)')
+  expect(open.first).toBe('3 tasks (1 done, 1 in progress, 1 open)')
   expect(open.texts.at(-1)).toBe('engine: AbovePrompt')
   expect((await band({ isWorking: true })).texts).toEqual(['engine: AbovePrompt'])
   expect((await band({ hasSurvey: true })).texts).toEqual(['engine: AbovePrompt'])
@@ -224,50 +224,39 @@ test('above the prompt a long list folds to the step in progress, one row under 
     .map(found => found.text.trim())
     .filter(words => /^(Step|…|show)/.test(words))
   await ui.unmount()
-  expect(texts).toEqual(['Step 8', '… show all'])
+  expect(texts).toEqual(['Step 8', 'Step 9', 'Step 1', 'Step 2', '… +5 completed'])
 })
 
-test('above the prompt "… show all" opens the whole list and "show less" folds it, for later draws too', async ($, on) => {
+test('above the prompt a long list shows open steps first and folds the finished ones into one row', async ($, on) => {
   engine(on)
   await $.tool.call({ tool: TOOL, items: LONG })
-  const mount = () =>
-    $.ui.mount({
-      plugin: 'toolkit',
-      surface: 'terminal',
-      component: 'AbovePrompt',
-      props: { hasSurvey: false, isWorking: false, maxRows: 20, bodyColumns: 100, scroll: { offset: 0, bodyRows: 20 }, view: {} },
-    })
-  const shown = async (ui: Awaited<ReturnType<typeof mount>>) =>
-    (await ui.findAll({})).filter(found => found.type === 'Text' || found.type === 'Button').map(found => found.text.trim()).filter(words => /^(Step|…|show)/.test(words))
-  const ui = await mount()
-  expect(await shown(ui)).toEqual(['Step 8', '… show all'])
-  await ui.press({ key: 'toggle' })
-  expect(await shown(ui)).toEqual([...LONG.map(step => step.content), 'show less'])
+  const ui = await $.ui.mount({
+    plugin: 'toolkit',
+    surface: 'terminal',
+    component: 'AbovePrompt',
+    props: { hasSurvey: false, isWorking: false, maxRows: 20, bodyColumns: 100, scroll: { offset: 0, bodyRows: 20 }, view: {} },
+  })
+  const texts = (await ui.findAll({}))
+    .filter(found => found.type === 'Text' || found.type === 'Button')
+    .map(found => found.text.trim())
+    .filter(words => /^(Step|…)/.test(words))
   await ui.unmount()
-  const again = await mount()
-  expect(await shown(again)).toEqual([...LONG.map(step => step.content), 'show less'])
-  await again.press({ key: 'toggle' })
-  expect(await shown(again)).toEqual(['Step 8', '… show all'])
-  await again.unmount()
+  expect(texts).toEqual(['Step 8', 'Step 9', 'Step 1', 'Step 2', 'Step 3', '… +4 completed'])
 })
 
-test('a short list folds too, and "show less" folds it back', async ($, on) => {
+test('above the prompt a short list shows every step with no fold row', async ($, on) => {
   engine(on)
   await $.tool.call({ tool: TOOL, items: PLAN })
-  const mount = () =>
-    $.ui.mount({
-      plugin: 'toolkit',
-      surface: 'terminal',
-      component: 'AbovePrompt',
-      props: { hasSurvey: false, isWorking: false, maxRows: 20, bodyColumns: 100, scroll: { offset: 0, bodyRows: 20 }, view: {} },
-    })
-  const shown = async (ui: Awaited<ReturnType<typeof mount>>) =>
-    (await ui.findAll({})).filter(found => found.type === 'Text' || found.type === 'Button').map(found => found.text.trim()).filter(words => /^(Read|Fix|Run|…|show)/.test(words))
-  const ui = await mount()
-  expect(await shown(ui)).toEqual(['Read the parser', '… show all'])
-  await ui.press({ key: 'toggle' })
-  expect(await shown(ui)).toEqual(['Read the parser', 'Fix blank lines', 'Run the tests', 'show less'])
-  await ui.press({ key: 'toggle' })
-  expect(await shown(ui)).toEqual(['Read the parser', '… show all'])
+  const ui = await $.ui.mount({
+    plugin: 'toolkit',
+    surface: 'terminal',
+    component: 'AbovePrompt',
+    props: { hasSurvey: false, isWorking: false, maxRows: 20, bodyColumns: 100, scroll: { offset: 0, bodyRows: 20 }, view: {} },
+  })
+  const texts = (await ui.findAll({}))
+    .filter(found => found.type === 'Text' || found.type === 'Button')
+    .map(found => found.text.trim())
+    .filter(words => /^(Read|Fix|Run|…)/.test(words))
   await ui.unmount()
+  expect(texts).toEqual(['Read the parser', 'Fix blank lines', 'Run the tests'])
 })

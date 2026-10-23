@@ -12,6 +12,8 @@ const STEPS_MAX = 12
 const STATUSES: PlanStatus[] = ['pending', 'in_progress', 'completed']
 // A long list shows five steps and a "… +N more" row, as Claude Code cuts its own lists short.
 const STEP_ROWS = 6
+// Above the prompt Claude Code's own list shows five steps, then one row for the finished steps it leaves out.
+const BAND_STEPS = 5
 // Above the prompt the list leaves room for its count and a status bar's row.
 const BAND_ROWS = 2
 
@@ -169,41 +171,42 @@ export function drawPlan(elements: Elements['terminal'], plan: PlanStep[], toggl
 }
 
 /**
- * The list above the prompt once Claude stops with steps still open. Folded, it is the count and the step in
- * progress; "… show all" opens it to at most `rows` rows besides the count.
+ * The list above the prompt once Claude stops with steps still open, laid out as Claude Code lays out its own:
+ * a count, the open steps (the one in progress first), then the finished ones, with the rest folded into one row.
  */
-export function drawOpenPlan(elements: Elements['terminal'], plan: PlanStep[], rows: number, toggle: Toggle) {
+export function drawOpenPlan(elements: Elements['terminal'], plan: PlanStep[], rows: number) {
   const { Box, Text } = elements
   const done = plan.filter(step => step.status === 'completed').length
+  const progress = plan.filter(step => step.status === 'in_progress').length
+  const open = plan.length - done - progress
   const header = (
     <Box flexDirection="row">
       <Text dimColor weight="bold">{String(plan.length)}</Text>
       <Text dimColor>{' tasks ('}</Text>
       <Text dimColor weight="bold">{String(done)}</Text>
       <Text dimColor>{' done, '}</Text>
-      <Text dimColor weight="bold">{String(plan.length - done)}</Text>
+      {progress > 0 ? <Text dimColor>{`${progress} in progress, `}</Text> : null}
+      <Text dimColor weight="bold">{String(open)}</Text>
       <Text dimColor>{' open)'}</Text>
     </Box>
   )
-  if (!toggle.isOpen) {
-    const current = plan.find(step => step.status === 'in_progress') ?? plan.find(step => step.status === 'pending')
-    return (
-      <Box flexDirection="column" paddingLeft={2}>
-        {header}
-        {current ? (
-          <Box flexDirection="row">
-            <Text color={MARKS[current.status].color}>{`${MARKS[current.status].mark} `}</Text>
-            <Text weight="bold">{current.content}</Text>
-            {toggleLink(elements, '… show all', toggle)}
-          </Box>
-        ) : null}
-      </Box>
-    )
-  }
+  const current = plan.map((step, index): [number, PlanStep] => [index, step])
+  const ordered = [...current.filter(([, step]) => step.status === 'in_progress'), ...current.filter(([, step]) => step.status === 'pending'), ...current.filter(([, step]) => step.status === 'completed')]
+  const shown = ordered.slice(0, rows)
+  const hidden = ordered.length - shown.length
+  const hiddenLabel = ordered.slice(rows).some(([, step]) => step.status !== 'completed') ? 'more' : 'completed'
   return (
     <Box flexDirection="column" paddingLeft={2}>
       {header}
-      {drawSteps(elements, plan, rows, toggle)}
+      {shown.map(([index, step]) => (
+        <Box key={`step:${index}`} flexDirection="row">
+          <Text color={MARKS[step.status].color}>{`${MARKS[step.status].mark} `}</Text>
+          <Text weight={step.status === 'in_progress' ? 'bold' : undefined} dimColor={step.status === 'completed'}>
+            {step.content}
+          </Text>
+        </Box>
+      ))}
+      {hidden > 0 ? <Text dimColor>{` … +${hidden} ${hiddenLabel}`}</Text> : null}
     </Box>
   )
 }
@@ -230,14 +233,12 @@ export const register: Register = on => {
   on('ui.render', { surface: 'terminal', component: 'AbovePrompt' }, async ($, e, next) => {
     const plan = await read($, PLAN)
     if (e.props.hasSurvey || e.props.isWorking || !plan || isDone(plan.steps) || (await $.session.turns()) < plan.prompts) return next(e)
-    const isOpen = (await read($, IS_OPEN)) === true
     const below = await next(e)
     const elements = $.ui.resolve(e)
     const { Box } = elements
-    const toggle = { isOpen, onPress: () => update($, IS_OPEN, was => !was) }
     return (
       <Box flexDirection="column">
-        {drawOpenPlan(elements, plan.steps, Math.min(STEP_ROWS, e.props.maxRows - BAND_ROWS), toggle)}
+        {drawOpenPlan(elements, plan.steps, Math.min(BAND_STEPS, e.props.maxRows - BAND_ROWS))}
         {below}
       </Box>
     )

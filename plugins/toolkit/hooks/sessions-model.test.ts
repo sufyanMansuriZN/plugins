@@ -113,8 +113,15 @@ test('a session that shares a folder turns the background guard off for itself o
 test('a hand-off needs a title and a plan, and a turn an event started cannot hand off', () => {
   expect('deny' in planHandOff({ remaining_plan: 'Finish it.' }, caller())).toBe(true)
   expect('deny' in planHandOff({ title: 'Fix', remaining_plan: ' ' }, caller())).toBe(true)
-  expect('deny' in planHandOff({ title: 'x'.repeat(61), remaining_plan: 'Finish it.' }, caller())).toBe(true)
+  expect('deny' in planHandOff({ title: 'x'.repeat(41), remaining_plan: 'Finish it.' }, caller())).toBe(true)
   expect('deny' in planHandOff({ title: 'Fix', remaining_plan: 'Finish it.' }, caller({ isEventTurn: true }))).toBe(true)
+})
+
+test('an explicit session name must be a handle of up to 24 characters', () => {
+  const named = (name: string) => planStart({ ...asked, name }, caller())
+  expect(named('cli-cleanup')).toMatchObject({ kind: 'start', brief: { name: 'cli-cleanup' } })
+  expect(named('Cli Cleanup')).toMatchObject({ kind: 'deny' })
+  expect(named('x'.repeat(25))).toMatchObject({ kind: 'deny' })
 })
 
 test('names stay unique handles', () => {

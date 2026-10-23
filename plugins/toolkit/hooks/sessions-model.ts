@@ -1,7 +1,9 @@
 import type { Brief, Effort, Link, LinkedSession, PermissionMode, Place } from '../types'
 
 export const NAME_MAX = 24
+const NAME_PATTERN = new RegExp(`^[a-z0-9-]{1,${NAME_MAX}}$`)
 export const TITLE_MAX = 60
+export const HAND_OFF_TITLE_MAX = 40
 export const BACKGROUND_MIN = 80
 export const REPORT_MAX = 400
 // Desktop's limit is three a turn, and four when a plan splits into sessions; the rule says which.
@@ -107,7 +109,9 @@ export function makeBrief(e: Record<string, unknown>, title: string, context: 'f
   if (isElsewhere && !isUserAsked) return { kind: 'deny', deny: 'Another place (cwd or target "cloud") is only for a session the user asked for (initiation "user_asked").' }
   if (e.use_worktree !== undefined && context === 'fork') return { kind: 'deny', deny: 'use_worktree goes with "fresh" only: a fork gets a fresh worktree when this session has one.' }
 
-  const name = sessionName(text(e.name) ?? title, caller.names)
+  const givenName = text(e.name)
+  if (givenName !== null && !NAME_PATTERN.test(givenName)) return { kind: 'deny', deny: `name must be up to ${NAME_MAX} characters, only a-z, 0-9 and hyphens.` }
+  const name = sessionName(givenName ?? title, caller.names)
   const branchSlug = sessionName(text(e.branch_name) ?? name, [])
   const branch = `claude/${branchSlug}-${caller.suffix}`
   const source = text(e.source_branch)
@@ -154,8 +158,8 @@ export function planHandOff(input: unknown, caller: Caller): Brief | { kind: 'de
   const e = (input ?? {}) as Record<string, unknown>
   if (caller.isEventTurn) return { kind: 'deny', deny: 'A hand-off is for a new message from the user, and this turn was started by another session\'s message or an automated event.' }
   const title = text(e.title)
-  if (title === null) return { kind: 'deny', deny: 'title is required: under 60 characters naming the task being moved.' }
-  if (title.length > TITLE_MAX) return { kind: 'deny', deny: `title must be under ${TITLE_MAX} characters.` }
+  if (title === null) return { kind: 'deny', deny: `title is required: under ${HAND_OFF_TITLE_MAX} characters naming the task being moved.` }
+  if (title.length > HAND_OFF_TITLE_MAX) return { kind: 'deny', deny: `title must be under ${HAND_OFF_TITLE_MAX} characters.` }
   const remainingPlan = text(e.remaining_plan)
   if (remainingPlan === null) return { kind: 'deny', deny: 'remaining_plan is required: what is left to do, the files, and what done looks like.' }
   return makeBrief({ prompt: handOffMessage(title, remainingPlan), cwd: e.cwd }, title, 'fork', caller, true)

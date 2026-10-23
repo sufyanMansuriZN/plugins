@@ -127,7 +127,7 @@ const HAND_OFF_DESCRIPTION = `Move the task you are in the middle of into its ow
 const HAND_OFF_SCHEMA = {
   type: 'object',
   properties: {
-    title: { type: 'string', description: 'Under 60 chars; names the task being moved.' },
+    title: { type: 'string', description: 'Under 40 chars; names the task being moved.' },
     remaining_plan: { type: 'string', description: 'What is left to do: steps, files, what done looks like.' },
     cwd: {
       type: 'string',

@@ -1,10 +1,11 @@
 import { read, update } from 'claude-code'
-import type { Elements, Register } from 'claude-code'
+import type { Elements, EngineInterface, Register } from 'claude-code'
 
-import type { WrapUp, WrapUpQuestion } from '../types'
+import type { WrapUp, WrapUpCall, WrapUpQuestion } from '../types'
 
 const NAME = 'wrap_up'
 export const WRAP_UP_TOOL = `mcp__toolkit__${NAME}`
+const PENDING = { plugin: 'toolkit', key: 'wrapUpPending' } as const
 
 const LABEL_MAX = 24
 
@@ -23,7 +24,7 @@ export const APP_ACTIONS: Record<AppAction, string> = {
 
 const DESCRIPTION = `Fill the "next step" box the terminal shows at the end of your turn: a two-or-three-sentence recap and, when this turn leaves the user a decision to make or a step to take, one question and buttons that answer it; a turn with nothing pending ends with the recap alone, and the terminal then draws no box. Call it once in EVERY turn in which you kept a task list, changed files, ran commands, or completed multi-step work, as the very last thing in the turn. Skip it for short answers, pure conversation, or a brief read-and-explain turn — a reply that names a follow-up is not brief: ask or propose it, and call this.
 
-The recap never replaces your answer to the user. With a question: write your answer in full first, as ordinary text, then call this, and after it write only a single period (.), nothing else: the box is drawn where the call is, so it sits at the end of your reply where the user looks, and the terminal hides the period. Your reply above the box is visible to the user; never write it again. With the recap alone: nothing is drawn, so call this first and write your full answer after it, never a lone period. Ask the box's question only in the box, never also in your text.
+The recap never replaces your answer to the user. With a question: write your answer in full first, as ordinary text, then call this, and after it write only a single period (.), nothing else: the terminal draws the box after your whole reply, where the user looks, and hides the period. Your reply above the box is visible to the user; never write it again. With the recap alone: nothing is drawn, so call this first and write your full answer after it, never a lone period. Ask the box's question only in the box, never also in your text.
 
 Fields — recap and ask are said to the user, in the second person; a reply button's label is the user's whole answer back to you:
 - recap: what is now true or changed, then where it stands, including what is not done or not verified (for example: nothing committed, or not checked in the app). Two or three short sentences, about 40 words / 300 characters, in the project's own words. No recommendation here.
@@ -153,6 +154,23 @@ export function drawWrapUp(elements: Elements['terminal'], recap: string, questi
   )
 }
 
+/** The box with its buttons, live: a press sends its label as the user, once. */
+async function drawCall($: EngineInterface, elements: Elements['terminal'], { toolUseId, recap, question }: WrapUpCall) {
+  const answerRef = { plugin: 'toolkit', key: 'wrapUpAnswer', id: toolUseId } as const
+  const answered = (await read($, answerRef)) ?? null
+  const press = async (answer: string) => {
+    let isFirst = false
+    await update($, answerRef, was => {
+      isFirst = was == null
+      return was ?? answer
+    })
+    if (!isFirst) return
+    // The prompt runs as a turn of its own once the session is idle, so the press does not wait for it.
+    void $.prompt.submit({ text: answer, asUser: true }).catch(err => $.ui.toast(`toolkit: could not send "${answer}": ${String(err)}`))
+  }
+  return drawWrapUp(elements, recap, question, answered, answer => void press(answer))
+}
+
 export const register: Register = on => {
   // Desktop draws its own wrap_up, and a -p run has no one to press a button.
   on('session.start', { surface: 'terminal', isInteractive: true }, async ($, e, next) => {
@@ -165,12 +183,20 @@ export const register: Register = on => {
     const { question } = wrapUp
     if (question === null) return { result: 'Nothing waits on the user, so nothing is shown for this call. Now write your full answer to the user; a lone period would leave them with no answer.' }
     if (question.isBlocked) void $.ui.notify(question.ask).catch(() => undefined)
+    if (e.tool_use_id !== undefined) await $.state.set(PENDING, { toolUseId: e.tool_use_id, recap: wrapUp.recap, question })
     return {
       result: `The user sees your question "${question.ask}" with its buttons at the end of your reply, and your reply above it is visible. The box ends your turn: write only a single period (.) now, which the terminal hides. If you are later told your response had no visible output, write only a period again; never repeat your reply.`,
     }
   })
 
+  // A new turn moves an unanswered box back to its call's row, where the transcript keeps it.
+  on('turn.start', async ($, e, next) => {
+    if (e.agentId === undefined) await $.state.set(PENDING, null)
+    return next(e)
+  })
+
   // The call's row draws the box from the call's own input, so it survives a reload and /resume.
+  // While the box waits above the prompt, the row draws nothing.
   on('ui.render', { surface: 'terminal', component: 'ToolUse', props: { tool: WRAP_UP_TOOL } }, async ($, e, next) => {
     if (e.props.isExpanded || e.props.isRunning || e.props.isErrored) return next(e)
     const wrapUp = parseWrapUp(e.props.input)
@@ -178,20 +204,23 @@ export const register: Register = on => {
     const { Box } = $.ui.resolve(e)
     // As on Desktop, a turn with nothing pending draws no box, and no tool row either.
     if (wrapUp.question === null) return <Box />
-    const { question } = wrapUp
-    const answerRef = { plugin: 'toolkit', key: 'wrapUpAnswer', id: e.props.tool_use_id } as const
-    const answered = (await read($, answerRef)) ?? null
-    const press = async (answer: string) => {
-      let isFirst = false
-      await update($, answerRef, was => {
-        isFirst = was == null
-        return was ?? answer
-      })
-      if (!isFirst) return
-      // The prompt runs as a turn of its own once the session is idle, so the press does not wait for it.
-      void $.prompt.submit({ text: answer, asUser: true }).catch(err => $.ui.toast(`toolkit: could not send "${answer}": ${String(err)}`))
-    }
-    return drawWrapUp($.ui.resolve(e), wrapUp.recap, question, answered, answer => void press(answer))
+    if ((await read($, PENDING))?.toolUseId === e.props.tool_use_id) return <Box />
+    return drawCall($, $.ui.resolve(e), { toolUseId: e.props.tool_use_id, recap: wrapUp.recap, question: wrapUp.question })
+  })
+
+  // Right under the reply, so the box comes after the whole reply, whatever Claude wrote after the call.
+  on('ui.render', { surface: 'terminal', component: 'AbovePrompt' }, async ($, e, next) => {
+    const call = await read($, PENDING)
+    if (e.props.hasSurvey || e.props.isWorking || !call) return next(e)
+    const below = await next(e)
+    const elements = $.ui.resolve(e)
+    const { Box } = elements
+    return (
+      <Box flexDirection="column">
+        {await drawCall($, elements, call)}
+        {below}
+      </Box>
+    )
   })
 
   // The box above already says it all, so the result the model read stays out of view.

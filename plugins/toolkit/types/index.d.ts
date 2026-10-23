@@ -17,6 +17,9 @@ export type WrapUpQuestion = { ask: string; answers: string[]; isBlocked: boolea
 /** What Claude sent to `wrap_up`, parsed; `question` is null for a turn with nothing pending, which draws no box. */
 export type WrapUp = { recap: string; question: WrapUpQuestion | null }
 
+/** A next step call that asks the user, by the call's tool_use_id. */
+export type WrapUpCall = { toolUseId: string; recap: string; question: WrapUpQuestion }
+
 export type PlanStatus = 'pending' | 'in_progress' | 'completed'
 
 /** One step of the task list Claude keeps with `update_plan`. */
@@ -94,6 +97,8 @@ declare module 'claude-code' {
       cdPending: { dir: string; task: string } | null
       /** The label of the next step button pressed, by the call's tool_use_id; null until one is. */
       wrapUpAnswer: StateFamily<string | null>
+      /** The last turn's next step call with a question, drawn above the prompt until a press or a new turn. */
+      wrapUpPending: WrapUpCall | null
       /** The task list drawn above the prompt, and how many prompts the transcript held when it was made; null when there is none. */
       plan: { steps: PlanStep[]; prompts: number } | null
       /** Whether a long task list above the prompt shows every step; folded to five until "… +N more" is pressed. */

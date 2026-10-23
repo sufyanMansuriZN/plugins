@@ -40,8 +40,18 @@ function mountRow($: Engine, input: unknown, props: { tool?: string; isExpanded?
   })
 }
 
+function mountBand($: Engine, props: { isWorking?: boolean } = {}) {
+  return $.ui.mount({
+    plugin: 'toolkit',
+    surface: 'terminal',
+    component: 'AbovePrompt',
+    requestId: 'band',
+    props: { hasSurvey: false, isWorking: false, maxRows: 20, bodyColumns: 100, scroll: { offset: 0, bodyRows: 20 }, view: {}, ...props },
+  })
+}
+
 // The words the row shows, top to bottom, without the row's bullet, ⎿ and · marks.
-async function shown(ui: Awaited<ReturnType<typeof mountRow>>): Promise<string[]> {
+async function shown(ui: { findAll: Awaited<ReturnType<typeof mountRow>>["findAll"] }): Promise<string[]> {
   const all = await ui.findAll({})
   return all.flatMap(found => {
     if (found.type !== 'Text' && found.type !== 'Button') return []
@@ -108,6 +118,29 @@ test('the result names the question and tells Claude to write nothing after the 
   expect(asked.result).toContain(`"${ASK}"`)
   expect(asked.result).toContain('write only a single period')
   expect(asked.result).toContain('never repeat your reply')
+})
+
+test('the box waits above the prompt, after the whole reply, until a new turn moves it back to its call', async ($, on) => {
+  engine(on)
+  on('turn.start', (_$, e) => ({ turnId: e.turnId }))
+  const input = { recap: RECAP, ask: ASK, actions: [{ label: 'Yes' }] }
+  await $.tool.call({ tool: TOOL, tool_use_id: 'call-1', ...input })
+  const box = [`Text: ${RECAP}`, `Text: ${ASK}`, 'Button: Yes']
+  const row = await mountRow($, input)
+  expect(await shown(row)).toEqual([])
+  const band = await mountBand($, { isWorking: true })
+  expect(await shown(band)).toEqual(['Text: engine: AbovePrompt'])
+  await band.unmount()
+  const idle = await mountBand($)
+  expect(await shown(idle)).toEqual(['Text: Next step', ...box, 'Text: engine: AbovePrompt'])
+  await idle.unmount()
+  await row.unmount()
+  await $.turn.start({ text: 'Yes', turnId: 't2' })
+  const next = await mountBand($)
+  expect(await shown(next)).toEqual(['Text: engine: AbovePrompt'])
+  const back = await mountRow($, input)
+  expect(await shown(back)).toEqual(['Text: Next step', ...box])
+  await Promise.all([next.unmount(), back.unmount()])
 })
 
 test('a blocked call notifies the user with its question', async ($, on) => {

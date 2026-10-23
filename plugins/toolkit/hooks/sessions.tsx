@@ -41,7 +41,7 @@ const START_DESCRIPTION = `Start a separate Claude Code session for a task while
 "user_asked" and "own_initiative" both need a \`prompt\` — the brief: the task, the files or area, what done looks like — and the call is refused without it; \`background\` does not stand in for it. Only an "offer" is a title alone.
 context: "fork" = this whole conversation + your \`prompt\`. "fresh" (default) = your \`prompt\` + \`background\` only, so \`background\` is required too, at least 80 characters.
 Checkout here ("fresh" only): use_worktree false = shares this checkout and can edit it (in a worktree session its branch and PR too: never for work that ends in a branch or PR of its own or belongs in another repository); true = its own worktree (the default when this session is in one).
-Elsewhere ("fresh", user_asked only, when the user named the place): \`cwd\` for another folder, or \`target\` "cloud" (+ \`environment\`).`
+Elsewhere (user_asked only, when the user named the place): \`cwd\` for another folder, or \`target\` "cloud" (+ \`environment\`, "fresh" only).`
 
 const START_SCHEMA = {
   type: 'object',
@@ -79,7 +79,7 @@ const START_SCHEMA = {
       type: 'string',
       description: "The existing local branch the new worktree is cut from. Default: the repository's default branch, or the folder's current commit if that is unknown. Only for a session that gets its own worktree; not with target \"cloud\".",
     },
-    cwd: { type: 'string', description: 'The folder the session works in, when it is not this project: an absolute (or ~/) path on this computer. "fresh" only.' },
+    cwd: { type: 'string', description: 'The folder the session works in, when it is not this project: an absolute (or ~/) path on this computer. A "fork" there keeps this conversation.' },
     model: {
       type: 'string',
       description: '"fresh" only, optional: a cheaper model for mechanical or read-only pieces (e.g. sonnet or haiku). Same family or cheaper than yours; anything higher is ignored. Omit to inherit yours.',
@@ -129,6 +129,10 @@ const HAND_OFF_SCHEMA = {
   properties: {
     title: { type: 'string', description: 'Under 60 chars; names the task being moved.' },
     remaining_plan: { type: 'string', description: 'What is left to do: steps, files, what done looks like.' },
+    cwd: {
+      type: 'string',
+      description: "Optional: the folder the task works in when it is another repository than this session's folder, as an absolute (or ~/) path. The fork works there as the folder is. Omitted: this session's folder (or a fresh worktree, in a worktree session).",
+    },
   },
   required: ['title', 'remaining_plan'],
 }
@@ -426,7 +430,7 @@ export const register: Register = on => {
     if ('deny' in brief) return { deny: brief.deny }
     const started = await launch($, brief, e.tool_use_id)
     if ('error' in started) return { deny: started.error }
-    const shared = brief.place.kind === 'folder' ? ' It works in this folder, with your uncommitted edits: from now on, edit none of the files that task touches.' : ''
+    const shared = brief.place.kind === 'folder' && brief.place.cwd === (await $.session.cwd()) ? ' It works in this folder, with your uncommitted edits: from now on, edit none of the files that task touches.' : ''
     return { result: `${started.text}\nThe task is that session's now: stop it here and answer the user's new message, with no recap.${shared}` }
   })
 

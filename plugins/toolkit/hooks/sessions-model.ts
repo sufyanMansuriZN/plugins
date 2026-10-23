@@ -103,7 +103,7 @@ export function makeBrief(e: Record<string, unknown>, title: string, context: 'f
   if (e.target !== undefined && e.target !== 'local' && e.target !== 'cloud') return { kind: 'deny', deny: 'target must be "local" or "cloud".' }
 
   const isElsewhere = e.cwd !== undefined || e.target === 'cloud'
-  if (isElsewhere && context === 'fork') return { kind: 'deny', deny: 'cwd and target "cloud" go with "fresh" only.' }
+  if (e.target === 'cloud' && context === 'fork') return { kind: 'deny', deny: 'target "cloud" goes with "fresh" only.' }
   if (isElsewhere && !isUserAsked) return { kind: 'deny', deny: 'Another place (cwd or target "cloud") is only for a session the user asked for (initiation "user_asked").' }
   if (e.use_worktree !== undefined && context === 'fork') return { kind: 'deny', deny: 'use_worktree goes with "fresh" only: a fork gets a fresh worktree when this session has one.' }
 
@@ -119,7 +119,7 @@ export function makeBrief(e: Record<string, unknown>, title: string, context: 'f
   } else {
     const cwd = text(e.cwd)
     const root = cwd ?? caller.cwd
-    const wantsWorktree = context === 'fork' ? caller.isWorktree : typeof e.use_worktree === 'boolean' ? e.use_worktree : cwd === null && caller.isWorktree
+    const wantsWorktree = context === 'fork' ? cwd === null && caller.isWorktree : typeof e.use_worktree === 'boolean' ? e.use_worktree : cwd === null && caller.isWorktree
     if (!wantsWorktree && (source !== null || e.branch_name !== undefined)) return { kind: 'deny', deny: 'source_branch and branch_name are only for a session with its own worktree.' }
     place = wantsWorktree ? { kind: 'worktree', root, branch, source: context === 'fork' ? 'HEAD' : source } : { kind: 'folder', cwd: root }
   }
@@ -158,13 +158,18 @@ export function planHandOff(input: unknown, caller: Caller): Brief | { kind: 'de
   if (title.length > TITLE_MAX) return { kind: 'deny', deny: `title must be under ${TITLE_MAX} characters.` }
   const remainingPlan = text(e.remaining_plan)
   if (remainingPlan === null) return { kind: 'deny', deny: 'remaining_plan is required: what is left to do, the files, and what done looks like.' }
-  return makeBrief({ prompt: handOffMessage(title, remainingPlan) }, title, 'fork', caller, true)
+  return makeBrief({ prompt: handOffMessage(title, remainingPlan), cwd: e.cwd }, title, 'fork', caller, true)
 }
+
+/** Turns off, for this one session, the guard that keeps a background session's edits out of a shared checkout. */
+export const SHARED_FOLDER_SETTINGS = JSON.stringify({ worktree: { bgIsolation: 'none' } })
 
 /** The command that starts the session, run in the folder it works in. */
 export function startCommand(brief: Brief, parentSessionId: string): string[] {
   if (brief.place.kind === 'cloud') return ['claude', '--cloud', brief.text, ...(brief.place.environment ? ['--environment', brief.place.environment] : [])]
   const argv = ['claude', '--bg', '-n', brief.name]
+  // As on Desktop, a session placed in a folder shares it; Claude Code's guard would refuse its edits.
+  if (brief.place.kind === 'folder') argv.push('--settings', SHARED_FOLDER_SETTINGS)
   if (brief.permissionMode) argv.push('--permission-mode', brief.permissionMode)
   if (brief.model) argv.push('--model', brief.model)
   if (brief.effort) argv.push('--effort', brief.effort)

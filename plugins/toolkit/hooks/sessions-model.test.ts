@@ -94,6 +94,22 @@ test('a hand-off forks this conversation with the remaining plan, and the fork l
   expect('place' in inWorktree && inWorktree.place).toEqual({ kind: 'worktree', root: '/repo', branch: 'claude/fix-a1b2c3', source: 'HEAD' })
 })
 
+test('a hand-off into another repository forks there, in that folder as it is', () => {
+  const other = planHandOff({ title: 'Fix', remaining_plan: 'Finish it.', cwd: '/other-repo' }, caller({ isWorktree: true }))
+  expect('place' in other && other.place).toEqual({ kind: 'folder', cwd: '/other-repo' })
+  if ('deny' in other) return
+  expect(startCommand(other, 'parent-uuid')).toEqual(expect.arrayContaining(['--resume', 'parent-uuid', '--fork-session']))
+})
+
+test('a session that shares a folder turns the background guard off for itself only', () => {
+  const shared = planStart(asked, caller())
+  if (shared.kind !== 'start') throw new Error(shared.kind)
+  const argv = startCommand(shared.brief, 'parent-uuid')
+  expect(argv[argv.indexOf('--settings') + 1]).toBe('{"worktree":{"bgIsolation":"none"}}')
+  const own = planStart(asked, caller({ isWorktree: true }))
+  expect(own.kind === 'start' && startCommand(own.brief, 'parent-uuid')).not.toContain('--settings')
+})
+
 test('a hand-off needs a title and a plan, and a turn an event started cannot hand off', () => {
   expect('deny' in planHandOff({ remaining_plan: 'Finish it.' }, caller())).toBe(true)
   expect('deny' in planHandOff({ title: 'Fix', remaining_plan: ' ' }, caller())).toBe(true)
@@ -111,7 +127,7 @@ test('names stay unique handles', () => {
 test('the start command passes the mode and the brief after --', () => {
   const plan = planStart({ ...asked, context: 'fork', prompt: '-starts with a dash', permission_mode: 'acceptEdits' }, caller())
   if (plan.kind !== 'start') throw new Error(plan.kind)
-  expect(startCommand(plan.brief, 'parent-uuid')).toEqual(['claude', '--bg', '-n', 'fix-blank-lines', '--permission-mode', 'acceptEdits', '--resume', 'parent-uuid', '--fork-session', '--', '-starts with a dash'])
+  expect(startCommand(plan.brief, 'parent-uuid')).toEqual(['claude', '--bg', '-n', 'fix-blank-lines', '--settings', '{"worktree":{"bgIsolation":"none"}}', '--permission-mode', 'acceptEdits', '--resume', 'parent-uuid', '--fork-session', '--', '-starts with a dash'])
 })
 
 test('the background id and agent states are read from the CLI output', () => {

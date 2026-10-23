@@ -6,6 +6,7 @@ import type { WrapUp, WrapUpCall, WrapUpQuestion } from '../types'
 const NAME = 'wrap_up'
 export const WRAP_UP_TOOL = `mcp__toolkit__${NAME}`
 const PENDING = { plugin: 'toolkit', key: 'wrapUpPending' } as const
+const TURN = { plugin: 'toolkit', key: 'wrapUpTurn' } as const
 
 const LABEL_MAX = 24
 
@@ -155,7 +156,7 @@ export function drawWrapUp(elements: Elements['terminal'], recap: string, questi
 }
 
 /** The box with its buttons, live: a press sends its label as the user, once. */
-async function drawCall($: EngineInterface, elements: Elements['terminal'], { toolUseId, recap, question }: WrapUpCall) {
+async function drawCall($: EngineInterface, elements: Elements['terminal'], { toolUseId, recap, question }: Omit<WrapUpCall, 'turnId'>) {
   const answerRef = { plugin: 'toolkit', key: 'wrapUpAnswer', id: toolUseId } as const
   const answered = (await read($, answerRef)) ?? null
   const press = async (answer: string) => {
@@ -165,6 +166,7 @@ async function drawCall($: EngineInterface, elements: Elements['terminal'], { to
       return was ?? answer
     })
     if (!isFirst) return
+    await $.state.set(PENDING, null)
     // The prompt runs as a turn of its own once the session is idle, so the press does not wait for it.
     void $.prompt.submit({ text: answer, asUser: true }).catch(err => $.ui.toast(`toolkit: could not send "${answer}": ${String(err)}`))
   }
@@ -183,15 +185,28 @@ export const register: Register = on => {
     const { question } = wrapUp
     if (question === null) return { result: 'Nothing waits on the user, so nothing is shown for this call. Now write your full answer to the user; a lone period would leave them with no answer.' }
     if (question.isBlocked) void $.ui.notify(question.ask).catch(() => undefined)
-    if (e.tool_use_id !== undefined) await $.state.set(PENDING, { toolUseId: e.tool_use_id, recap: wrapUp.recap, question })
+    if (e.tool_use_id !== undefined) {
+      // One box per turn: a newer call in the same turn replaces the first, which then draws nothing.
+      // A box from an earlier turn goes back to its call's row, still waiting for an answer.
+      const turnId = (await read($, TURN)) ?? ''
+      const was = await read($, PENDING)
+      if (was && was.turnId === turnId) await $.state.set({ plugin: 'toolkit', key: 'wrapUpIsReplaced', id: was.toolUseId }, true)
+      await $.state.set(PENDING, { toolUseId: e.tool_use_id, turnId, recap: wrapUp.recap, question })
+    }
     return {
       result: `The user sees your question "${question.ask}" with its buttons at the end of your reply, and your reply above it is visible. The box ends your turn: write only a single period (.) now, which the terminal hides. If you are later told your response had no visible output, write only a period again; never repeat your reply.`,
     }
   })
 
-  // A new turn moves an unanswered box back to its call's row, where the transcript keeps it.
   on('turn.start', async ($, e, next) => {
-    if (e.agentId === undefined) await $.state.set(PENDING, null)
+    if (e.agentId === undefined) await $.state.set(TURN, e.turnId)
+    return next(e)
+  })
+
+  // Only the user's own answer moves the box back to its call's row: a press, or a prompt they type.
+  // A background task's or a session's report starts a turn too, and must not take the box out of view.
+  on('prompt.submit', { origin: { kind: 'composer' } }, async ($, e, next) => {
+    await $.state.set(PENDING, null)
     return next(e)
   })
 
@@ -205,6 +220,7 @@ export const register: Register = on => {
     // As on Desktop, a turn with nothing pending draws no box, and no tool row either.
     if (wrapUp.question === null) return <Box />
     if ((await read($, PENDING))?.toolUseId === e.props.tool_use_id) return <Box />
+    if (await read($, { plugin: 'toolkit', key: 'wrapUpIsReplaced', id: e.props.tool_use_id } as const)) return <Box />
     return drawCall($, $.ui.resolve(e), { toolUseId: e.props.tool_use_id, recap: wrapUp.recap, question: wrapUp.question })
   })
 

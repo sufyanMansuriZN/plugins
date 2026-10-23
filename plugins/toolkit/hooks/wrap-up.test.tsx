@@ -120,7 +120,7 @@ test('the result names the question and tells Claude to write nothing after the 
   expect(asked.result).toContain('never repeat your reply')
 })
 
-test('the box waits above the prompt, after the whole reply, until a new turn moves it back to its call', async ($, on) => {
+test('the box waits above the prompt, after the whole reply, until a typed prompt moves it back to its call', async ($, on) => {
   engine(on)
   on('turn.start', (_$, e) => ({ turnId: e.turnId }))
   const input = { recap: RECAP, ask: ASK, actions: [{ label: 'Yes' }] }
@@ -135,12 +135,44 @@ test('the box waits above the prompt, after the whole reply, until a new turn mo
   expect(await shown(idle)).toEqual(['Text: Next step', ...box, 'Text: engine: AbovePrompt'])
   await idle.unmount()
   await row.unmount()
-  await $.turn.start({ text: 'Yes', turnId: 't2' })
+  // A background task's report starts a turn of its own, and the question still waits for the user.
+  await $.prompt.submit({ text: 'task done', wait: false, origin: { kind: 'task-notification' } })
+  await $.turn.start({ text: 'task done', turnId: 't2' })
+  const after = await mountBand($)
+  expect(await shown(after)).toEqual(['Text: Next step', ...box, 'Text: engine: AbovePrompt'])
+  await after.unmount()
+  await $.prompt.submit({ text: 'Do something else', wait: false, origin: { kind: 'composer' } })
   const next = await mountBand($)
   expect(await shown(next)).toEqual(['Text: engine: AbovePrompt'])
   const back = await mountRow($, input)
   expect(await shown(back)).toEqual(['Text: Next step', ...box])
   await Promise.all([next.unmount(), back.unmount()])
+})
+
+test('a second call replaces the first, so only one box shows', async ($, on) => {
+  engine(on)
+  const first = { recap: RECAP, ask: ASK, actions: [{ label: 'Yes' }] }
+  const second = { recap: 'Committed.', ask: 'Push it?', actions: [{ label: 'Push' }] }
+  await $.tool.call({ tool: TOOL, tool_use_id: 'call-1', ...first })
+  await $.tool.call({ tool: TOOL, tool_use_id: 'call-2', ...second })
+  const row = await mountRow($, first)
+  expect(await shown(row)).toEqual([])
+  const band = await mountBand($)
+  expect(await shown(band)).toEqual(['Text: Next step', 'Text: Committed.', 'Text: Push it?', 'Button: Push', 'Text: engine: AbovePrompt'])
+  await Promise.all([row.unmount(), band.unmount()])
+})
+
+test('a question from a later turn leaves the earlier one on its call row, still open', async ($, on) => {
+  engine(on)
+  on('turn.start', (_$, e) => ({ turnId: e.turnId }))
+  const first = { recap: RECAP, ask: ASK, actions: [{ label: 'Yes' }] }
+  await $.turn.start({ text: 'Fix the parser.', turnId: 't1' })
+  await $.tool.call({ tool: TOOL, tool_use_id: 'call-1', ...first })
+  await $.turn.start({ text: 'task done', turnId: 't2' })
+  await $.tool.call({ tool: TOOL, tool_use_id: 'call-2', recap: 'The task ended.', ask: 'Look at it?', actions: [{ label: 'Look' }] })
+  const row = await mountRow($, first)
+  expect(await shown(row)).toEqual(['Text: Next step', `Text: ${RECAP}`, `Text: ${ASK}`, 'Button: Yes'])
+  await row.unmount()
 })
 
 test('a blocked call notifies the user with its question', async ($, on) => {

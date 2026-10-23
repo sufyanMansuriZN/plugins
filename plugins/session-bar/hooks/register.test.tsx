@@ -23,9 +23,9 @@ const LIMITS = JSON.stringify({ limits: [
   { kind: 'session', percent: 66, resets_at: new Date(NOW + 46 * MIN).toISOString() },
   { kind: 'weekly_all', percent: 43, resets_at: new Date(NOW + (3 * 24 + 21) * 60 * MIN).toISOString() },
 ] })
-const WINDOWS = '5h ━━━━━╾─╂─ 66%  behind  46m · 7d ━━━╾╂──── 43% 3d21h'
+const WINDOWS = '5h ━━━╾╂─ 66%  behind  46m · 7d ━━╉─── 43% 3d21h'
 // 60K of a 1M window: half a cell used, and the tick for 250K after cell 2
-const CTX = 'ctx ╾─╂────── 60K'
+const CTX = 'ctx ╾╂──── 60K'
 const context = (tokens: number, window: number): SessionUsage => ({ ...USAGE, context: { tokens, window, percent: Math.round((tokens / window) * 100) } })
 const SURFACES = ['terminal', 'desktop'] as const
 type Surface = (typeof SURFACES)[number]
@@ -97,7 +97,7 @@ test("main view, the shell elsewhere: the session root's repo, git and the main 
   await engine($, on)
   for (const surface of SURFACES) {
     const { left, right } = await zonesOn($, surface)
-    expect([left, right], surface).toEqual(['plugins (main +3 ~2) · Opus 5.5 1M', `${CTX} · ${WINDOWS}`])
+    expect([left, right], surface).toEqual(['plugins (main) · Opus 5.5 1M', `${CTX} · ${WINDOWS}`])
   }
 })
 
@@ -105,15 +105,15 @@ test('a 200K window: the context meter fills over 200K, its tick for 160K after 
   await engine($, on, { usage: context(120_000, 200_000) })
   for (const surface of SURFACES) {
     const { left, right } = await zonesOn($, surface)
-    expect([left, right], surface).toEqual(['plugins (main +3 ~2) · Opus 5.5 200K', `ctx ━━━━━─╂── 120K · ${WINDOWS}`])
+    expect([left, right], surface).toEqual(['plugins (main) · Opus 5.5 200K', `ctx ━━━─╂─ 120K · ${WINDOWS}`])
   }
 })
 
 for (const [tokens, window, shown, badge] of [
-  [249_000, 1_000_000, 'ctx ━━╉────── 249K', null], [250_000, 1_000_000, 'ctx ━━╉──────  250K ', ' 250K '],
-  [300_000, 1_000_000, 'ctx ━━╋╾─────  300K ', ' 300K '],
-  [159_000, 200_000, 'ctx ━━━━━━╋╾─ 159K', null], [160_000, 200_000, 'ctx ━━━━━━╋╾─  160K ', ' 160K '],
-  [170_000, 200_000, 'ctx ━━━━━━╋━─  170K ', ' 170K '],
+  [249_000, 1_000_000, 'ctx ━╉──── 249K', null], [250_000, 1_000_000, 'ctx ━╋╾───  250K ', ' 250K '],
+  [300_000, 1_000_000, 'ctx ━╋╾───  300K ', ' 300K '],
+  [159_000, 200_000, 'ctx ━━━━╉─ 159K', null], [160_000, 200_000, 'ctx ━━━━╉─  160K ', ' 160K '],
+  [170_000, 200_000, 'ctx ━━━━╋╾  170K ', ' 170K '],
 ] as const) {
   test(`${tokens / 1000}K of ${window / 1000}K: ${badge ? 'a vermillion badge from the tick' : 'plain below the tick'}`, async ($, on) => {
     await engine($, on, { usage: context(tokens, window) })
@@ -145,7 +145,7 @@ test('a `/cd` out of the repo: the next redraw reads the new root, with no event
 
 test('a repo that cannot be read leaves the name out', async ($, on) => {
   await engine($, on, { worktrees: new Error('git timed out') })
-  expect((await zonesOn($, 'terminal')).left).toBe('main +3 ~2 · Opus 5.5 1M')
+  expect((await zonesOn($, 'terminal')).left).toBe('main · Opus 5.5 1M')
 })
 
 test('a subagent in view after a Haiku step: its type and model on the left, its tokens on the right, no main model', async ($, on) => {
@@ -153,9 +153,9 @@ test('a subagent in view after a Haiku step: its type and model on the left, its
   await step($, 'a1', 'claude-haiku-4-5-20251001')
   for (const surface of SURFACES) {
     const { left, right } = await zonesOn($, surface, 'a1')
-    expect([left, right], surface).toEqual(['plugins (main +3 ~2) · Explore · Haiku 4.5', `ctx 42K · ${WINDOWS}`])
+    expect([left, right], surface).toEqual(['plugins (main) · Explore · Haiku 4.5', `ctx 42K · ${WINDOWS}`])
   }
-  expect((await zonesOn($, 'terminal')).left).toBe('plugins (main +3 ~2) · Opus 5.5 1M')
+  expect((await zonesOn($, 'terminal')).left).toBe('plugins (main) · Opus 5.5 1M')
 })
 
 test('a subagent with no step yet: its type, no model and no context', async ($, on) => {
@@ -164,7 +164,7 @@ test('a subagent with no step yet: its type, no model and no context', async ($,
   await step($, undefined, 'claude-fable-5-1')
   for (const surface of SURFACES) {
     const { left, right } = await zonesOn($, surface, 'a2')
-    expect([left, right], surface).toEqual(['plugins (main +3 ~2) · Plan', WINDOWS])
+    expect([left, right], surface).toEqual(['plugins (main) · Plan', WINDOWS])
   }
 })
 
@@ -251,15 +251,15 @@ test("the terminal draws the branch and its parentheses in robbyrussell's named 
     const left = await ui.find({ type: 'Box', key: 'left' })
     const texts = await ui.findAll({ type: 'Text' })
     await ui.unmount()
-    return texts.slice(0, 5).map(t => [t.text, t.props.color ?? null, t.props.bold ?? null, t.props.dimColor ?? null]).concat([[left?.text ?? null]])
+    return texts.slice(0, 4).map(t => [t.text, t.props.color ?? null, t.props.bold ?? null, t.props.dimColor ?? null]).concat([[left?.text ?? null]])
   }
   expect(await drawn('terminal')).toEqual([
-    ['plugins', null, null, null], [' (', 'blue', true, null], ['main', 'red', null, null], [' +3 ~2', null, null, null], [')', 'blue', true, null],
-    ['plugins (main +3 ~2) · Opus 5.5 1M'],
+    ['plugins', null, null, null], [' (', 'blue', true, null], ['main', 'red', null, null], [')', 'blue', true, null],
+    ['plugins (main) · Opus 5.5 1M'],
   ])
   expect(await drawn('desktop')).toEqual([
-    ['plugins', null, null, null], [' (', null, null, true], ['main', null, null, null], [' +3 ~2', null, null, null], [')', null, null, true],
-    ['plugins (main +3 ~2) · Opus 5.5 1M'],
+    ['plugins', null, null, null], [' (', null, null, true], ['main', null, null, null], [')', null, null, true],
+    ['plugins (main) · Opus 5.5 1M'],
   ])
 })
 

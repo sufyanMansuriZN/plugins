@@ -124,19 +124,22 @@ export function windowSteps(plan: PlanStep[], rows: number): { shown: [number, P
 /** Whether a long list shows every step, and what pressing its "… +N more" or "show less" row does. */
 type Toggle = { isOpen: boolean; onPress: () => unknown }
 
-function drawSteps(elements: Elements['terminal'], plan: PlanStep[], rows: number, toggle?: Toggle) {
+// A plain dim link, as the next step box draws its answers; hover underlines the nearest keyed Box.
+function toggleLink(elements: Elements['terminal'], label: string, toggle?: Toggle) {
   const { Box, Button, Text } = elements
-  const isOpen = toggle?.isOpen === true && plan.length > rows
+  return toggle ? (
+    <Box key="hover:toggle" paddingLeft={2}>
+      <Button key="toggle" plain dimColor hover={{ underline: true }} label={label} onPress={async () => void (await toggle.onPress())} />
+    </Box>
+  ) : (
+    <Text dimColor>{`  ${label}`}</Text>
+  )
+}
+
+function drawSteps(elements: Elements['terminal'], plan: PlanStep[], rows: number, toggle?: Toggle) {
+  const { Box, Text } = elements
+  const isOpen = toggle?.isOpen === true
   const { shown, hidden } = windowSteps(plan, isOpen ? plan.length : rows)
-  // A plain dim link, as the next step box draws its answers; hover underlines the nearest keyed Box.
-  const link = (label: string) =>
-    toggle ? (
-      <Box key="hover:toggle" paddingLeft={2}>
-        <Button key="toggle" plain dimColor hover={{ underline: true }} label={label} onPress={async () => void (await toggle.onPress())} />
-      </Box>
-    ) : (
-      <Text dimColor>{`  ${label}`}</Text>
-    )
   return (
     <Box flexDirection="column" flexGrow={1}>
       {shown.map(([index, step]) => (
@@ -147,7 +150,7 @@ function drawSteps(elements: Elements['terminal'], plan: PlanStep[], rows: numbe
           </Text>
         </Box>
       ))}
-      {hidden > 0 ? link(`… +${hidden} more`) : isOpen ? link('show less') : null}
+      {hidden > 0 ? toggleLink(elements, `… +${hidden} more`, toggle) : isOpen ? toggleLink(elements, 'show less', toggle) : null}
     </Box>
   )
 }
@@ -165,20 +168,41 @@ export function drawPlan(elements: Elements['terminal'], plan: PlanStep[], toggl
   )
 }
 
-/** The list above the prompt once Claude stops with steps still open, in at most `rows` rows besides its count. */
-export function drawOpenPlan(elements: Elements['terminal'], plan: PlanStep[], rows: number, toggle?: Toggle) {
+/**
+ * The list above the prompt once Claude stops with steps still open. Folded, it is the count and the step in
+ * progress; "… show all" opens it to at most `rows` rows besides the count.
+ */
+export function drawOpenPlan(elements: Elements['terminal'], plan: PlanStep[], rows: number, toggle: Toggle) {
   const { Box, Text } = elements
   const done = plan.filter(step => step.status === 'completed').length
+  const header = (
+    <Box flexDirection="row">
+      <Text dimColor weight="bold">{String(plan.length)}</Text>
+      <Text dimColor>{' tasks ('}</Text>
+      <Text dimColor weight="bold">{String(done)}</Text>
+      <Text dimColor>{' done, '}</Text>
+      <Text dimColor weight="bold">{String(plan.length - done)}</Text>
+      <Text dimColor>{' open)'}</Text>
+    </Box>
+  )
+  if (!toggle.isOpen) {
+    const current = plan.find(step => step.status === 'in_progress') ?? plan.find(step => step.status === 'pending')
+    return (
+      <Box flexDirection="column" paddingLeft={2}>
+        {header}
+        {current ? (
+          <Box flexDirection="row">
+            <Text color={MARKS[current.status].color}>{`${MARKS[current.status].mark} `}</Text>
+            <Text weight="bold">{current.content}</Text>
+            {toggleLink(elements, '… show all', toggle)}
+          </Box>
+        ) : null}
+      </Box>
+    )
+  }
   return (
     <Box flexDirection="column" paddingLeft={2}>
-      <Box flexDirection="row">
-        <Text dimColor weight="bold">{String(plan.length)}</Text>
-        <Text dimColor>{' tasks ('}</Text>
-        <Text dimColor weight="bold">{String(done)}</Text>
-        <Text dimColor>{' done, '}</Text>
-        <Text dimColor weight="bold">{String(plan.length - done)}</Text>
-        <Text dimColor>{' open)'}</Text>
-      </Box>
+      {header}
       {drawSteps(elements, plan, rows, toggle)}
     </Box>
   )

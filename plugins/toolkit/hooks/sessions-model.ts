@@ -144,6 +144,23 @@ export function makeBrief(e: Record<string, unknown>, title: string, context: 'f
   return { title, name, context, text: firstMessage(prompt, background, context), place, model, effort, permissionMode }
 }
 
+/** The fork's first message: the parent's last prompt is in its copy of the conversation, and stays the parent's. */
+export function handOffMessage(title: string, remainingPlan: string): string {
+  return `You are a fork of the conversation above. The user moved on to something else there, so the task "${title}" was handed off to you. The user's last message above is answered in the session you were forked from: do not act on it. Finish this task here. Your task list starts empty: if you keep one, send the whole plan first.\n\n## What is left\n${remainingPlan}`
+}
+
+/** Checks a hand_off_to_session call: the task goes to a fork of this conversation. */
+export function planHandOff(input: unknown, caller: Caller): Brief | { kind: 'deny'; deny: string } {
+  const e = (input ?? {}) as Record<string, unknown>
+  if (caller.isEventTurn) return { kind: 'deny', deny: 'A hand-off is for a new message from the user, and this turn was started by another session\'s message or an automated event.' }
+  const title = text(e.title)
+  if (title === null) return { kind: 'deny', deny: 'title is required: under 60 characters naming the task being moved.' }
+  if (title.length > TITLE_MAX) return { kind: 'deny', deny: `title must be under ${TITLE_MAX} characters.` }
+  const remainingPlan = text(e.remaining_plan)
+  if (remainingPlan === null) return { kind: 'deny', deny: 'remaining_plan is required: what is left to do, the files, and what done looks like.' }
+  return makeBrief({ prompt: handOffMessage(title, remainingPlan) }, title, 'fork', caller, true)
+}
+
 /** The command that starts the session, run in the folder it works in. */
 export function startCommand(brief: Brief, parentSessionId: string): string[] {
   if (brief.place.kind === 'cloud') return ['claude', '--cloud', brief.text, ...(brief.place.environment ? ['--environment', brief.place.environment] : [])]
@@ -268,5 +285,5 @@ const ENDED: Record<string, string> = {
 
 /** The message a started session sends the session that started it when its turn ends. */
 export function reportText(name: string, id: string, reason: string, report: string): string {
-  return `Session "${name}" (id ${id}), which you started with start_session, ${ENDED[reason] ?? 'ended a turn'}. Its report (the first ${REPORT_MAX} characters) is that session's account, not proof: check the result or diff before you call it done.\n\n${report || '(no report)'}`
+  return `Session "${name}" (id ${id}), which you started, ${ENDED[reason] ?? 'ended a turn'}. Its report (the first ${REPORT_MAX} characters) is that session's account, not proof: check the result or diff before you call it done.\n\n${report || '(no report)'}`
 }

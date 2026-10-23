@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { backgroundedId, latestReport, linkPath, parseAgents, parseLink, planStart, reportText, sessionName, shortId, startCommand } from './sessions-model'
+import { backgroundedId, latestReport, linkPath, parseAgents, parseLink, planHandOff, planStart, reportText, sessionName, shortId, startCommand } from './sessions-model'
 import type { Caller } from './sessions-model'
 
 const caller = (over: Partial<Caller> = {}): Caller => ({
@@ -83,6 +83,24 @@ test('a model above this session\'s family is ignored, a cheaper one kept', () =
   expect(cheaper.kind === 'start' && [cheaper.brief.model, cheaper.brief.effort]).toEqual(['haiku', 'low'])
 })
 
+test('a hand-off forks this conversation with the remaining plan, and the fork leaves the new message alone', () => {
+  const handed = planHandOff({ title: 'Fix blank lines', remaining_plan: 'Run the parser tests; done when they pass.' }, caller({ names: ['fix-blank-lines'] }))
+  if ('deny' in handed) throw new Error(handed.deny)
+  expect([handed.context, handed.name, handed.place, handed.permissionMode, handed.model]).toEqual(['fork', 'fix-blank-lines-2', { kind: 'folder', cwd: '/repo' }, null, null])
+  expect(handed.text).toContain('do not act on it')
+  expect(handed.text.endsWith('## What is left\nRun the parser tests; done when they pass.')).toBe(true)
+  expect(startCommand(handed, 'parent-uuid')).toContain('--fork-session')
+  const inWorktree = planHandOff({ title: 'Fix', remaining_plan: 'Finish it.' }, caller({ isWorktree: true }))
+  expect('place' in inWorktree && inWorktree.place).toEqual({ kind: 'worktree', root: '/repo', branch: 'claude/fix-a1b2c3', source: 'HEAD' })
+})
+
+test('a hand-off needs a title and a plan, and a turn an event started cannot hand off', () => {
+  expect('deny' in planHandOff({ remaining_plan: 'Finish it.' }, caller())).toBe(true)
+  expect('deny' in planHandOff({ title: 'Fix', remaining_plan: ' ' }, caller())).toBe(true)
+  expect('deny' in planHandOff({ title: 'x'.repeat(61), remaining_plan: 'Finish it.' }, caller())).toBe(true)
+  expect('deny' in planHandOff({ title: 'Fix', remaining_plan: 'Finish it.' }, caller({ isEventTurn: true }))).toBe(true)
+})
+
 test('names stay unique handles', () => {
   expect(sessionName('Fix: the CLI!', [])).toBe('fix-the-cli')
   expect(sessionName('fix', ['fix', 'fix-2'])).toBe('fix-3')
@@ -157,7 +175,7 @@ test('a started session finds the session that started it by its short id', () =
 
 test('the report names the session and how its turn ended', () => {
   const text = reportText('fix', 'abc12345', 'answer', 'Done.')
-  expect(text).toContain('Session "fix" (id abc12345), which you started with start_session, ended a turn.')
+  expect(text).toContain('Session "fix" (id abc12345), which you started, ended a turn.')
   expect(text).toContain('not proof')
   expect(text.endsWith('\n\nDone.')).toBe(true)
   expect(reportText('fix', 'abc12345', 'aborted', '')).toContain('was stopped in the middle of a turn')

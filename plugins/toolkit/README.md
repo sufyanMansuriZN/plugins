@@ -79,9 +79,9 @@ Gives Claude a tool, `update_plan`, with the Claude desktop app's name and trigg
 
 It runs in an interactive terminal session only. The Claude desktop app has its own list, and a `claude -p` run has no band to draw in.
 
-### Other sessions (`start_session`, `dismiss_task`, `list_sessions`)
+### Other sessions (`start_session`, `hand_off_to_session`, `dismiss_task`, `list_sessions`)
 
-Gives Claude the Claude desktop app's way to hand work to a separate session: its `start_session` and `dismiss_task` tools, with Desktop's names, fields and rule. In the terminal, a new session is a background session (`claude --bg`). You can open it with `claude attach <id>`, talk to it and stop it, and it shows in `claude agents`.
+Gives Claude the Claude desktop app's way to hand work to a separate session: its `start_session`, `hand_off_to_session` and `dismiss_task` tools, with Desktop's names, fields and rule. In the terminal, a new session is a background session (`claude --bg`). You can open it with `claude attach <id>`, talk to it and stop it, and it shows in `claude agents`.
 
 - **Who asks.** As on Desktop, `initiation` says whose task it is.
   - **user_asked.** You told Claude to start it, so it starts now.
@@ -100,11 +100,12 @@ Gives Claude the Claude desktop app's way to hand work to a separate session: it
   - `cwd` names another folder. `target` "cloud" runs `claude --cloud`, which never reports back.
   - SSH hosts and presets do not exist in the terminal, so those fields are refused with the reason.
 - **Your default permission mode.** A session starts in your own default mode. Claude passes `--permission-mode` only when you asked for a mode. You decide what a session may do, so the toolkit does not cap it.
+- **Hand-off.** When you send a message about something else while Claude is in the middle of a task, Claude moves the unfinished task to a new session with `hand_off_to_session` and answers your message here. The new session is a fork of this conversation. Its first message is the task's title and the plan for what is left. It is told that your last message is answered here, so it does not act on it. In a worktree session, the fork gets its own worktree cut from this branch's tip, so Claude commits first. Edits that are not committed stay here. In a plain checkout, the fork works in the same folder and keeps your edits that are not committed, so the task loses nothing. Claude is then told to edit none of that task's files, because nothing else stops the two sessions from overwriting each other. The call's row is headed **Handed off**, and it shows the session as a started session's row does. The session reports back the same way. A turn that another session's message or another automated message starts cannot hand off.
 - **`list_sessions`.** `{"linked": true}` lists the sessions this one started. Without it, Claude gets `claude agents --json`.
 - **Why there is a rule at session start.** Desktop's "Starting other sessions" section of its system prompt says when to start, offer or propose a session. The toolkit gives Claude the same section (`hooks/sessions-rule.md`) from the same command hook as the other rules.
 
 Left out, because nothing behind them exists in the terminal yet:
-- Desktop's `hand_off_to_session` and `mark_chapter`.
+- Desktop's `mark_chapter`.
 - The linked sessions note that Desktop keeps current in Claude's context. Claude gets the list in each start result and report instead.
 - Clickable session links.
 - `list_start_targets`.

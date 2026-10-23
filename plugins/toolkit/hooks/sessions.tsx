@@ -16,6 +16,7 @@ import {
   makeBrief,
   parseAgents,
   parseLink,
+  planHandOff,
   planStart,
   reportText,
   shortId,
@@ -26,6 +27,7 @@ import type { Caller } from './sessions-model'
 
 export const START_TOOL = 'mcp__toolkit__start_session'
 export const DISMISS_TOOL = 'mcp__toolkit__dismiss_task'
+export const HAND_OFF_TOOL = 'mcp__toolkit__hand_off_to_session'
 export const LIST_TOOL = 'mcp__toolkit__list_sessions'
 
 const LINKED = { plugin: 'toolkit', key: 'linked' } as const
@@ -120,7 +122,18 @@ const DISMISS_SCHEMA = {
   required: ['task_id'],
 }
 
-const LIST_DESCRIPTION = `List Claude Code sessions. {"linked": true} lists the sessions this one started with start_session (name, id, state, branch or folder) — use it, never a search, to find a session you started. Without it, every running background and interactive session on this computer.`
+const HAND_OFF_DESCRIPTION = `Move the task you are in the middle of into its own session (a fork of this conversation plus your remaining plan) so you can answer the user now. Use it when a new user message about something else arrives mid-task — not for small corrections or when the user said to keep the work here. In a worktree the fork gets a fresh worktree, normally cut from your branch tip: commit first (uncommitted edits stay here). Bold title line and one sentence right before the call; after it, stop that task here and answer the new message — no recap.`
+
+const HAND_OFF_SCHEMA = {
+  type: 'object',
+  properties: {
+    title: { type: 'string', description: 'Under 60 chars; names the task being moved.' },
+    remaining_plan: { type: 'string', description: 'What is left to do: steps, files, what done looks like.' },
+  },
+  required: ['title', 'remaining_plan'],
+}
+
+const LIST_DESCRIPTION =`List Claude Code sessions. {"linked": true} lists the sessions this one started with start_session (name, id, state, branch or folder) — use it, never a search, to find a session you started. Without it, every running background and interactive session on this computer.`
 
 const LIST_SCHEMA = { type: 'object', properties: { linked: { type: 'boolean', description: 'true: only the sessions this one started.' } } }
 
@@ -334,6 +347,7 @@ export const register: Register = on => {
     await $.tool.register({ name: 'start_session', description: START_DESCRIPTION, inputSchema: START_SCHEMA, isDeferred: false })
     await $.tool.register({ name: 'dismiss_task', description: DISMISS_DESCRIPTION, inputSchema: DISMISS_SCHEMA, isDeferred: false })
     await $.tool.register({ name: 'list_sessions', description: LIST_DESCRIPTION, inputSchema: LIST_SCHEMA, isDeferred: false })
+    await $.tool.register({ name: 'hand_off_to_session', description: HAND_OFF_DESCRIPTION, inputSchema: HAND_OFF_SCHEMA, isDeferred: false })
     // A reload drops the module's timer, so the reloaded module watches again.
     if (((await read($, LINKED)) ?? []).some(s => isAlive(s.state))) watch($)
     return next(e)
@@ -407,6 +421,15 @@ export const register: Register = on => {
     return { result: `The user answered in their own words: "${answer}". Act on that.` }
   })
 
+  on('tool.call', { tool: HAND_OFF_TOOL }, async ($, e) => {
+    const brief = planHandOff(e, await caller($))
+    if ('deny' in brief) return { deny: brief.deny }
+    const started = await launch($, brief, e.tool_use_id)
+    if ('error' in started) return { deny: started.error }
+    const shared = brief.place.kind === 'folder' ? ' It works in this folder, with your uncommitted edits: from now on, edit none of the files that task touches.' : ''
+    return { result: `${started.text}\nThe task is that session's now: stop it here and answer the user's new message, with no recap.${shared}` }
+  })
+
   on('tool.call', { tool: DISMISS_TOOL }, async ($, e) => {
     const { task_id: taskId } = e as unknown as { task_id?: unknown }
     if (typeof taskId !== 'string') return { deny: 'task_id is required.' }
@@ -433,7 +456,7 @@ export const register: Register = on => {
   })
 
   // The call's row is the session's row: its state, and how to open or stop it, or the card to start it.
-  on('ui.render', { surface: 'terminal', component: 'ToolUse', props: { tool: START_TOOL } }, async ($, e, next) => {
+  on('ui.render', { surface: 'terminal', component: 'ToolUse', props: { tool: /^mcp__toolkit__(start_session|hand_off_to_session)$/ } }, async ($, e, next) => {
     if (e.props.isExpanded || e.props.isErrored) return next(e)
     const input = (e.props.input ?? {}) as Record<string, unknown>
     const { Box, Button, Text } = $.ui.resolve(e)
@@ -451,7 +474,7 @@ export const register: Register = on => {
         <Button key={key} plain dimColor={isDim} hover={{ underline: true }} label={label} onPress={onPress} />
       </Box>
     )
-    let heading = 'New session'
+    let heading = e.props.tool === HAND_OFF_TOOL ? 'Handed off' : 'New session'
     let line: JSX.Element
     if (session) {
       const stop = () => void $.process.run(['claude', 'stop', session.id]).then(() => tick($))
@@ -517,7 +540,7 @@ export const register: Register = on => {
   })
 
   // The row above says it all; an error keeps the engine's drawing, so its reason shows.
-  for (const tool of [START_TOOL, DISMISS_TOOL]) {
+  for (const tool of [START_TOOL, HAND_OFF_TOOL, DISMISS_TOOL]) {
     on('ui.render', { surface: 'terminal', component: 'ToolResult', props: { tool } }, async ($, e, next) => {
       if (e.props.isExpanded || e.props.isErrored) return next(e)
       const { Box } = $.ui.resolve(e)

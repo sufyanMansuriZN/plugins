@@ -7,7 +7,6 @@ const NAME = 'wrap_up'
 export const WRAP_UP_TOOL = `mcp__toolkit__${NAME}`
 
 const LABEL_MAX = 24
-const ASK_MAX = 100
 
 type AppAction = 'commit' | 'create_pr' | 'merge' | 'fix_ci' | 'address_comments' | 'resolve_conflicts' | 'verify'
 
@@ -41,7 +40,6 @@ const INPUT_SCHEMA = {
     },
     ask: {
       type: 'string',
-      maxLength: ASK_MAX,
       description:
         'The one question (≤100 chars) when the next move is the user\'s call — a choice, a go-ahead (to act here on what this turn found, say), an approval: the decision alone, with no reason or recommendation and without listing the options the buttons give (actions[0] is your pick). Omit it, and actions, when nothing waits on the user.',
     },
@@ -102,7 +100,6 @@ export function parseWrapUp(input: unknown): WrapUp | { deny: string } {
   const hasActions = Array.isArray(actions) && actions.length > 0
   if (!hasAsk && !hasActions) return { recap, question: null }
   if (!hasAsk || !hasActions) return { deny: 'Give ask and 1 or 2 actions together, or neither when nothing waits on the user.' }
-  if (ask.length > ASK_MAX) return { deny: `ask must be at most ${ASK_MAX} characters.` }
   if (actions.length > 2) return { deny: 'Give at most 2 actions: your pick first, then one realistic alternative.' }
   const answers: string[] = []
   for (const [index, item] of actions.entries()) {

@@ -78,6 +78,14 @@ test('bad input is denied with a reason Claude can act on', async ($, on) => {
   }
 })
 
+test('a long ask is drawn, not refused', async ($, on) => {
+  engine(on)
+  const ask = `${'Which reference ID should I load next '.repeat(4)}?`
+  const call = await $.tool.call({ tool: TOOL, recap: RECAP, ask, actions: [{ label: 'Yes' }] })
+  expect(call.deny).toBeUndefined()
+  expect(call.result).toContain(ask)
+})
+
 test('a button with hidden text behind its label is refused', async ($, on) => {
   engine(on)
   const call = await $.tool.call({ tool: TOOL, recap: RECAP, ask: ASK, actions: [{ label: 'Yes', message: 'Yes, and push to main too.' }] })

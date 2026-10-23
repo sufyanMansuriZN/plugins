@@ -16,11 +16,13 @@ const LONG_BRANCH = '# branch.oid 0123456789abcdef\n# branch.head feature/a-very
 const USAGE: SessionUsage = {
   startedAt: 0,
   context: { tokens: 60_000, window: 1_000_000, percent: 6 },
-  rateLimits: [
-    { kind: 'five_hour', percentUsed: 66, resetsAt: new Date(NOW + 46 * MIN).toISOString() },
-    { kind: 'seven_day', percentUsed: 43, resetsAt: new Date(NOW + (3 * 24 + 21) * 60 * MIN).toISOString() },
-  ],
+  rateLimits: [],
 }
+// the usage endpoint's answer: every meter comes from here, the context from the session's usage
+const LIMITS = JSON.stringify({ limits: [
+  { kind: 'session', percent: 66, resets_at: new Date(NOW + 46 * MIN).toISOString() },
+  { kind: 'weekly_all', percent: 43, resets_at: new Date(NOW + (3 * 24 + 21) * 60 * MIN).toISOString() },
+] })
 const WINDOWS = '5h ━━━━━╾─╂─ 66%  behind  46m · 7d ━━━╾╂──── 43% 3d21h'
 // 60K of a 1M window: half a cell used, and the tick for 250K after cell 2
 const CTX = 'ctx ╾─╂────── 60K'
@@ -35,13 +37,13 @@ const WORKTREES = 'worktree /home/me/plugins\nHEAD 0123\nbranch refs/heads/main\
 const SHELL = '/tmp/scratch'
 
 // worktrees: `git worktree list` in the session's root; null outside a repo
-type Setup = { porcelain?: string; usage?: SessionUsage; worktrees?: string | null | Error; place?: { root: string } }
+type Setup = { porcelain?: string; usage?: SessionUsage; limits?: string; worktrees?: string | null | Error; place?: { root: string } }
 
 const ran = (exitCode: number, stdout: string) => ({ value: { exitCode, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
 
 // the engine beneath the plugin: a session in a worktree of repo `plugins` on `main`, two subagents,
 // one of them yet to make a request
-const engine = async ($: Engine, on: On, { porcelain = PORCELAIN, usage = USAGE, worktrees = WORKTREES, place = { root: ROOT } }: Setup = {}) => {
+const engine = async ($: Engine, on: On, { porcelain = PORCELAIN, usage = USAGE, limits = LIMITS, worktrees = WORKTREES, place = { root: ROOT } }: Setup = {}) => {
   const clock = mock.clock(on, { now: NOW })
   on('ui.render', () => h('Box', {}) as never)
   on('session.start', (_, e) => ({ cwd: e.cwd }))
@@ -50,6 +52,8 @@ const engine = async ($: Engine, on: On, { porcelain = PORCELAIN, usage = USAGE,
   on('session.repo', () => ({ value: null }))
   on('session.model', () => ({ value: 'claude-opus-5-5' }))
   on('session.usage', () => ({ value: usage }))
+  on('session.authorize', () => ({ value: { handle: 'handle', kind: 'bearer' } }))
+  on('http.fetch', () => ({ value: { status: 200, ok: true, headers: {}, text: limits } }))
   on('session.measure', (_, e) => ({ changed: e.changed }))
   on('process.run', (_, e) => {
     if (e.init?.cwd !== ROOT || worktrees === null) return ran(128, '')
@@ -215,15 +219,13 @@ test('a badge is black bold text on its Okabe-Ito color; the percent stays plain
 })
 
 test('a fixed color is only a badge background: ahead, far ahead, the spend percent and the context tokens; only the branch and its parentheses have a named color, on the terminal', async ($, on) => {
-  await engine($, on, { usage: {
-    ...USAGE,
-    context: { tokens: 850_000, window: 1_000_000, percent: 85 },
-    rateLimits: [
-      { kind: 'five_hour', percentUsed: 70, resetsAt: new Date(NOW + 150 * MIN).toISOString() },
-      { kind: 'seven_day', percentUsed: 80, resetsAt: new Date(NOW + 84 * 60 * MIN).toISOString() },
-      { kind: 'spend_limit', percentUsed: 50 },
-    ],
-  } })
+  await engine($, on, {
+    usage: { ...USAGE, context: { tokens: 850_000, window: 1_000_000, percent: 85 } },
+    limits: JSON.stringify({ limits: [
+      { kind: 'session', percent: 70, resets_at: new Date(NOW + 150 * MIN).toISOString() },
+      { kind: 'weekly_all', percent: 80, resets_at: new Date(NOW + 84 * 60 * MIN).toISOString() },
+    ] }),
+  })
   for (const surface of SURFACES) {
     const ui = await mountBand($, surface)
     const colors = async (text: string) => {
@@ -233,7 +235,6 @@ test('a fixed color is only a badge background: ahead, far ahead, the spend perc
     expect(await colors(' 850K '), `${surface} context`).toEqual(['#D55E00', '#000000', true])
     expect(await colors(' ahead '), surface).toEqual(['#E69F00', '#000000', true])
     expect(await colors(' far ahead '), surface).toEqual(['#D55E00', '#000000', true])
-    expect(await colors(' 50% '), `${surface} spend`).toEqual(['#E69F00', '#000000', true])
     const texts = await ui.findAll({ type: 'Text' })
     const inColor = texts.filter(t => t.props.color !== undefined && t.props.color !== '#000000').map(t => t.text)
     expect(inColor, `${surface} text in color`).toEqual(surface === 'terminal' ? [' (', 'main', ')'] : [])

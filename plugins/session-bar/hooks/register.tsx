@@ -3,13 +3,48 @@ import type { EngineInterface, Register, SessionUsage } from 'claude-code'
 
 import type { AgentReading, Git } from '../types'
 import {
-  type BarInput, type Ink, type Run, type Segment, GAP, SEP, folderName, modelLabel, parseContext, parseGit, parseWindowSize, parseWindows, segments, stepTokens,
+  type BarInput, type Ink, type Run, type Segment, GAP, SEP, folderName, modelLabel, parseContext, parseGit, parseWindowSize, segments, stepTokens, toWindows,
 } from './bar'
+import { type Limit, REFRESH_EVERY, STORED, fetchLimits } from './usage'
 
 const agents = atom({ plugin: 'session-bar', key: 'agents' } as const, {} as Record<string, AgentReading>)
 const git = atom({ plugin: 'session-bar', key: 'git' } as const, null as Git | null)
 const where = atom({ plugin: 'session-bar', key: 'where' } as const, null as string | null)
 const tick = atom({ plugin: 'session-bar', key: 'tick' } as const, 0)
+const limits = atom({ plugin: 'session-bar', key: 'limits' } as const, [] as Limit[])
+
+// one fetch at a time; a second caller shares the first one's answer
+let inFlight: Promise<void> | null = null
+
+const applyLimits = async ($: EngineInterface) => {
+  const next = await fetchLimits($)
+  if (!next) return
+  await $.store.set(STORED, next)
+  await update($, limits, () => next)
+}
+
+const refreshLimits = ($: EngineInterface): Promise<void> => {
+  inFlight ??= applyLimits($).finally(() => {
+    inFlight = null
+  })
+  return inFlight
+}
+
+// the last reading from an earlier session stands in until the first fetch lands
+const loadLimits = async ($: EngineInterface) => {
+  const stored = await $.store.get(STORED)
+  if (!Array.isArray(stored) || (await read($, limits)).length) return
+  await update($, limits, () => stored as Limit[])
+}
+
+// a module variable on purpose: a reload drops the timer with it, and the next hook starts it again
+let isRefreshing = false
+
+const startRefreshing = ($: EngineInterface) => {
+  if (isRefreshing) return
+  isRefreshing = true
+  $.clock.every(REFRESH_EVERY, () => void refreshLimits($))
+}
 
 // Okabe-Ito colors, told apart with the common color vision deficiencies; orange and vermillion
 // also differ in lightness. Fixed, not theme keys, so black on each keeps 5:1 in light and dark themes.
@@ -95,8 +130,11 @@ const startTicking = ($: EngineInterface) => {
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const started = await next(e)
+    await loadLimits($)
     startTicking($)
+    startRefreshing($)
     void refreshRepo($)
+    void refreshLimits($)
     return started
   })
 
@@ -104,6 +142,7 @@ export const register: Register = on => {
     const done = await next(e)
     startTicking($)
     void refreshRepo($)
+    void refreshLimits($)
     return done
   })
 
@@ -126,12 +165,12 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.props.hasSurvey) return next(e)
-    const [g, w, now, usage, root] = await Promise.all([read($, git), read($, where), $.clock.now(), $.session.usage(), $.session.root(), read($, tick)])
+    const [g, w, now, usage, root, lim] = await Promise.all([read($, git), read($, where), $.clock.now(), $.session.usage(), $.session.root(), read($, limits), read($, tick)])
     // `/cd` raises no event the bar can rely on, and its output redraws the band
     if (root !== readRoot) void refreshRepo($)
     const agentId = e.props.view?.agentId
     const shown = agentId ? await agentView($, agentId) : await mainView($, usage)
-    const { left, right } = segments({ where: w, git: g, ...shown, windows: parseWindows(usage.rateLimits), now }, e.props.bodyColumns)
+    const { left, right } = segments({ where: w, git: g, ...shown, windows: toWindows(lim), now }, e.props.bodyColumns)
     const { Box, Text } = $.ui.resolve(e)
     const zone = (segs: Segment[]) => segs
       .flatMap((seg, i): Run[] => (i ? [{ text: SEP, tone: 'dim' }, ...seg] : seg))

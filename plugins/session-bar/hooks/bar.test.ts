@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { type BarInput, type Segment, type Window, GAP, SEP, folderName, modelLabel, parseContext, parseGit, parseWindows, segments, stepTokens } from './bar'
+import { type BarInput, type Segment, type Window, GAP, SEP, folderName, modelLabel, parseContext, parseGit, segments, stepTokens, toWindows } from './bar'
 
 const NOW = 1_792_162_404_000
 const MIN = 60_000
@@ -312,22 +312,20 @@ describe('segments', () => {
 })
 
 describe('boundary parsing', () => {
-  test('rate limits by kind, in table order, others ignored', () => {
-    const resets = new Date(NOW + 46 * MIN).toISOString()
-    expect(parseWindows([
-      { kind: 'seven_day', percentUsed: 43 },
-      { kind: 'weekly_opus', percentUsed: 12 },
-      { kind: 'five_hour', percentUsed: 66, resetsAt: resets },
+  test('limits come out as 5h, 7d, then each model, whatever order they came in', () => {
+    expect(toWindows([
+      { kind: 'model', name: 'Fable', percent: 12, resetsAt: NOW + 3 * HOUR },
+      { kind: 'seven_day', percent: 43, resetsAt: null },
+      { kind: 'five_hour', percent: 66, resetsAt: NOW + 46 * MIN },
     ])).toEqual([
       { label: '5h', percent: 66, resetsAt: NOW + 46 * MIN, length: 5 * HOUR },
       { label: '7d', percent: 43, resetsAt: null, length: 168 * HOUR },
+      { label: 'Fable', percent: 12, resetsAt: NOW + 3 * HOUR, length: 168 * HOUR },
     ])
   })
 
-  test('a percent that is not a number leaves the window out; a reset that does not parse is none', () => {
-    expect(parseWindows([{ kind: 'five_hour', percentUsed: NaN }])).toEqual([])
-    expect(parseWindows([{ kind: 'five_hour', percentUsed: 20, resetsAt: 'soon' }]))
-      .toEqual([{ label: '5h', percent: 20, resetsAt: null, length: 5 * HOUR }])
+  test('a limit whose percent is not a number is left out', () => {
+    expect(toWindows([{ kind: 'five_hour', percent: NaN, resetsAt: null }])).toEqual([])
   })
 
   test('the context needs its tokens and a window above 0', () => {

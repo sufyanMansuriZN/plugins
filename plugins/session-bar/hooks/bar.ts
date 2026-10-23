@@ -1,11 +1,12 @@
-import type { SessionContextUsage, SessionRateLimit, TurnUsage } from 'claude-code'
+import type { SessionContextUsage, TurnUsage } from 'claude-code'
 
 import type { Git } from '../types'
+import type { Limit } from './usage'
 
 export type { Git }
 // window: the main view knows the model's window; a subagent's view knows only its tokens
 export type Ctx = { kind: 'window'; tokens: number; window: number } | { kind: 'tokens'; tokens: number }
-export type Window = { label: '5h' | '7d' | '$'; percent: number; resetsAt: number | null; length: number | null }
+export type Window = { label: string; percent: number; resetsAt: number | null; length: number | null }
 // where: the repo's name, or the directory's outside a repo
 export type BarInput = {
   where: string | null; git: Git | null; agent: string | null; model: string | null; ctx: Ctx | null; windows: Window[]; now: number
@@ -29,21 +30,20 @@ export const SEP = ' · '
 export const GAP = SEP.length
 
 const HOUR = 3_600_000
-const WINDOWS = [
-  ['five_hour', '5h', 5 * HOUR],
-  ['seven_day', '7d', 168 * HOUR],
-  ['spend_limit', '$', null],
-] as const
+const WEEK = 168 * HOUR
 
 const finite = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value)
 
-export const parseWindows = (limits: readonly SessionRateLimit[]): Window[] =>
-  WINDOWS.flatMap(([kind, label, length]) => {
-    const limit = limits.find(l => l.kind === kind)
-    if (!limit || !finite(limit.percentUsed)) return []
-    const resetsAt = typeof limit.resetsAt === 'string' ? Date.parse(limit.resetsAt) : NaN
-    return [{ label, percent: limit.percentUsed, resetsAt: finite(resetsAt) ? resetsAt : null, length }]
-  })
+// the 5h and 7d windows come first, then each model's weekly window in the order the endpoint gave them
+const ORDER: Record<Limit['kind'], number> = { five_hour: 0, seven_day: 1, model: 2 }
+
+export const toWindows = (limits: readonly Limit[]): Window[] =>
+  [...limits]
+    .sort((a, b) => ORDER[a.kind] - ORDER[b.kind])
+    .filter(l => finite(l.percent))
+    .map(l =>
+      l.kind === 'five_hour' ? { label: '5h', percent: l.percent, resetsAt: l.resetsAt, length: 5 * HOUR }
+      : { label: l.kind === 'seven_day' ? '7d' : (l.name ?? 'Model'), percent: l.percent, resetsAt: l.resetsAt, length: WEEK })
 
 export const parseContext = (context: SessionContextUsage): Ctx | null =>
   finite(context.tokens) && finite(context.window) && context.window > 0
@@ -101,7 +101,7 @@ export const countdown = (ms: number) => {
 const threshold = (value: number, yellow: number, red: number): Tone =>
   value >= red ? 'red' : value >= yellow ? 'yellow' : 'plain'
 
-const CELLS = 8
+const CELLS = 5
 
 // delta: percent - mark, where mark is where an even pace stands now; tick: the cell boundary nearest the mark, 0..CELLS
 type Pace = { kind: 'ahead' | 'on' | 'behind' | 'spent'; delta: number; tick: number }
@@ -210,8 +210,7 @@ const rowWidth = (row: Segment[]) => row.reduce((n, s) => n + width(s), 0) + SEP
 // the cells the right zone takes with the gap before it; an empty zone takes none
 const rightWidth = (right: Segment[]) => (right.length ? GAP + rowWidth(right) : 0)
 
-const gitText = ({ branch, added, changed }: Git) =>
-  branch + (added ? ` +${added}` : '') + (changed ? ` ~${changed}` : '')
+const gitText = ({ branch }: Git) => branch
 
 type Key = 'where' | 'branch' | 'agent' | 'model'
 type Name = { key: Key; text: string; tone: 'plain' | 'dim' }

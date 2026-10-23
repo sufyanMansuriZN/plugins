@@ -33,7 +33,7 @@ Each part is left out when it has no value. The left zone has the repo, git, age
 - **agent**: only while a subagent's transcript is open. Its type, such as `Explore`, in dim text.
 - **model**: the model's name, such as `Opus 5.5`. In the main conversation, the context window size follows it (`1M`, `200K`). For a subagent, it is the model that subagent's requests use. It shows from the subagent's first request.
 - **ctx**: in the main conversation, a meter of the context window and the tokens in the context (`60K`). From the tick, the count has a vermillion background. It shows after the first response. See [Context meter](#context-meter). For a subagent, the input tokens of its last request (`ctx 42K`), with no meter.
-- **5h**, **7d**, **$**: the 5-hour and 7-day usage windows and the spend limit. They are for the whole account, so they show in every view. Each one shows a meter, the percent used, a word for the pace when you are off pace, and the time to the reset (`2h10m`), with no icon before it.
+- **5h**, **7d**, and one per model with its own weekly limit: the usage windows. They are for the whole account, so they show in every view. Each one shows a meter, the percent used, a word for the pace when you are off pace, and the time to the reset (`2h10m`), with no icon before it.
 
 ### Meter and pace
 
@@ -123,14 +123,9 @@ Three things get a colored background:
 
 Below those values, the percent or the token count is in the normal color.
 
-### Spend limit
+### Model windows
 
-The spend limit (`$`) has no reset time, so it has no pace. Its meter has no tick, and it shows no word. From 50%, the percent has an orange background. From 80%, it is vermillion. The meter stays in the normal color:
-
-```
-$ ━━━───── 40%
-$ ━━━━━━╾─  80%
-```
+A model with its own weekly limit, such as Fable, gets a meter named after the model. It is a 7-day window, so its meter has a pace tick like the 7d one. It shows last, after 5h and 7d.
 
 ### Narrow bands
 
@@ -152,8 +147,9 @@ These rules are for whoever changes the plugin. The tests in `tests/` hold the e
 - **Git.** `git --no-optional-locks status --porcelain=v2 --branch`, run with `$.process.run` in `$.session.root()`, with a 2-second limit. A slow or failed run leaves out the git part, and the band still draws. A detached HEAD with no commit reads `HEAD`.
 - **Repo name.** The last part of the path of the first tree that `git worktree list --porcelain` names. A failed read keeps the last value. The name is written to state only when it changes.
 - **Refresh.** A `$.clock.every(30000)` timer and each `session.measure` bump a `tick` state value, so countdowns move while idle and new usage shows at once. Git is read at session start, at each turn's end, on the timer, and when the band draws with a root other than the one last read.
+- **Usage.** Every usage meter comes from one call to the account's usage endpoint, made with `$.http.fetch` and the handle from `$.session.authorize()`, so the plugin never sees the credential. It runs at session start, at each turn's end, and every 5 minutes. The last reading is kept in `$.store`, so a new session draws it until the first fetch lands. The render only reads that reading and never fetches. If the call fails or the reply has no windows, the last reading stays.
 - **Subagents.** The band reads `e.props.view`. The plugin learns each subagent's model and input tokens (uncached, cache read and cache written) from `turn.step` events that carry `agentId`. It writes state only when a reading changes. Main-loop steps write nothing. The type comes from `$.agent.list()`.
 - **Model label.** `claude-<name>-<major>-<minor>`, with an optional `-<8-digit date>` and `[1m]`, reads `<Name> <major>.<minor>`. An id of any other shape shows as given.
-- **Inputs are parsed where they enter.** A rate limit with a `percentUsed` that is not a finite number is left out. A `resetsAt` that does not parse counts as no reset time. A context with no finite `tokens`, or a `window` that is not above 0, is left out. Rate-limit kinds other than `five_hour`, `seven_day` and `spend_limit` are ignored.
+- **Inputs are parsed where they enter.** A limit with a `percent` that is not a finite number is left out. A `resetsAt` that does not parse counts as no reset time. A context with no finite `tokens`, or a `window` that is not above 0, is left out. Usage limits other than the session, the weekly total and a model's weekly window are ignored.
 - **Pace.** `mark` = the share of the window gone × 100, and `delta` = percent − mark. 100% or more is used up. Within 5 points is on pace. Ahead by more than 20 is far ahead. The tick stands at cell boundary round(mark / 12.5). The meter has halves = round(percent / 100 × 16), capped at 16.
 - **Colors.** Orange `#E69F00`, vermillion `#D55E00`, sky blue `#56B4E9`, with bold `#000000` text, fixed in every theme.

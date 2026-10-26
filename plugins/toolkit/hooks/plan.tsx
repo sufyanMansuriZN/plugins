@@ -21,7 +21,7 @@ const DESCRIPTION = `Keep the task list the terminal shows above the prompt whil
 
 Never spend a message on this tool alone: send it IN THE SAME MESSAGE as another tool call (in parallel), so it costs no extra round trip.
 - First call: with the VERY FIRST tool call of the turn, even one that only reads or lists files: {"items": [...]}, the whole plan in order, short imperative phrases (at most ~7 words, no numbering), the step you are starting "in_progress", the rest "pending". If you must look around first, make "Look at how X is set up" step one and refine the list once you know.
-- Next step: {"advance": true} alongside the call that begins it (completes the in_progress step, starts the next pending one); after the last step, advance alongside wrap_up.
+- Next step: {"advance": true} alongside the call that begins it (completes the in_progress step, starts the next pending one); after the last step, advance alongside wrap_up, and let your reply say what now works: the list goes when the turn ends.
 - Out of order: {"done": [2], "start": 4} (1-based).
 - Plan changed, including right after the user interrupts or sends a new instruction mid-task: {"items": [...]} again, the new whole list, so the list never shows an abandoned plan.
 Keep exactly one step in_progress while working and none when everything is done. Do not also write the plan as a numbered list in your message: the list above the prompt is the plan.`
@@ -111,14 +111,16 @@ const MARKS: Record<PlanStatus, { mark: string; color?: 'success' | 'claude' }> 
 
 /**
  * The steps a list of at most `rows` rows shows: the step in progress (or the first open one),
- * the one done before it, then what comes next. A longer plan gives a row to the count it leaves out.
+ * the one done before it, then what comes next; a finished plan shows its last steps.
+ * A longer plan gives a row to the count it leaves out.
  */
 export function windowSteps(plan: PlanStep[], rows: number): { shown: [number, PlanStep][]; hidden: number } {
   const all = plan.map((step, index): [number, PlanStep] => [index, step])
   if (plan.length <= rows) return { shown: all, hidden: 0 }
   const size = Math.max(1, rows - 1)
   const current = plan.findIndex(step => step.status === 'in_progress')
-  const anchor = current >= 0 ? current : Math.max(0, plan.findIndex(step => step.status !== 'completed'))
+  const open = plan.findIndex(step => step.status !== 'completed')
+  const anchor = current >= 0 ? current : open >= 0 ? open : plan.length - 1
   const first = Math.max(0, Math.min(anchor - 1, plan.length - size))
   return { shown: all.slice(first, first + size), hidden: plan.length - size }
 }
@@ -152,7 +154,7 @@ function drawSteps(elements: Elements['terminal'], plan: PlanStep[], rows: numbe
           </Text>
         </Box>
       ))}
-      {hidden > 0 ? toggleLink(elements, `… +${hidden} more`, toggle) : isOpen ? toggleLink(elements, 'show less', toggle) : null}
+      {hidden > 0 ? toggleLink(elements, `… +${hidden} ${isDone(plan) ? 'completed' : 'more'}`, toggle) : isOpen ? toggleLink(elements, 'show less', toggle) : null}
     </Box>
   )
 }
@@ -225,6 +227,15 @@ export const register: Register = on => {
       return 'deny' in result ? (was ?? null) : { steps: result, prompts }
     })
     return 'deny' in result ? result : { result: summary(result) }
+  })
+
+  // A finished list stays under the spinner for the rest of its turn, as Claude Code's own list does, and goes with the next one.
+  // Clearing it as the next turn starts, not as this one ends, holds for a stopped turn and a crash too.
+  on('turn.start', { turnId: /[\s\S]*/ }, async ($, e, next) => {
+    if (e.agentId !== undefined) return next(e)
+    const plan = await read($, PLAN)
+    if (plan && isDone(plan.steps)) await $.state.set(PLAN, null)
+    return next(e)
   })
 
   // Claude Code keeps an unfinished list above the prompt once the turn stops, and a finished one goes.

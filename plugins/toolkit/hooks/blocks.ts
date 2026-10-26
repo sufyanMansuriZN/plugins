@@ -4,6 +4,9 @@ import type { Quote } from './quotes'
 import { splitTables } from './tables'
 import type { Table } from './tables'
 
+/** A reply that says nothing, such as the `.` Claude writes after a next step box, or `_` or a zero-width space. */
+export const isPlaceholder = (text: string) => /^[\s​_.…-]*$/.test(text)
+
 export type Block =
   | { kind: 'text'; text: string }
   | { kind: 'mermaid'; fence: string; source: string }

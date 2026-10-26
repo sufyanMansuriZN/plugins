@@ -1,9 +1,10 @@
 import { read, update } from 'claude-code'
-import type { EngineInterface, Register } from 'claude-code'
+import type { Elements, EngineInterface, Register } from 'claude-code'
 
 import type { Brief, LinkedSession, Proposal } from '../types'
 import {
   BACKGROUND_MIN,
+  cardAnchor,
   EFFORTS,
   MODES,
   NAME_MAX,
@@ -33,11 +34,12 @@ export const LIST_TOOL = 'mcp__toolkit__list_sessions'
 const LINKED = { plugin: 'toolkit', key: 'linked' } as const
 const PROPOSALS = { plugin: 'toolkit', key: 'proposals' } as const
 const LAUNCHING = { plugin: 'toolkit', key: 'launching' } as const
+const CARDS_AT = { plugin: 'toolkit', key: 'cardsAt' } as const
 
 const POLL_MS = 4000
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000
 
-const START_DESCRIPTION = `Start a separate Claude Code session for a task while you stay with the user (when: see "Starting other sessions"). It runs as a background session (\`claude --bg\`) the user can open with \`claude attach\`, talk to and stop. \`initiation\` says who wants it: "user_asked" starts it now and returns its name and id; "offer" is for a task the user named in their latest message (new work here, or "suggest / split off / make a task or session for X"): called with a title alone, it asks the user "New session" or "Do it here" and WAITS for their answer, so it must be the only call in that message (no update_plan, no other tool); the result then tells you to carry on here, or to send the brief with proposal_id so the session starts; "own_initiative" is for work you propose yourself that the user has not told you to do — something you noticed, or the follow-up your own answer or work turned up (when your reply calls work a follow-up or a separate PR, propose it here rather than only saying so, unless it acts on what this session just found and so stays here), never what "Starting other sessions" keeps here or gives to a subagent; the user sees a card and nothing runs until they start it, by pressing Start on it or by telling you (then call this again with just proposal_id).
+const START_DESCRIPTION = `Start a separate Claude Code session for a task while you stay with the user (when: see "Starting other sessions"). It runs as a background session (\`claude --bg\`) the user can open with \`claude attach\`, talk to and stop. \`initiation\` says who wants it: "user_asked" starts it now and returns its name and id; "offer" is for a task the user named in their latest message (new work here, or "suggest / split off / make a task or session for X"): called with a title alone, it asks the user "New session" or "Do it here" and WAITS for their answer, so it must be the only call in that message (no update_plan, no other tool); the result then tells you to carry on here, or to send the brief with proposal_id so the session starts; "own_initiative" is for work you propose yourself that the user has not told you to do — something you noticed, or the follow-up your own answer or work turned up (when your reply calls work a follow-up or a separate PR, propose it here rather than only saying so, unless it acts on what this session just found and so stays here), never a part of what the user asked this turn, never what "Starting other sessions" keeps here or gives to a subagent; the user sees a card and nothing runs until they start it, by pressing Start on it or by telling you (then call this again with just proposal_id).
 "user_asked" and "own_initiative" both need a \`prompt\` — the brief: the task, the files or area, what done looks like — and the call is refused without it; \`background\` does not stand in for it. Only an "offer" is a title alone.
 context: "fork" = this whole conversation + your \`prompt\`. "fresh" (default) = your \`prompt\` + \`background\` only, so \`background\` is required too, at least 80 characters.
 Checkout here ("fresh" only): use_worktree false = shares this checkout and can edit it (in a worktree session its branch and PR too: never for work that ends in a branch or PR of its own or belongs in another repository); true = its own worktree (the default when this session is in one).
@@ -345,6 +347,105 @@ async function accept($: EngineInterface, plan: { taskId: string; prompt: string
   return 'error' in started ? { deny: started.error } : { result: started.text }
 }
 
+// A plain dim link. hover underlines the nearest keyed Box, so each button gets its own.
+const link = ({ Box, Button }: Elements['terminal'], key: string, label: string, onPress: () => void, isDim = false) => (
+  <Box key={`hover:${key}`}>
+    <Button key={key} plain dimColor={isDim} hover={{ underline: true }} label={label} onPress={onPress} />
+  </Box>
+)
+
+/** Drawn as the engine draws a tool row: a bullet, the heading and title, then `line` under ⎿. */
+function frame({ Box, Text }: Elements['terminal'], heading: string, title: string, line: JSX.Element) {
+  return (
+    <Box flexDirection="column" marginTop={1}>
+      <Box flexDirection="row">
+        <Box width={2} minWidth={2}>
+          <Text>●</Text>
+        </Box>
+        <Text>
+          <Text weight="semibold">{heading}</Text> {title}
+        </Text>
+      </Box>
+      <Box flexDirection="row">
+        <Box width={5} minWidth={5}>
+          <Text dimColor>{'  ⎿  '}</Text>
+        </Box>
+        <Box flexGrow={1}>{line}</Box>
+      </Box>
+    </Box>
+  )
+}
+
+function sessionLine($: EngineInterface, elements: Elements['terminal'], session: LinkedSession) {
+  const { Box, Text } = elements
+  const stop = () => void $.process.run(['claude', 'stop', session.id]).then(() => tick($))
+  const copy = () => void $.ui.copy({ text: `claude attach ${session.id}`, surface: 'terminal' })
+  return (
+    <Box flexDirection="row" flexWrap="wrap">
+      <Text>{`${session.name} · ${session.state === 'gone' ? 'removed' : session.state}${session.branch ? ` · ${session.branch}` : ''}  `}</Text>
+      {link(elements, 'attach', `claude attach ${session.id}`, copy)}
+      {session.state === 'working' ? [<Text dimColor>{'  ·  '}</Text>, link(elements, 'stop', 'stop', stop, true)] : []}
+    </Box>
+  )
+}
+
+/** An own_initiative card: Start and Dismiss while open, then the session it started, or how it ended. */
+async function drawCard($: EngineInterface, elements: Elements['terminal'], taskId: string) {
+  const { Box, Text } = elements
+  const proposal = await read($, { ...PROPOSALS, id: taskId })
+  if (!proposal) return <Box />
+  // Only a started card reads the linked sessions, which the poll rewrites every few seconds.
+  const session = proposal.status === 'started' ? ((await read($, LINKED)) ?? []).find(s => s.callId === taskId) : undefined
+  if (session) return frame(elements, 'New session', proposal.title, sessionLine($, elements, session))
+  const start = () =>
+    void (async () => {
+      if (!proposal.brief) return
+      const started = await startProposal($, proposal, proposal.brief)
+      if ('error' in started) return $.ui.toast(`toolkit: ${started.error}`)
+      // Claude learns of it as the user's own word, as on Desktop.
+      await $.prompt.submit({ text: `I started the suggested session "${proposal.title}" (${proposal.taskId}).`, asUser: true })
+    })()
+  const dismiss = () => void update($, { ...PROPOSALS, id: taskId }, was => (was && was.status === 'open' ? { ...was, status: 'dismissed' as const } : (was ?? null)))
+  const expired = Date.now() - proposal.createdAt > WEEK_MS
+  const line =
+    proposal.status === 'open' && !expired ? (
+      <Box flexDirection="row" flexWrap="wrap">
+        {link(elements, `start:${taskId}`, 'Start', start)}
+        <Text dimColor>{'  ·  '}</Text>
+        {link(elements, `dismiss:${taskId}`, 'Dismiss', dismiss, true)}
+      </Box>
+    ) : (
+      <Text dimColor>{expired && proposal.status === 'open' ? 'Expired' : proposal.status === 'dismissed' ? 'Dismissed' : proposal.status === 'started' ? `Started as ${proposal.session}` : proposal.status}</Text>
+    )
+  return frame(elements, 'Suggested session', proposal.title, line)
+}
+
+/**
+ * Moves the turn's open or started cards under its last reply text. The transcript may not hold the
+ * turn's last rows yet when it ends, so it is read again for up to three seconds; a miss leaves the
+ * cards on their calls' rows.
+ */
+async function moveCards($: EngineInterface, since: number, answer: string) {
+  const [home, sessionId, cwd] = await Promise.all([$.env.get('HOME').then(home => home ?? ''), $.session.id(), $.session.cwd()])
+  const path = transcriptPath(home, cwd, sessionId)
+  let anchor = cardAnchor(await transcriptTail($, path), since, answer)
+  for (let tries = 0; anchor === 'behind' && tries < 10; tries++) {
+    await $.clock.sleep(300)
+    anchor = cardAnchor(await transcriptTail($, path), since, answer)
+  }
+  if (anchor === null || anchor === 'behind') return $.ui.log(`toolkit: the suggested sessions stay on their calls' rows: ${anchor === null ? 'no reply text or proposal in the transcript' : 'the transcript did not catch up'}`, { to: 'debug' })
+  const taskIds: string[] = []
+  for (const id of anchor.toolUseIds) {
+    const proposal = await read($, { ...PROPOSALS, id: taskIdOf(id) })
+    if (proposal?.status === 'open' || proposal?.status === 'started') taskIds.push(proposal.taskId)
+  }
+  if (taskIds.length === 0) return
+  // The reply draws the cards before their rows stop drawing them, so no frame shows neither.
+  const { uuid } = anchor
+  await $.state.set({ ...CARDS_AT, id: uuid }, taskIds)
+  for (const taskId of taskIds) await update($, { ...PROPOSALS, id: taskId }, was => (was ? { ...was, movedTo: uuid } : null))
+}
+
 export const register: Register = on => {
   // Desktop starts its own sessions, and a -p run has no one to answer a card.
   on('session.start', { surface: 'terminal', isInteractive: true }, async ($, e, next) => {
@@ -383,9 +484,31 @@ export const register: Register = on => {
   // A session start_session started reports each of its turns to the session that started it, a
   // follow-up's too: Claude Code tells a sender of that turn only when it asked with notify_when_idle.
   on('turn.complete', async ($, e, next) => {
+    const startedAt = Date.now() - e.durationMs
     const result = await next(e)
     if (e.agentId === undefined) void reportBack($, e.reason, e.answer).catch(err => $.ui.log(`toolkit: could not send the report: ${String(err)}`, { to: 'debug' }))
+    // An error or refusal may end on a row the transcript never draws, so its cards stay on their calls' rows.
+    if (e.agentId === undefined && proposedThisTurn > 0 && (e.reason === 'answer' || e.reason === 'aborted')) {
+      void moveCards($, startedAt, e.answer).catch(err => $.ui.log(`toolkit: could not move the suggested sessions under the reply: ${String(err)}`, { to: 'debug' }))
+    }
     return result
+  })
+
+  // A turn's suggested sessions, under its last reply text, so they come after the whole reply.
+  on('ui.render', { surface: 'terminal', component: 'AssistantMessage' }, async ($, e, next) => {
+    if (e.props.isSummary) return next(e)
+    const taskIds = await read($, { ...CARDS_AT, id: e.requestId })
+    if (!taskIds?.length) return next(e)
+    const reply = await next(e)
+    const elements = $.ui.resolve(e)
+    const { Box } = elements
+    const cards = await Promise.all(taskIds.map(taskId => drawCard($, elements, taskId)))
+    return (
+      <Box flexDirection="column">
+        {reply}
+        {cards}
+      </Box>
+    )
   })
 
   on('tool.call', { tool: START_TOOL }, async ($, e) => {
@@ -406,7 +529,7 @@ export const register: Register = on => {
       proposedThisTurn++
       await $.state.set({ ...PROPOSALS, id: taskId }, { taskId, title: plan.brief.title, initiation: 'own_initiative', brief: plan.brief, status: 'open', session: null, createdAt: Date.now() })
       return {
-        result: `Proposed as task_id "${taskId}": a card the user can start with its Start button. Nothing runs until they start it; if they tell you to, call start_session with just this proposal_id. It expires after a week. If it goes stale, withdraw it with dismiss_task.`,
+        result: `Proposed as task_id "${taskId}": a card the user can start with its Start button, shown under your reply once this turn ends. Nothing runs until they start it; if they tell you to, call start_session with just this proposal_id. It expires after a week. If it goes stale, withdraw it with dismiss_task. If it is part of what the user asked this turn (other than plan steps split off after ExitPlanMode), withdraw it now with dismiss_task and do it here.`,
       }
     }
 
@@ -463,84 +586,29 @@ export const register: Register = on => {
   on('ui.render', { surface: 'terminal', component: 'ToolUse', props: { tool: /^mcp__toolkit__(start_session|hand_off_to_session)$/ } }, async ($, e, next) => {
     if (e.props.isExpanded || e.props.isErrored) return next(e)
     const input = (e.props.input ?? {}) as Record<string, unknown>
-    const { Box, Button, Text } = $.ui.resolve(e)
+    const elements = $.ui.resolve(e)
+    const { Box, Text } = elements
     const proposalId = typeof input.proposal_id === 'string' ? input.proposal_id : null
     const taskId = proposalId ?? taskIdOf(e.props.tool_use_id)
     const proposal = await read($, { ...PROPOSALS, id: taskId })
+    // A card moved under its turn's reply leaves its call's row empty; the call that started it keeps its row.
+    if (proposal?.initiation === 'own_initiative' && proposalId === null) return proposal.movedTo ? <Box /> : drawCard($, elements, taskId)
     const linked = (await read($, LINKED)) ?? []
     // An offer's row keeps the user's answer; the call that sent its brief shows the session.
     const isOfferCard = proposal?.initiation === 'offer' && proposalId === null
     const session = linked.find(s => s.callId === e.props.tool_use_id || (!isOfferCard && s.callId === taskId))
     const title = proposal?.title ?? (typeof input.title === 'string' ? input.title : 'session')
 
-    const link = (key: string, label: string, onPress: () => void, isDim = false) => (
-      <Box key={`hover:${key}`}>
-        <Button key={key} plain dimColor={isDim} hover={{ underline: true }} label={label} onPress={onPress} />
-      </Box>
-    )
-    let heading = e.props.tool === HAND_OFF_TOOL ? 'Handed off' : 'New session'
-    let line: JSX.Element
-    if (session) {
-      const stop = () => void $.process.run(['claude', 'stop', session.id]).then(() => tick($))
-      const copy = () => void $.ui.copy({ text: `claude attach ${session.id}`, surface: e.surface })
-      line = (
-        <Box flexDirection="row" flexWrap="wrap">
-          <Text>{`${session.name} · ${session.state === 'gone' ? 'removed' : session.state}${session.branch ? ` · ${session.branch}` : ''}  `}</Text>
-          {link('attach', `claude attach ${session.id}`, copy)}
-          {session.state === 'working' ? [<Text dimColor>{'  ·  '}</Text>, link('stop', 'stop', stop, true)] : []}
-        </Box>
-      )
-    } else if (proposal?.initiation === 'own_initiative') {
-      heading = 'Suggested session'
-      const start = () =>
-        void (async () => {
-          if (!proposal.brief) return
-          const started = await startProposal($, proposal, proposal.brief)
-          if ('error' in started) return $.ui.toast(`toolkit: ${started.error}`)
-          // Claude learns of it as the user's own word, as on Desktop.
-          await $.prompt.submit({ text: `I started the suggested session "${proposal.title}" (${proposal.taskId}).`, asUser: true })
-        })()
-      const dismiss = () => void update($, { ...PROPOSALS, id: taskId }, was => (was && was.status === 'open' ? { ...was, status: 'dismissed' as const } : (was ?? null)))
-      const expired = Date.now() - proposal.createdAt > WEEK_MS
-      line =
-        proposal.status === 'open' && !expired ? (
-          <Box flexDirection="row" flexWrap="wrap">
-            {link('start', 'Start', start)}
-            <Text dimColor>{'  ·  '}</Text>
-            {link('dismiss', 'Dismiss', dismiss, true)}
-          </Box>
-        ) : (
-          <Text dimColor>{expired && proposal.status === 'open' ? 'Expired' : proposal.status === 'dismissed' ? 'Dismissed' : proposal.status === 'started' ? `Started as ${proposal.session}` : proposal.status}</Text>
-        )
-    } else if (proposal?.initiation === 'offer') {
-      heading = 'New task'
+    const heading = e.props.tool === HAND_OFF_TOOL ? 'Handed off' : 'New session'
+    if (session) return frame(elements, heading, title, sessionLine($, elements, session))
+    if (proposal?.initiation === 'offer') {
       const said = { open: 'New session or do it here?', new_session: 'You chose: New session', here: 'You chose: Do it here', started: `Started as ${proposal.session}`, dismissed: 'Closed' }
-      line = <Text dimColor>{said[proposal.status]}</Text>
-    } else if (await read($, { ...LAUNCHING, id: e.props.tool_use_id })) {
-      line = <Text dimColor>starting…</Text>
-    } else {
-      if (e.props.isRunning) return next(e)
-      line = <Text dimColor>{typeof input.target === 'string' && input.target === 'cloud' ? 'cloud session' : 'not linked here'}</Text>
+      return frame(elements, 'New task', title, <Text dimColor>{said[proposal.status]}</Text>)
     }
-
-    return (
-      <Box flexDirection="column" marginTop={1}>
-        <Box flexDirection="row">
-          <Box width={2} minWidth={2}>
-            <Text>●</Text>
-          </Box>
-          <Text>
-            <Text weight="semibold">{heading}</Text> {title}
-          </Text>
-        </Box>
-        <Box flexDirection="row">
-          <Box width={5} minWidth={5}>
-            <Text dimColor>{'  ⎿  '}</Text>
-          </Box>
-          <Box flexGrow={1}>{line}</Box>
-        </Box>
-      </Box>
-    )
+    // A proposal starts under its task id, a direct start under its call's.
+    if (await read($, { ...LAUNCHING, id: proposalId ?? e.props.tool_use_id })) return frame(elements, heading, title, <Text dimColor>starting…</Text>)
+    if (e.props.isRunning) return next(e)
+    return frame(elements, heading, title, <Text dimColor>{typeof input.target === 'string' && input.target === 'cloud' ? 'cloud session' : 'not linked here'}</Text>)
   })
 
   // The row above says it all; an error keeps the engine's drawing, so its reason shows.

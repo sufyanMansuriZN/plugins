@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { backgroundedId, latestReport, linkPath, parseAgents, parseLink, planHandOff, planStart, reportText, sessionName, shortId, startCommand } from './sessions-model'
+import { backgroundedId, cardAnchor, latestReport, linkPath, parseAgents, parseLink, planHandOff, planStart, reportText, sessionName, shortId, startCommand } from './sessions-model'
 import type { Caller } from './sessions-model'
 
 const caller = (over: Partial<Caller> = {}): Caller => ({
@@ -203,4 +203,34 @@ test('the report names the session and how its turn ended', () => {
   expect(text.endsWith('\n\nDone.')).toBe(true)
   expect(reportText('fix', 'abc12345', 'aborted', '')).toContain('was stopped in the middle of a turn')
   expect(reportText('fix', 'abc12345', 'error', '').endsWith('(no report)')).toBe(true)
+})
+
+test('a turn\'s cards go under its last reply text, once the transcript holds the turn\'s final text', () => {
+  const since = Date.parse('2026-10-26T10:59:00Z')
+  const at = (s: number) => `2026-10-26T10:59:${String(s).padStart(2, '0')}Z`
+  const propose = (id: string, initiation: string) => ({ type: 'tool_use', id, name: 'mcp__toolkit__start_session', input: { initiation, title: 'Check it' } })
+  const earlier = row({ type: 'assistant', uuid: 'old', timestamp: '2026-10-26T10:58:00Z', message: { content: [{ type: 'text', text: 'An earlier turn.' }] } })
+  const turn = [
+    earlier,
+    row({ type: 'user', uuid: 'u1', timestamp: at(1), message: { content: 'Check it yourself.' } }),
+    row({ type: 'assistant', uuid: 'a1', timestamp: at(2), message: { content: [{ type: 'text', text: 'Checking the shape.' }] } }),
+    row({ type: 'assistant', uuid: 'a2', timestamp: at(3), message: { content: [propose('toolu_A', 'own_initiative')] } }),
+    row({ type: 'assistant', uuid: 'a3', timestamp: at(4), message: { content: [propose('toolu_B', 'user_asked')] } }),
+    row({ type: 'assistant', uuid: 'a4', timestamp: at(5), message: { content: [{ type: 'text', text: 'Yes for the Batch IDs.' }] } }),
+  ]
+  expect(cardAnchor(turn.join('\n'), since, 'Yes for the Batch IDs.')).toEqual({ uuid: 'a4', toolUseIds: ['toolu_A'] })
+  // The final text not written yet: read again later.
+  expect(cardAnchor(turn.slice(0, 4).join('\n'), since, 'Yes for the Batch IDs.')).toBe('behind')
+  // After a next step box the final text is the hidden period; the card goes under the text before it.
+  const boxed = [...turn, row({ type: 'assistant', uuid: 'a5', timestamp: at(6), message: { content: [{ type: 'text', text: '.' }] } })]
+  expect(cardAnchor(boxed.join('\n'), since, '.')).toEqual({ uuid: 'a4', toolUseIds: ['toolu_A'] })
+  // Earlier text holds a period too, but only the period row itself says the transcript has caught up.
+  expect(cardAnchor(turn.slice(0, 4).join('\n'), since, '.')).toBe('behind')
+  // A short final text that an earlier row holds too, not yet written after a later row.
+  expect(cardAnchor(turn.join('\n'), since, 'Checking')).toBe('behind')
+  // An interrupted or thinking-only turn has no final text: no waiting, the rows as they are.
+  expect(cardAnchor(turn.join('\n'), since, '')).toEqual({ uuid: 'a4', toolUseIds: ['toolu_A'] })
+  expect(cardAnchor(turn.slice(0, 2).join('\n'), since, '')).toBe(null)
+  // No proposal this turn, though an earlier turn's text is there.
+  expect(cardAnchor([earlier, turn[2]].join('\n'), since, 'Checking the shape.')).toBe(null)
 })

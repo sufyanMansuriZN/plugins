@@ -2,7 +2,7 @@ import { read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
 import type { Diagram } from '../types'
-import { blocks } from './blocks'
+import { blocks, isPlaceholder } from './blocks'
 import { X11_CLIPBOARD_PY } from './clipboard'
 import {
   diagramId,
@@ -30,7 +30,7 @@ export const register: Register = on => {
     // $.ui.copy has no path to a remote surface's clipboard yet, and only a terminal draws pictures.
     if (e.surface !== 'terminal' || e.props.isSummary) return next(e)
     // After a next step box Claude may still send a placeholder such as `_` or a zero-width space; it says nothing, so it draws nothing.
-    if (/^[\s​_.…-]*$/.test(e.props.text)) {
+    if (isPlaceholder(e.props.text)) {
       const { Box } = $.ui.resolve(e)
       return <Box />
     }

@@ -80,6 +80,8 @@ export type Proposal = {
   /** The name of the session it started. */
   session: string | null
   createdAt: number
+  /** The reply row (message uuid) the card is drawn under once its turn ends; absent while it draws on its call's row. */
+  movedTo?: string
 }
 
 /** What a started session reads from its link file: the session id that started it, and its own name there. */
@@ -113,6 +115,8 @@ declare module 'claude-code' {
       launching: StateFamily<boolean>
       /** start_session's cards, by task id. */
       proposals: StateFamily<Proposal | null>
+      /** The own_initiative cards drawn under a reply block, by its message uuid. */
+      cardsAt: StateFamily<string[] | null>
     }
   }
 }

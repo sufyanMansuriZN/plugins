@@ -1,4 +1,5 @@
 import type { Brief, Effort, Link, LinkedSession, PermissionMode, Place } from '../types'
+import { isPlaceholder } from './blocks'
 
 export const NAME_MAX = 24
 const NAME_PATTERN = new RegExp(`^[a-z0-9-]{1,${NAME_MAX}}$`)
@@ -222,7 +223,7 @@ export function parseAgents(stdout: string): Map<string, AgentRow> {
 export const transcriptPath = (home: string, cwd: string, sessionId: string) => `${home}/.claude/projects/${cwd.replace(/[^A-Za-z0-9-]/g, '-')}/${sessionId}.jsonl`
 
 type Row = { type?: string; uuid?: string; isMeta?: boolean; timestamp?: string; message?: { content?: unknown } }
-type Block = { type?: string; text?: string; name?: string; input?: { recap?: unknown } }
+type Block = { type?: string; id?: string; text?: string; name?: string; input?: { recap?: unknown; initiation?: unknown } }
 
 const blocks = (row: Row): Block[] => (Array.isArray(row.message?.content) ? (row.message.content as Block[]) : [])
 const isPrompt = (row: Row) => row.type === 'user' && !row.isMeta && (typeof row.message?.content === 'string' || blocks(row).some(block => block.type === 'text'))
@@ -258,6 +259,37 @@ export function latestReport(jsonl: string, since = 0): { uuid: string; report: 
   if (!last?.uuid) return null
   const report = [recap, final?.text].filter((part): part is string => !!part).join('\n\n')
   return { uuid: last.uuid, report: report.length > REPORT_MAX ? `${report.slice(0, REPORT_MAX)}…` : report }
+}
+
+/**
+ * Where a turn's own_initiative cards go once it ends: under its last reply text that says something,
+ * by that row's uuid, which is the reply block's `requestId`. `'behind'` while the transcript does not
+ * yet hold the turn's final text `answer`; null when the turn has no such text or made no proposal.
+ * Rows from before `since`, the turn's start, are left out, so an earlier turn or a fork's parent never counts.
+ */
+export function cardAnchor(jsonl: string, since: number, answer: string): { uuid: string; toolUseIds: string[] } | 'behind' | null {
+  const turn: Row[] = []
+  for (const line of jsonl.split('\n')) {
+    if (line.trim() === '') continue
+    try {
+      const row = JSON.parse(line) as Row
+      if (row.timestamp && Date.parse(row.timestamp) >= since) turn.push(row)
+    } catch {
+      // A line still being written, or the first one of a file read from its end.
+    }
+  }
+  const texts = turn.flatMap(row => (row.type === 'assistant' && row.uuid ? blocks(row).flatMap(block => (block.type === 'text' && typeof block.text === 'string' ? [{ uuid: row.uuid as string, text: block.text.trim() }] : [])) : []))
+  const final = answer.trim()
+  // The transcript has caught up once its last text row holds the start of the final text, as reportBack
+  // reads it. Only the last row counts, as a short answer such as `Done.` is often in earlier text too,
+  // and a placeholder such as `.` must be that whole row.
+  const last = texts.at(-1)?.text ?? ''
+  if (final !== '' && !(isPlaceholder(final) ? last === final : last.includes(final.slice(0, 40)))) return 'behind'
+  const anchor = texts.findLast(row => !isPlaceholder(row.text))
+  const toolUseIds = turn.flatMap(row =>
+    row.type === 'assistant' ? blocks(row).flatMap(block => (block.type === 'tool_use' && block.name?.endsWith('__start_session') && block.input?.initiation === 'own_initiative' && block.id ? [block.id] : [])) : [],
+  )
+  return anchor && toolUseIds.length > 0 ? { uuid: anchor.uuid, toolUseIds } : null
 }
 
 /** A session whose process still runs, so it may work again. */

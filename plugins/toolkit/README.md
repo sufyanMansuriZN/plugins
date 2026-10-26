@@ -86,7 +86,13 @@ Gives Claude the Claude desktop app's way to hand work to a separate session: it
 - **Who asks.** As on Desktop, `initiation` says whose task it is.
   - **user_asked.** You told Claude to start it, so it starts now.
   - **offer.** You named a task ("suggest a session for X"). Claude Code's question dialog asks **New session** or **Do it here**, and Claude waits for your answer.
-  - **own_initiative.** Claude proposes a follow-up it found. It shows as a card with **Start** and **Dismiss**, and nothing runs until you press Start or tell Claude to start it. A card expires after a week. Claude withdraws a stale card with `dismiss_task`.
+  - **own_initiative.** Claude proposes a follow-up it found, beyond what you asked. It shows as a card with **Start** and **Dismiss**, and nothing runs until you press Start or tell Claude to start it. A card expires after a week. Claude withdraws a stale card with `dismiss_task`. Work you asked for in that turn is never a card: the rule and the tool tell Claude to do it in the session, or to say plainly that it is not done. Plan steps that Claude splits into parallel sessions after you accept a plan are the exception.
+- **Where a card shows.** While Claude works, a card shows on its call's row. When the turn ends, the card moves under the turn's last reply text, so it comes after the whole reply and before the next step box. After you press Start, it turns into the session's row in that place. The toolkit finds that text in the session's transcript, by the row id the reply is drawn under. The transcript can lag the end of the turn, so the toolkit reads it again for up to 3 seconds. The card stays on its call's row in these cases:
+  - the turn ended in an error or a refusal
+  - the turn has no reply text, or the transcript did not catch up in time
+  - the session was reopened with `/resume`, which starts without the toolkit's state
+
+  In the ctrl+O view, a moved card shows under the reply, and the call's full row shows too.
 - **The row.** While `claude --bg` starts the session, the call's row says `starting…`. Then it shows the session's name, its state (`starting`, `working`, `idle`, `done`, `stopped`, `failed` or `removed`) and its branch. Under it are **claude attach &lt;id&gt;**, which copies that command, and **stop** while it works.
 - **The session reports back itself.** Each time a session Claude started ends a turn, it sends this session a message, as any other session's message arrives (`Message from @<name>`). The message holds the first 400 characters of its report: its next step box recap, then its last message. Claude checks the result before it tells you the work is done.
   - How it finds this session: right after `claude --bg` prints the new session's short id, the toolkit writes `~/.claude/toolkit/links/<short id>.json` with this session's id. The new session's toolkit reads it when a turn ends. The short id is the first 8 characters of the session id.

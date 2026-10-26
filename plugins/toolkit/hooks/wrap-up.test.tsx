@@ -102,22 +102,21 @@ test('a button with hidden text behind its label is refused', async ($, on) => {
   expect(call.deny).toContain('sends only the label')
 })
 
-test('a call with nothing pending is accepted and asks for the full answer, not a period', async ($, on) => {
+test('a call with nothing pending is accepted and asks for the full answer', async ($, on) => {
   const host = engine(on)
   const call = await $.tool.call({ tool: TOOL, recap: RECAP, blocked: true })
   expect(call.deny).toBeUndefined()
   expect(call.result).toContain('nothing is shown')
   expect(call.result).toContain('write your full answer')
-  expect(call.result).not.toContain('write only a single period')
   expect(host.notified).toEqual([])
 })
 
-test('the result names the question and tells Claude to write nothing after the box', async ($, on) => {
+test('the result names the question and asks for the full answer after the call, never a period', async ($, on) => {
   engine(on)
   const asked = await $.tool.call({ tool: TOOL, recap: RECAP, ask: ASK, actions: [{ label: 'Commit' }] })
   expect(asked.result).toContain(`"${ASK}"`)
-  expect(asked.result).toContain('write only a single period')
-  expect(asked.result).toContain('never repeat your reply')
+  expect(asked.result).toContain('write your full answer')
+  expect(asked.result).not.toContain('period')
 })
 
 test('the box waits above the prompt, after the whole reply, until a typed prompt moves it back to its call', async ($, on) => {

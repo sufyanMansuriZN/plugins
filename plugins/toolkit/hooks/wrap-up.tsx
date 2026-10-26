@@ -23,9 +23,9 @@ export const APP_ACTIONS: Record<AppAction, string> = {
   verify: 'Verify',
 }
 
-const DESCRIPTION = `Fill the "next step" box the terminal shows at the end of your turn: a two-or-three-sentence recap and, when this turn leaves the user a decision to make or a step to take, one question and buttons that answer it; a turn with nothing pending ends with the recap alone, and the terminal then draws no box. Call it once in EVERY turn in which you kept a task list, changed files, ran commands, or completed multi-step work, as the very last thing in the turn. Skip it for short answers, pure conversation, or a brief read-and-explain turn — a reply that names a follow-up is not brief: ask or propose it, and call this.
+const DESCRIPTION = `Fill the "next step" box the terminal shows at the end of your turn: a two-or-three-sentence recap and, when this turn leaves the user a decision to make or a step to take, one question and buttons that answer it; a turn with nothing pending ends with the recap alone, and the terminal then draws no box. Call it once in EVERY turn in which you kept a task list, changed files, ran commands, or completed multi-step work, as the last tool call of the turn. Skip it for short answers, pure conversation, or a brief read-and-explain turn — a reply that names a follow-up is not brief: ask or propose it, and call this.
 
-The recap never replaces your answer to the user. With a question: write your answer in full first, as ordinary text, then call this, and after it write only a single period (.), nothing else: the terminal draws the box after your whole reply, where the user looks, and hides the period. Your reply above the box is visible to the user; never write it again. With the recap alone: nothing is drawn, so call this first and write your full answer after it, never a lone period. Ask the box's question only in the box, never also in your text.
+The recap never replaces your answer to the user. Call this first, then write your full answer after it, once: the terminal draws the box above the prompt, under your whole reply, wherever the call sits. Ask the box's question only in the box, never also in your text.
 
 Fields — recap and ask are said to the user, in the second person; a reply button's label is the user's whole answer back to you:
 - recap: what is now true or changed, then where it stands, including what is not done or not verified (for example: nothing committed, or not checked in the app). Two or three short sentences, about 40 words / 300 characters, in the project's own words. No recommendation here.
@@ -183,7 +183,7 @@ export const register: Register = on => {
     const wrapUp = parseWrapUp(e)
     if ('deny' in wrapUp) return wrapUp
     const { question } = wrapUp
-    if (question === null) return { result: 'Nothing waits on the user, so nothing is shown for this call. Now write your full answer to the user; a lone period would leave them with no answer.' }
+    if (question === null) return { result: 'Nothing waits on the user, so nothing is shown for this call. Now write your full answer to the user.' }
     if (question.isBlocked) void $.ui.notify(question.ask).catch(() => undefined)
     if (e.tool_use_id !== undefined) {
       // One box per turn: a newer call in the same turn replaces the first, which then draws nothing.
@@ -194,7 +194,7 @@ export const register: Register = on => {
       await $.state.set(PENDING, { toolUseId: e.tool_use_id, turnId, recap: wrapUp.recap, question })
     }
     return {
-      result: `The user sees your question "${question.ask}" with its buttons at the end of your reply, and your reply above it is visible. The box ends your turn: write only a single period (.) now, which the terminal hides. If you are later told your response had no visible output, write only a period again; never repeat your reply.`,
+      result: `The user sees your question "${question.ask}" with its buttons under your reply, above the prompt. Now write your full answer to the user, once, and end the turn; do not ask the question again in your text.`,
     }
   })
 

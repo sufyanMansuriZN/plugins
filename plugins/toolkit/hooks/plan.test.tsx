@@ -133,7 +133,7 @@ test('a message typed mid-turn and a turn a background task wakes keep the list'
   expect(await spinner($)).toContain('Fix blank lines')
 })
 
-test('once Claude stops, open steps stay above the prompt and a finished list goes', async ($, on) => {
+test('once Claude stops, the list moves above the prompt, a finished one too', async ($, on) => {
   engine(on)
   const band = async (props: { isWorking?: boolean; hasSurvey?: boolean } = {}) => {
     const ui = await $.ui.mount({
@@ -155,6 +155,8 @@ test('once Claude stops, open steps stay above the prompt and a finished list go
   expect((await band({ isWorking: true })).texts).toEqual(['engine: AbovePrompt'])
   expect((await band({ hasSurvey: true })).texts).toEqual(['engine: AbovePrompt'])
   await $.tool.call({ tool: TOOL, done: [2, 3] })
+  expect((await band()).first).toStartWith('3 tasks (3 done, 0 open)✔')
+  await $.turn.start({ text: '', turnId: 't2' })
   expect((await band()).texts).toEqual(['engine: AbovePrompt'])
 })
 

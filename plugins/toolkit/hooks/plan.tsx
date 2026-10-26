@@ -21,7 +21,7 @@ const DESCRIPTION = `Keep the task list the terminal shows above the prompt whil
 
 Never spend a message on this tool alone: send it IN THE SAME MESSAGE as another tool call (in parallel), so it costs no extra round trip.
 - First call: with the VERY FIRST tool call of the turn, even one that only reads or lists files: {"items": [...]}, the whole plan in order, short imperative phrases (at most ~7 words, no numbering), the step you are starting "in_progress", the rest "pending". If you must look around first, make "Look at how X is set up" step one and refine the list once you know.
-- Next step: {"advance": true} alongside the call that begins it (completes the in_progress step, starts the next pending one); after the last step, advance alongside wrap_up, and let your reply say what now works: the list goes when the turn ends.
+- Next step: {"advance": true} alongside the call that begins it (completes the in_progress step, starts the next pending one); after the last step, advance alongside wrap_up, and let your reply say what now works: the finished list stays above the prompt until the next turn starts.
 - Out of order: {"done": [2], "start": 4} (1-based).
 - Plan changed, including right after the user interrupts or sends a new instruction mid-task: {"items": [...]} again, the new whole list, so the list never shows an abandoned plan.
 Keep exactly one step in_progress while working and none when everything is done. Do not also write the plan as a numbered list in your message: the list above the prompt is the plan.`
@@ -238,12 +238,12 @@ export const register: Register = on => {
     return next(e)
   })
 
-  // Claude Code keeps an unfinished list above the prompt once the turn stops, and a finished one goes.
-  // A typed prompt keeps it too, since a side question mid-task is not a new plan; a new list replaces it.
+  // Once the turn stops the list moves above the prompt, a finished one too until the next turn starts.
+  // A typed prompt keeps an unfinished one, since a side question mid-task is not a new plan; a new list replaces it.
   // A rewind sends no event: it only takes prompts out of the transcript, the one the list was made under too.
   on('ui.render', { surface: 'terminal', component: 'AbovePrompt' }, async ($, e, next) => {
     const plan = await read($, PLAN)
-    if (e.props.hasSurvey || e.props.isWorking || !plan || isDone(plan.steps) || (await $.session.turns()) < plan.prompts) return next(e)
+    if (e.props.hasSurvey || e.props.isWorking || !plan || (await $.session.turns()) < plan.prompts) return next(e)
     const below = await next(e)
     const elements = $.ui.resolve(e)
     const { Box } = elements

@@ -1,6 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
-import type { On } from 'claude-code'
+import type { On, SessionMessage } from 'claude-code'
 
 const TOOL = 'mcp__toolkit__update_plan'
 const PLAN = [
@@ -47,6 +47,7 @@ test('the tool is offered only in an interactive terminal session', async ($, on
   const registered = engine(on)
   mock.env(on, {})
   on('session.start', () => ({ cwd: '/w' }))
+  on('session.messages', () => ({ value: [] }))
   await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
   await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: false })
   await $.session.start({ cwd: '/w', surface: 'desktop', isInteractive: true })
@@ -195,6 +196,47 @@ test('a rewind past the prompt the list was made under takes the list away', asy
   expect(await band()).toContain('Read the parser')
   prompts = 1
   expect(await band()).toEqual(['engine: AbovePrompt'])
+  expect(await spinner($)).toEqual(['engine: Spinner'])
+})
+
+// A session started on a transcript that holds these messages, as `claude --continue` starts one.
+function resume($: Engine, on: On, messages: SessionMessage[]) {
+  mock.env(on, {})
+  on('session.start', () => ({ cwd: '/w' }))
+  on('session.messages', () => ({ value: messages }))
+  return $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
+}
+
+const call = (id: string, input: Record<string, unknown>, isError?: true) => ({ tool_use_id: id, tool: TOOL, input, text: 'ok', ...(isError ? { isError } : {}) })
+
+test('a resumed session picks the list up from the transcript, above the prompt and for advance', async ($, on) => {
+  engine(on, () => 2)
+  await resume($, on, [
+    { role: 'user', text: 'Fix the parser', toolUses: [] },
+    { role: 'assistant', text: '', toolUses: [call('p1', { items: PLAN })] },
+    { role: 'user', text: '', toolUses: [], toolResults: [{ tool_use_id: 'p1', text: 'ok', result: 'ok', isError: false }] },
+    { role: 'assistant', text: '', toolUses: [call('p2', { advance: true }), call('p3', { start: 9 }, true)] },
+    { role: 'user', text: 'Go on', toolUses: [] },
+  ])
+  const ui = await $.ui.mount({
+    plugin: 'toolkit',
+    surface: 'terminal',
+    component: 'AbovePrompt',
+    props: { hasSurvey: false, isWorking: false, maxRows: 20, bodyColumns: 100, scroll: { offset: 0, bodyRows: 20 }, view: {} },
+  })
+  expect((await ui.findAll({ type: 'Text' })).slice(0, 7).map(found => found.text).join('')).toBe('3 tasks (1 done, 1 in progress, 1 open)')
+  await ui.unmount()
+  const next = await $.tool.call({ tool: TOOL, advance: true })
+  expect(next.result).toBe('Plan updated: 2 of 3 done. Now on step 3: Run the tests.')
+})
+
+test('a resumed session whose list was finished starts with none', async ($, on) => {
+  engine(on)
+  const done = PLAN.map(step => ({ ...step, status: 'completed' }))
+  await resume($, on, [
+    { role: 'user', text: 'Fix the parser', toolUses: [] },
+    { role: 'assistant', text: '', toolUses: [call('p1', { items: PLAN }), call('p2', { items: done })] },
+  ])
   expect(await spinner($)).toEqual(['engine: Spinner'])
 })
 

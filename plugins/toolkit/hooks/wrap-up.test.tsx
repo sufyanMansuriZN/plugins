@@ -1,6 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
-import type { On } from 'claude-code'
+import type { On, SessionMessage } from 'claude-code'
 
 const TOOL = 'mcp__toolkit__wrap_up'
 const RECAP = 'The parser now keeps blank lines. Nothing is committed.'
@@ -64,6 +64,7 @@ test('the tool is offered only in an interactive terminal session', async ($, on
   const host = engine(on)
   mock.env(on, {})
   on('session.start', () => ({ cwd: '/w' }))
+  on('session.messages', () => ({ value: [] }))
   await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
   await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: false })
   await $.session.start({ cwd: '/w', surface: 'desktop', isInteractive: true })
@@ -146,6 +147,42 @@ test('the box waits above the prompt, after the whole reply, until a typed promp
   const back = await mountRow($, input)
   expect(await shown(back)).toEqual(['Text: Next step', ...box])
   await Promise.all([next.unmount(), back.unmount()])
+})
+
+// A session started on a transcript that holds these messages, as `claude --continue` starts one.
+function resume($: Engine, on: On, messages: SessionMessage[]) {
+  mock.env(on, {})
+  on('session.start', () => ({ cwd: '/w' }))
+  on('session.messages', () => ({ value: messages }))
+  return $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
+}
+
+test('a resumed session puts a box still waiting back above the prompt', async ($, on) => {
+  engine(on)
+  const input = { recap: RECAP, ask: ASK, actions: [{ label: 'Yes' }] }
+  await resume($, on, [
+    { role: 'user', text: 'Fix the parser', toolUses: [] },
+    { role: 'assistant', text: '', toolUses: [{ tool_use_id: 'call-1', tool: TOOL, input, text: 'ok' }] },
+    { role: 'user', text: '', toolUses: [], toolResults: [{ tool_use_id: 'call-1', text: 'ok', result: 'ok', isError: false }] },
+    { role: 'assistant', text: 'The parser keeps blank lines.', toolUses: [] },
+  ])
+  const row = await mountRow($, input)
+  expect(await shown(row)).toEqual([])
+  const band = await mountBand($)
+  expect(await shown(band)).toEqual(['Text: Next step', `Text: ${RECAP}`, `Text: ${ASK}`, 'Button: Yes', 'Text: engine: AbovePrompt'])
+  await Promise.all([row.unmount(), band.unmount()])
+})
+
+test('a resumed session leaves a box the user typed past on its call row', async ($, on) => {
+  engine(on)
+  const input = { recap: RECAP, ask: ASK, actions: [{ label: 'Yes' }] }
+  await resume($, on, [
+    { role: 'assistant', text: '', toolUses: [{ tool_use_id: 'call-1', tool: TOOL, input, text: 'ok' }] },
+    { role: 'user', text: 'Do something else', toolUses: [] },
+  ])
+  const band = await mountBand($)
+  expect(await shown(band)).toEqual(['Text: engine: AbovePrompt'])
+  await band.unmount()
 })
 
 test('a second call replaces the first, so only one box shows', async ($, on) => {

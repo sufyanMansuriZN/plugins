@@ -1,5 +1,5 @@
 import { read, update } from 'claude-code'
-import type { Elements, Register, SessionMessage } from 'claude-code'
+import type { Elements, Register } from 'claude-code'
 
 import type { PlanStatus, PlanStep } from '../types'
 
@@ -92,21 +92,6 @@ function applyMoves(plan: PlanStep[] | null, advance: boolean, done: unknown, st
     // Starting another step puts the one in progress back, unless it was just finished.
     return index + 1 === start ? 'in_progress' : step.status === 'in_progress' ? 'pending' : step.status
   })
-}
-
-/** The list the transcript's calls leave, with the prompts sent up to the last one: what a resumed session starts from. */
-export function replayPlan(messages: readonly SessionMessage[]): { steps: PlanStep[]; prompts: number } | null {
-  let plan: { steps: PlanStep[]; prompts: number } | null = null
-  let prompts = 0
-  for (const message of messages) {
-    if (message.role === 'user' && !message.toolResults?.length) prompts++
-    for (const use of message.toolUses) {
-      if (use.tool !== PLAN_TOOL || use.isError) continue
-      const next = applyPlan(plan?.steps ?? null, use.input)
-      if (!('deny' in next)) plan = isDone(next) ? null : { steps: next, prompts }
-    }
-  }
-  return plan
 }
 
 /** What the model reads back: enough to pick up the plan after a compaction. */
@@ -232,11 +217,6 @@ export const register: Register = on => {
   // Desktop pins its own list under the reply, and a -p run has no band to draw in.
   on('session.start', { surface: 'terminal', isInteractive: true }, async ($, e, next) => {
     await $.tool.register({ name: NAME, description: DESCRIPTION, inputSchema: INPUT_SCHEMA, isDeferred: false })
-    // State lives only as long as the process, so a resumed session reads the list back from its calls.
-    if (!(await read($, PLAN))) {
-      const plan = replayPlan(await $.session.messages())
-      if (plan) await $.state.set(PLAN, plan)
-    }
     return next(e)
   })
   on('tool.call', { tool: PLAN_TOOL }, async ($, e) => {

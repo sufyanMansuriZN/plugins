@@ -1,5 +1,5 @@
 import { read, update } from 'claude-code'
-import type { Elements, EngineInterface, Register, SessionMessage } from 'claude-code'
+import type { Elements, EngineInterface, Register } from 'claude-code'
 
 import type { WrapUp, WrapUpCall, WrapUpQuestion } from '../types'
 
@@ -112,18 +112,6 @@ export function parseWrapUp(input: unknown): WrapUp | { deny: string } {
   return { recap, question: { ask, answers, isBlocked: blocked === true } }
 }
 
-/** The box still waiting at the transcript's end: the last call that asked, when no prompt came after it. */
-export function waitingCall(messages: readonly SessionMessage[]): WrapUpCall | null {
-  for (const message of [...messages].reverse()) {
-    if (message.role === 'user' && !message.toolResults?.length) return null
-    const use = message.toolUses.findLast(use => use.tool === WRAP_UP_TOOL && !use.isError)
-    if (!use) continue
-    const wrapUp = parseWrapUp(use.input)
-    return 'deny' in wrapUp || wrapUp.question === null ? null : { toolUseId: use.tool_use_id, turnId: '', recap: wrapUp.recap, question: wrapUp.question }
-  }
-  return null
-}
-
 /** The whole look of the box: swap this to change the layout. `answered` is the label pressed. */
 export function drawWrapUp(elements: Elements['terminal'], recap: string, question: WrapUpQuestion, answered: string | null, onPress: (answer: string) => void) {
   const { Box, Button, Text } = elements
@@ -189,11 +177,6 @@ export const register: Register = on => {
   // Desktop draws its own wrap_up, and a -p run has no one to press a button.
   on('session.start', { surface: 'terminal', isInteractive: true }, async ($, e, next) => {
     await $.tool.register({ name: NAME, description: DESCRIPTION, inputSchema: INPUT_SCHEMA, isDeferred: false })
-    // State lives only as long as the process, so a resumed session finds the box still waiting in the transcript.
-    if (!(await read($, PENDING))) {
-      const call = waitingCall(await $.session.messages())
-      if (call) await $.state.set(PENDING, call)
-    }
     return next(e)
   })
   on('tool.call', { tool: WRAP_UP_TOOL }, async ($, e) => {

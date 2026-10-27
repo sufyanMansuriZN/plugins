@@ -2,7 +2,7 @@
 
 Session bar above the prompt: git, model, context and usage windows, following the transcript in view.
 
-session-bar draws one row in the band above the prompt, in the terminal and in the desktop app. The row has two zones. The left zone tells you where you are: the repo, the branch and the model. The right zone has the meters, at the right edge of the band:
+session-bar draws one row in the band above the prompt, in the CLI. In the Claude desktop app it draws nothing and does no work, as the app shows the repo, the model, the context and the usage itself. It knows the app by `CLAUDE_CODE_ENTRYPOINT=claude-desktop`. The row has two zones. The left zone tells you where you are: the repo, the branch and the model. The right zone has the meters, at the right edge of the band:
 
 ```
 plugins (main +3 ~2) · Opus 5.5 1M   ctx ╾─╂────── 60K · 5h ━━━━━╾─╂─ 66%  behind  46m · 7d ━━━╾╂──── 43% 3d21h
@@ -143,6 +143,7 @@ A cut part ends with `…`. The agent, the model and the parts in the right zone
 
 These rules are for whoever changes the plugin. The tests in `tests/` hold the exact rows for each case.
 
+- **Desktop app.** When `CLAUDE_CODE_ENTRYPOINT` is `claude-desktop`, every hook passes the event on untouched: no timer, no fetch, no git, no row. Any other entrypoint, `-p` included, runs as below.
 - **Drawing.** One hooks module draws the row in the `AbovePrompt` band, on the terminal and desktop surfaces. It never uses Claude Code's `statusLine` setting. It fits the row in the band's `bodyColumns`. A drawing writes no state.
 - **Git.** `git --no-optional-locks status --porcelain=v2 --branch`, run with `$.process.run` in `$.session.root()`, with a 2-second limit. A slow or failed run leaves out the git part, and the band still draws. A detached HEAD with no commit reads `HEAD`.
 - **Repo name.** The last part of the path of the first tree that `git worktree list --porcelain` names. A failed read keeps the last value. The name is written to state only when it changes.

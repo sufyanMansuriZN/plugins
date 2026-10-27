@@ -13,6 +13,10 @@ const where = atom({ plugin: 'session-bar', key: 'where' } as const, null as str
 const tick = atom({ plugin: 'session-bar', key: 'tick' } as const, 0)
 const limits = atom({ plugin: 'session-bar', key: 'limits' } as const, [] as Limit[])
 
+// the Desktop app shows the repo, model, context and usage itself, so there the bar does nothing
+let isDesktop: boolean | undefined
+const inDesktop = async ($: EngineInterface) => (isDesktop ??= (await $.env.get('CLAUDE_CODE_ENTRYPOINT')) === 'claude-desktop')
+
 // one fetch at a time; a second caller shares the first one's answer
 let inFlight: Promise<void> | null = null
 
@@ -129,6 +133,7 @@ const startTicking = ($: EngineInterface) => {
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
+    if (await inDesktop($)) return next(e)
     const started = await next(e)
     await loadLimits($)
     startTicking($)
@@ -139,6 +144,7 @@ export const register: Register = on => {
   })
 
   on('turn.complete', async ($, e, next) => {
+    if (await inDesktop($)) return next(e)
     const done = await next(e)
     startTicking($)
     void refreshRepo($)
@@ -148,6 +154,7 @@ export const register: Register = on => {
 
   // a render reading $.session.usage() is not subscribed to it; the tick redraws the band with the new figures
   on('session.measure', async ($, e, next) => {
+    if (await inDesktop($)) return next(e)
     await update($, tick, n => n + 1)
     return next(e)
   })
@@ -155,7 +162,7 @@ export const register: Register = on => {
   // $.agent.list() names no model, so each subagent's is kept from its own requests
   on('turn.step', async function* ($, e, next) {
     const id = e.agentId
-    if (!id) return yield* next(e)
+    if (!id || (await inDesktop($))) return yield* next(e)
     await record($, id, was => ({ model: e.model, tokens: was?.tokens ?? null }))
     const result = yield* next(e)
     const usage = result?.usage
@@ -164,7 +171,7 @@ export const register: Register = on => {
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    if (e.props.hasSurvey) return next(e)
+    if (e.props.hasSurvey || (await inDesktop($))) return next(e)
     const [g, w, now, usage, root, lim] = await Promise.all([read($, git), read($, where), $.clock.now(), $.session.usage(), $.session.root(), read($, limits), read($, tick)])
     // `/cd` raises no event the bar can rely on, and its output redraws the band
     if (root !== readRoot) void refreshRepo($)

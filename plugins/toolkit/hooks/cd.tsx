@@ -36,6 +36,8 @@ const finishLater = async ($: EngineInterface, dir: string) => {
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
+    // Desktop moves a session's folder itself, so toolkit stays out of the Desktop app.
+    if ((await $.env.get('CLAUDE_CODE_ENTRYPOINT')) === 'claude-desktop') return next(e)
     await $.tool.register({
       name: NAME,
       description: DESCRIPTION,

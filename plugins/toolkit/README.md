@@ -1,6 +1,8 @@
 # toolkit
 
-Expands Claude Code with tools. Every tool is always on. To stop using them, disable the plugin in `/plugin`.
+Expands Claude Code with tools. Every tool is always on in the CLI. To stop using them, disable the plugin in `/plugin`.
+
+In the Claude desktop app the toolkit does nothing: the app has its own versions of these tools. It knows the app by `CLAUDE_CODE_ENTRYPOINT=claude-desktop`.
 
 ```sh
 claude plugin install toolkit@plugins

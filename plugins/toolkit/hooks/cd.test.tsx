@@ -40,8 +40,8 @@ function engine(on: On, cd?: () => Promise<unknown>): Host {
   return host
 }
 
-async function start($: Engine, on: On, isInteractive = true) {
-  mock.env(on, {})
+async function start($: Engine, on: On, isInteractive = true, env: Record<string, string> = {}) {
+  mock.env(on, env)
   on('session.start', () => ({ cwd: ROOT }))
   await $.session.start({ cwd: ROOT, surface: isInteractive ? 'terminal' : null, isInteractive })
 }
@@ -56,6 +56,12 @@ test('session start registers the change_session_directory tool', async ($, on) 
   const host = engine(on)
   await start($, on)
   expect(host.registered).toContain('change_session_directory')
+})
+
+test('the Desktop app gets no change_session_directory tool', async ($, on) => {
+  const host = engine(on)
+  await start($, on, true, { CLAUDE_CODE_ENTRYPOINT: 'claude-desktop' })
+  expect(host.registered).not.toContain('change_session_directory')
 })
 
 test('a path that is not a directory is denied without asking', async ($, on) => {

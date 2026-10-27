@@ -37,14 +37,16 @@ const WORKTREES = 'worktree /home/me/plugins\nHEAD 0123\nbranch refs/heads/main\
 const SHELL = '/tmp/scratch'
 
 // worktrees: `git worktree list` in the session's root; null outside a repo
-type Setup = { porcelain?: string; usage?: SessionUsage; limits?: string; worktrees?: string | null | Error; place?: { root: string } }
+type Setup = { porcelain?: string; usage?: SessionUsage; limits?: string; worktrees?: string | null | Error; place?: { root: string }; entrypoint?: string }
 
 const ran = (exitCode: number, stdout: string) => ({ value: { exitCode, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
 
 // the engine beneath the plugin: a session in a worktree of repo `plugins` on `main`, two subagents,
 // one of them yet to make a request
-const engine = async ($: Engine, on: On, { porcelain = PORCELAIN, usage = USAGE, limits = LIMITS, worktrees = WORKTREES, place = { root: ROOT } }: Setup = {}) => {
+const engine = async ($: Engine, on: On, { porcelain = PORCELAIN, usage = USAGE, limits = LIMITS, worktrees = WORKTREES, place = { root: ROOT }, entrypoint }: Setup = {}) => {
   const clock = mock.clock(on, { now: NOW })
+  mock.store(on)
+  mock.env(on, entrypoint ? { CLAUDE_CODE_ENTRYPOINT: entrypoint } : {})
   on('ui.render', () => h('Box', {}) as never)
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('session.root', () => ({ value: place.root }))
@@ -99,6 +101,16 @@ test("main view, the shell elsewhere: the session root's repo, git and the main 
     const { left, right } = await zonesOn($, surface)
     expect([left, right], surface).toEqual(['plugins (main) · Opus 5.5 1M', `${CTX} · ${WINDOWS}`])
   }
+})
+
+test('the Desktop app draws no row, on any surface', async ($, on) => {
+  await engine($, on, { entrypoint: 'claude-desktop' })
+  for (const surface of SURFACES) expect(await zonesOn($, surface), surface).toEqual({ left: undefined, right: undefined, gap: undefined })
+})
+
+test('the CLI entrypoint draws the row', async ($, on) => {
+  await engine($, on, { entrypoint: 'cli' })
+  expect((await zonesOn($, 'terminal')).left).toBe('plugins (main) · Opus 5.5 1M')
 })
 
 test('a 200K window: the context meter fills over 200K, its tick for 160K after cell 6', async ($, on) => {

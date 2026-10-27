@@ -133,7 +133,7 @@ test('a message typed mid-turn and a turn a background task wakes keep the list'
   expect(await spinner($)).toContain('Fix blank lines')
 })
 
-test('once Claude stops, the list moves above the prompt, a finished one too', async ($, on) => {
+test('once Claude stops, the list moves above the prompt until every step is done', async ($, on) => {
   engine(on)
   const band = async (props: { isWorking?: boolean; hasSurvey?: boolean } = {}) => {
     const ui = await $.ui.mount({
@@ -155,28 +155,19 @@ test('once Claude stops, the list moves above the prompt, a finished one too', a
   expect((await band({ isWorking: true })).texts).toEqual(['engine: AbovePrompt'])
   expect((await band({ hasSurvey: true })).texts).toEqual(['engine: AbovePrompt'])
   await $.tool.call({ tool: TOOL, done: [2, 3] })
-  expect((await band()).first).toStartWith('3 tasks (3 done, 0 open)✔')
-  await $.turn.start({ text: '', turnId: 't2' })
   expect((await band()).texts).toEqual(['engine: AbovePrompt'])
 })
 
-test('a finished list stays under the spinner for its own turn and goes with the next, even after a stop', async ($, on) => {
+test('a list goes away under the spinner the moment every step is done', async ($, on) => {
   engine(on)
   await turn($, 't1', async () => {
     await $.tool.call({ tool: TOOL, items: PLAN })
-    await $.tool.call({ tool: TOOL, done: [1, 2, 3] })
-    expect(await spinner($)).toEqual(['engine: Spinner', '✔', 'Read the parser', '✔', 'Fix blank lines', '✔', 'Run the tests'])
+    await $.tool.call({ tool: TOOL, done: [1, 2] })
+    expect(await spinner($)).toContain('Read the parser')
+    const last = await $.tool.call({ tool: TOOL, done: [3] })
+    expect(last.result).toBe('Plan updated: 3 of 3 done. All steps are done.')
+    expect(await spinner($)).toEqual(['engine: Spinner'])
   })
-  await $.turn.start({ text: '', turnId: 'sub', agentId: 'agent-1' })
-  expect(await spinner($)).toContain('Read the parser')
-  await $.turn.start({ text: '', turnId: 't2' })
-  expect(await spinner($)).toEqual(['engine: Spinner'])
-
-  await $.tool.call({ tool: TOOL, items: PLAN })
-  await $.tool.call({ tool: TOOL, done: [1, 2, 3] })
-  await $.turn.complete({ reason: 'aborted', answer: '', durationMs: 1, isAborted: true, turnId: 't2' })
-  await $.turn.start({ text: '', turnId: 't3' })
-  expect(await spinner($)).toEqual(['engine: Spinner'])
 })
 
 test('an unfinished list survives the next turn start', async ($, on) => {
@@ -184,15 +175,6 @@ test('an unfinished list survives the next turn start', async ($, on) => {
   await turn($, 't1', () => $.tool.call({ tool: TOOL, items: PLAN }))
   await $.turn.start({ text: '', turnId: 't2' })
   expect(await spinner($)).toContain('Read the parser')
-})
-
-test('a long finished list shows its last steps and folds the rest as completed', async ($, on) => {
-  engine(on)
-  const steps = Array.from({ length: 9 }, (_, index) => ({ content: `Step ${index + 1}`, status: 'completed' }))
-  await $.tool.call({ tool: TOOL, items: steps })
-  const rows = await spinner($)
-  expect(rows.filter(row => row.startsWith('Step'))).toEqual(['Step 5', 'Step 6', 'Step 7', 'Step 8', 'Step 9'])
-  expect(rows.at(-1)).toBe('… +4 completed')
 })
 
 test('a rewind past the prompt the list was made under takes the list away', async ($, on) => {

@@ -54,6 +54,16 @@ In the terminal, the call shows as one row, **Move session** and the folder, wit
 
 If you still have the `auto-cd` dev mod, remove it. With both, Claude sees two tools that do the same thing.
 
+### Reload plugins (`reload_plugins`)
+
+Gives Claude a tool, `reload_plugins`, that runs `/reload-plugins --force` for you. Claude uses it after a plugin change that has not taken effect yet, such as a plugin it installed, enabled or updated, or a skill, hook or mod it changed. You do not have to restart Claude Code, and the conversation stays.
+
+The reload runs when Claude's turn ends. Then Claude gets the reload's report and its task back as a new prompt, once, even when the reload reloads toolkit itself. In that case the report is only in the transcript, under `/reload-plugins`.
+
+Claude Code has no way for a plugin to restart the whole process, so this tool does not restart it. Some changes, such as a plugin's MCP servers, still need a real restart. The reload's report says so, and Claude then asks you to run `claude --continue`.
+
+In the terminal, the call shows as one row, **Reload plugins**, with `reloads when this turn ends` under it. Press ctrl+o to see the whole call. It runs in an interactive terminal session only.
+
 ### Next step box (`wrap_up`)
 
 Gives Claude a tool, `wrap_up`, with the Claude desktop app's name, schema and trigger. Claude calls it once at the end of every turn that changed files, ran commands or did multi-step work, and skips it for short answers and conversation. When the turn leaves you a decision, such as a go-ahead to commit or a choice of fix, the terminal draws it as Claude Code draws a tool call: `● Next step`, then a short recap under `⎿`, then one question and one or two links that answer it, separated by `·`. As on Desktop, a box with a question ends the turn. When the turn ends, the box moves under the turn's last reply text, so it is the last thing in the transcript, after any suggested session cards. It stays there in the transcript after you answer or move on. The toolkit finds that text in the session's transcript, as for the suggested session cards. A turn that ends in an error, or a transcript that does not catch up within 3 seconds, leaves the box on the call's row. Claude makes the call first and writes its full reply after it. That reply is the text Claude Code needs after a turn's last tool call, so no placeholder such as a lone `.` is needed. A second call in the same turn replaces the first, so only one box shows. The detail is in the work above it. A turn with nothing to decide gets its full reply after the call too, and no box.

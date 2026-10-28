@@ -107,7 +107,7 @@ const START_SCHEMA = {
     switch: {
       type: 'boolean',
       description:
-        '"user_asked" only, not with target "cloud". true when the user wants to go on in the new session and leave this one ("start a new session and close this one", "carry on in a fresh session"). The new session sends no reports here; when your turn ends, this session closes and this terminal opens the new one.',
+        '"user_asked" only, not with target "cloud". true when the user wants to go on in the new session and leave this one ("start a new session and close this one", "carry on in a fresh session"). The new session sends no reports here and works in this folder (this worktree, its branch and uncommitted edits) unless you pass use_worktree true or cwd; when your turn ends, this session closes and this terminal opens the new one.',
     },
   },
 }

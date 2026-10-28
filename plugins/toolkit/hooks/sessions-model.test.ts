@@ -62,6 +62,15 @@ test('a worktree session gives a fresh start its own worktree, and a fork one cu
   expect(planStart({ ...asked, context: 'fork', use_worktree: true }, caller()).kind).toBe('deny')
 })
 
+test('a switch from a worktree carries on in that worktree, fresh or fork, unless told otherwise', () => {
+  for (const context of ['fresh', 'fork']) {
+    const switched = planStart({ ...asked, context, switch: true }, caller({ isWorktree: true }))
+    expect(switched.kind === 'start' && switched.brief.place).toEqual({ kind: 'folder', cwd: '/repo' })
+  }
+  const own = planStart({ ...asked, switch: true, use_worktree: true }, caller({ isWorktree: true }))
+  expect(own.kind === 'start' && own.brief.place.kind).toBe('worktree')
+})
+
 test('places this terminal does not have are refused with the reason', () => {
   const ssh = planStart({ ...asked, target: 'ssh', host: 'devbox' }, caller())
   expect(ssh.kind === 'deny' && ssh.deny).toContain('SSH')

@@ -124,7 +124,8 @@ export function makeBrief(e: Record<string, unknown>, title: string, context: 'f
   } else {
     const cwd = text(e.cwd)
     const root = cwd ?? caller.cwd
-    const wantsWorktree = context === 'fork' ? cwd === null && caller.isWorktree : typeof e.use_worktree === 'boolean' ? e.use_worktree : cwd === null && caller.isWorktree
+    // A switch closes this session, so the new one carries on in its folder, branch and edits.
+    const wantsWorktree = typeof e.use_worktree === 'boolean' ? e.use_worktree : e.switch !== true && cwd === null && caller.isWorktree
     if (!wantsWorktree && (source !== null || e.branch_name !== undefined)) return { kind: 'deny', deny: 'source_branch and branch_name are only for a session with its own worktree.' }
     place = wantsWorktree ? { kind: 'worktree', root, branch, source: context === 'fork' ? 'HEAD' : source } : { kind: 'folder', cwd: root }
   }

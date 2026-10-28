@@ -54,19 +54,9 @@ In the terminal, the call shows as one row, **Move session** and the folder, wit
 
 If you still have the `auto-cd` dev mod, remove it. With both, Claude sees two tools that do the same thing.
 
-### Reload plugins (`reload_plugins`)
-
-Gives Claude a tool, `reload_plugins`, that runs `/reload-plugins --force` for you. Claude uses it after a plugin change that has not taken effect yet, such as a plugin it installed, enabled or updated, or a skill, hook or mod it changed. You do not have to restart Claude Code, and the conversation stays.
-
-The reload runs when Claude's turn ends. Then Claude gets the reload's report and its task back as a new prompt, once, even when the reload reloads toolkit itself. In that case the report is only in the transcript, under `/reload-plugins`.
-
-A reload does not restart the process. Some changes, such as a plugin's MCP servers, still need a real restart. The reload's report says so, and Claude then uses `restart_claude_code`.
-
-In the terminal, the call shows as one row, **Reload plugins**, with `reloads when this turn ends` under it. Press ctrl+o to see the whole call. It runs in an interactive terminal session only.
-
 ### Restart Claude Code (`restart_claude_code`)
 
-Gives Claude a tool, `restart_claude_code`, that exits Claude Code and starts it again in the same terminal, with the same conversation. A restart loads everything Claude Code reads only at startup: plugins and their MCP servers, settings, environment variables and a newly installed Claude Code version. For a plugin change alone, Claude uses `reload_plugins`, which keeps the prompt cache.
+Gives Claude a tool, `restart_claude_code`, that exits Claude Code and starts it again in the same terminal, with the same conversation. A restart loads everything Claude Code reads only at startup: plugins and their MCP servers, settings, environment variables and a newly installed Claude Code version.
 
 The restart runs when Claude's turn ends. The new Claude Code runs `claude --resume <session id> --model <model>`, with the task Claude named as its first prompt.
 

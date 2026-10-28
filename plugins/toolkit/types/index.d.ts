@@ -97,8 +97,6 @@ declare module 'claude-code' {
       mermaidIsSource: StateFamily<boolean>
       /** A move the change session directory tool started, until its task is submitted. */
       cdPending: { dir: string; task: string } | null
-      /** A reload the reload plugins tool started, until its task is submitted. */
-      reloadPending: { task: string } | null
       /** The label of the next step button pressed, by the call's tool_use_id; null until one is. */
       wrapUpAnswer: StateFamily<string | null>
       /** The running turn's last next step call with a question, until the turn ends and it moves under the reply. */

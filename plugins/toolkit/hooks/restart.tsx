@@ -5,7 +5,7 @@ const TOOL = `mcp__toolkit__${NAME}`
 
 const DESCRIPTION = `Exits Claude Code and starts it again in the same terminal, with this conversation resumed. A restart loads everything Claude Code reads only at startup: plugins and their MCP servers, settings, environment variables and a newly installed Claude Code version.
 
-Use it when a change needs a restart to take effect and /reload-plugins is not enough, or when the person asks for a restart. For a plugin change alone, prefer reload_plugins: it keeps the prompt cache.
+Use it when a change needs a restart to take effect, such as a plugin installed or updated, or when the person asks for a restart.
 
 The restart ends everything this session runs. The call is refused while a subagent runs, but it cannot see background shells or monitors: stop the ones you started (TaskStop) before the call, or wait for them.
 

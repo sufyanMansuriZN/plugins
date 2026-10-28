@@ -13,6 +13,8 @@ The restart runs after your turn ends, so end your turn right after the call wit
 
 It needs the toolkit's \`claude\` shell function. Without it, the call adds the function to ~/.bashrc, restarts nothing and says what the person must do once.`
 
+const PENDING = { plugin: 'toolkit', key: 'restartPending' } as const
+
 const BEGIN = '# >>> toolkit restart >>>'
 const END = '# <<< toolkit restart <<<'
 
@@ -91,15 +93,25 @@ export const register: Register = on => {
     const { task } = e as unknown as { task?: unknown }
     const plan = typeof task === 'string' && task.trim() !== '' ? task.replace(/\s+/g, ' ').trim() : 'Continue the task you were on.'
     // One argument per line, read back with mapfile.
-    await $.fs.write(file, [`--resume`, await $.session.id(), '--model', await $.session.model(), `Claude Code restarted. ${plan}`].join('\n'))
-    // A command run straight from a tool hook is refused, so it waits for the timer.
-    $.clock.after(0, () => {
-      void $.command.run({ command: 'exit' }).catch(async err => {
-        await $.fs.write(file, '')
-        $.ui.toast(`toolkit: the restart failed: ${String(err)}`)
-      })
-    })
+    await $.fs.write(file, [`--resume`, await $.session.id(), '--model', await $.session.model(), `Restarted. ${plan}`].join('\n'))
+    await $.state.set(PENDING, file)
     return { result: 'Claude Code exits when your turn ends and starts again with this conversation, so end your turn now.' }
+  })
+
+  // SIGTERM ends Claude Code as /exit does (transcript saved, terminal restored) but leaves no /exit row.
+  on('turn.complete', { reason: /[\s\S]*/ }, async ($, e, next) => {
+    const result = await next(e)
+    const file = (await $.state.get(PENDING)).value
+    if (file) {
+      await $.state.set(PENDING, null)
+      $.clock.after(0, () => {
+        void $.process.run(['sh', '-c', 'kill -TERM "$PPID"']).catch(async err => {
+          await $.fs.write(file, '')
+          $.ui.toast(`toolkit: the restart failed: ${String(err)}`)
+        })
+      })
+    }
+    return result
   })
 
   // A one-line row in place of the call with its task. ctrl+o still shows the whole call.

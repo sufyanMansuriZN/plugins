@@ -97,6 +97,8 @@ declare module 'claude-code' {
       mermaidIsSource: StateFamily<boolean>
       /** A move the change session directory tool started, until its task is submitted. */
       cdPending: { dir: string; task: string } | null
+      /** The restart file a restart tool call wrote, until its turn ends and Claude Code is stopped. */
+      restartPending: string | null
       /** The label of the next step button pressed, by the call's tool_use_id; null until one is. */
       wrapUpAnswer: StateFamily<string | null>
       /** The running turn's last next step call with a question, until the turn ends and it moves under the reply. */

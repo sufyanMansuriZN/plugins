@@ -7,11 +7,12 @@ const FILE = '/run/user/1/claude-restart.42'
 const RC = '/home/me/.bashrc'
 
 type Agent = { id: string; type: string; description: string; status: 'running' | 'completed' }
-type Host = { registered: string[]; commands: string[]; files: Map<string, string>; agents: Agent[] }
+type Host = { registered: string[]; runs: string[][]; files: Map<string, string>; agents: Agent[] }
 
-// Beneath the plugin: a disk of `files`, the session's id, model and agents, and its commands.
+// Beneath the plugin: a disk of `files`, the session's id, model and agents, and the processes it runs.
 function engine(on: On, files: Record<string, string> = {}): Host {
-  const host: Host = { registered: [], commands: [], files: new Map(Object.entries(files)), agents: [] }
+  const host: Host = { registered: [], runs: [], files: new Map(Object.entries(files)), agents: [] }
+  on('turn.complete', () => ({ text: '' }))
   on('agent.list', () => ({ value: host.agents }))
   on('tool.register', (_$, e) => {
     host.registered.push(e.name)
@@ -25,12 +26,15 @@ function engine(on: On, files: Record<string, string> = {}): Host {
   })
   on('session.id', () => ({ value: 'abc-123' }))
   on('session.model', () => ({ value: 'claude-opus-5-5' }))
-  on('command.run', (_$, e) => {
-    host.commands.push(e.command)
-    return {}
+  on('process.run', (_$, e) => {
+    host.runs.push([...e.argv])
+    return { value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
   })
   return host
 }
+
+const KILL = ['sh', '-c', 'kill -TERM "$PPID"']
+const endTurn = ($: Engine) => $.turn.complete({ reason: 'answer', answer: 'Restarting.', durationMs: 1, isAborted: false, turnId: 't1' })
 
 async function start($: Engine, on: On, env: Record<string, string>, isInteractive = true) {
   mock.env(on, { HOME: '/home/me', ...env })
@@ -50,16 +54,20 @@ test('session start registers the restart_claude_code tool in a terminal only', 
   expect(host.registered.filter(name => name === 'restart_claude_code')).toEqual(['restart_claude_code'])
 })
 
-test('under the shell function a call writes the resume arguments and exits once the turn lets it', async ($, on) => {
+test('under the shell function a call writes the resume arguments and stops Claude Code once, when the turn ends', async ($, on) => {
   const host = engine(on)
   const clock = mock.clock(on)
   await start($, on, { CLAUDE_RESTART_FILE: FILE })
   const call = await $.tool.call({ tool: TOOL, task: 'Check the\nMCP server.' })
   expect(call.deny).toBeUndefined()
-  expect(host.commands).toEqual([])
   await settle(clock)
-  expect(host.commands).toEqual(['exit'])
-  expect(host.files.get(FILE)?.split('\n')).toEqual(['--resume', 'abc-123', '--model', 'claude-opus-5-5', 'Claude Code restarted. Check the MCP server.'])
+  expect(host.runs).toEqual([])
+  expect(host.files.get(FILE)?.split('\n')).toEqual(['--resume', 'abc-123', '--model', 'claude-opus-5-5', 'Restarted. Check the MCP server.'])
+  await endTurn($)
+  await settle(clock)
+  await endTurn($)
+  await settle(clock)
+  expect(host.runs).toEqual([KILL])
 })
 
 test('without the shell function a call adds it to .bashrc once, keeps what was there, and exits nothing', async ($, on) => {
@@ -68,10 +76,11 @@ test('without the shell function a call adds it to .bashrc once, keeps what was 
   await start($, on, {})
   const first = await $.tool.call({ tool: TOOL, task: 'Go on.' })
   const second = await $.tool.call({ tool: TOOL, task: 'Go on.' })
+  await endTurn($)
   await settle(clock)
   expect(first.deny).toContain('source ~/.bashrc')
   expect(second.deny).toContain('has not loaded it')
-  expect(host.commands).toEqual([])
+  expect(host.runs).toEqual([])
   const rc = host.files.get(RC) ?? ''
   expect(rc.startsWith('alias ll="ls -l"\n')).toBe(true)
   expect(rc.split('# >>> toolkit restart >>>').length).toBe(2)
@@ -98,13 +107,15 @@ test('a running subagent refuses the restart, and a finished one does not', asyn
     { id: 'a2', type: 'Explore', description: 'Old search', status: 'completed' },
   ]
   const refused = await $.tool.call({ tool: TOOL, task: 'Go on.' })
+  await endTurn($)
   await settle(clock)
   expect(refused.deny).toContain('Review the diff')
   expect(refused.deny).not.toContain('Old search')
-  expect(host.commands).toEqual([])
+  expect(host.runs).toEqual([])
   expect(host.files.has(FILE)).toBe(false)
   host.agents[0].status = 'completed'
   expect((await $.tool.call({ tool: TOOL, task: 'Go on.' })).deny).toBeUndefined()
+  await endTurn($)
   await settle(clock)
-  expect(host.commands).toEqual(['exit'])
+  expect(host.runs).toEqual([KILL])
 })

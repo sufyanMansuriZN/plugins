@@ -121,13 +121,13 @@ const transcript = (calls: { id: string; input: object }[]) =>
   ].join('\n')
 
 // This session's transcript, under the directory it started in, /w, though a cd has since moved it into /w/sub.
-function withTranscript(on: On, jsonl: string) {
+function withTranscript(on: On, jsonl: string | (() => string)) {
   const path = '/home/me/.claude/projects/-w/session-uuid.jsonl'
   mock.env(on, { HOME: '/home/me' })
   on('session.cwd', () => ({ value: '/w/sub' }))
   on('session.id', () => ({ value: 'session-uuid' }))
   on('process.run', (_$, e) => {
-    const found = e.argv[0] === 'find' && e.argv.at(-1) === 'session-uuid.jsonl' ? `${path}\n` : e.argv[0] === 'tail' && e.argv.at(-1) === path ? jsonl : ''
+    const found = e.argv[0] === 'find' && e.argv.at(-1) === 'session-uuid.jsonl' ? `${path}\n` : e.argv[0] === 'tail' && e.argv.at(-1) === path ? (typeof jsonl === 'string' ? jsonl : jsonl()) : ''
     return { value: { exitCode: 0, stdout: found, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
   })
   on('ui.log', () => ({ value: undefined }))
@@ -205,6 +205,34 @@ test('a question from a later turn leaves the earlier one on its call row, still
   const row = await mountRow($, first)
   expect(await shown(row)).toEqual(['Text: Next step', `Text: ${RECAP}`, `Text: ${ASK}`, 'Button: Yes'])
   await row.unmount()
+})
+
+test('a later turn with no box of its own moves an unanswered box under its reply, and an answered box stays', async ($, on) => {
+  const host = engine(on)
+  const input = { recap: RECAP, ask: ASK, actions: [{ label: 'Yes' }] }
+  let jsonl = transcript([{ id: 'call-1', input }])
+  withTranscript(on, () => jsonl)
+  const box = ['Text: Next step', `Text: ${RECAP}`, `Text: ${ASK}`, 'Button: Yes']
+  await $.turn.start({ text: 'Fix the parser.', turnId: 't1' })
+  await $.tool.call({ tool: TOOL, tool_use_id: 'call-1', ...input })
+  await endTurn($)
+  jsonl += `\n${line({ type: 'user', uuid: 'u2', timestamp: at(6), message: { content: 'A message from another session.' } })}`
+  jsonl += `\n${line({ type: 'assistant', uuid: 'a2', timestamp: at(7), message: { content: [{ type: 'text', text: REPLY }] } })}`
+  await $.turn.start({ text: '', turnId: 't2' })
+  await endTurn($)
+  expect(await once(mountReply($, 'a1'))).toEqual(['Text: engine: AssistantMessage'])
+  expect(await once(mountReply($, 'a2'))).toEqual(['Text: engine: AssistantMessage', ...box])
+  expect(await once(mountRow($, input))).toEqual([])
+
+  const ui = await mountReply($, 'a2')
+  await ui.press({ key: 'answer:0' })
+  await ui.unmount()
+  expect(host.prompts).toEqual([{ text: 'Yes', asUser: true }])
+  jsonl += `\n${line({ type: 'assistant', uuid: 'a3', timestamp: at(9), message: { content: [{ type: 'text', text: REPLY }] } })}`
+  await $.turn.start({ text: 'Yes', turnId: 't3' })
+  await endTurn($)
+  expect(await once(mountReply($, 'a2'))).toEqual(['Text: engine: AssistantMessage', 'Text: Next step', `Text: ${RECAP}`, 'Text: You chose: Yes'])
+  expect(await once(mountReply($, 'a3'))).toEqual(['Text: engine: AssistantMessage'])
 })
 
 test('a blocked call notifies the user with its question', async ($, on) => {

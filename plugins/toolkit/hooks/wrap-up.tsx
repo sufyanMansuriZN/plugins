@@ -11,6 +11,7 @@ const PENDING = { plugin: 'toolkit', key: 'wrapUpPending' } as const
 const TURN = { plugin: 'toolkit', key: 'wrapUpTurn' } as const
 const AT = { plugin: 'toolkit', key: 'wrapUpAt' } as const
 const IS_MOVED = { plugin: 'toolkit', key: 'wrapUpIsMoved' } as const
+const LAST = { plugin: 'toolkit', key: 'wrapUpLast' } as const
 
 const LABEL_MAX = 24
 
@@ -207,19 +208,28 @@ export const register: Register = on => {
 
   // When the turn ends the box moves under its last reply text, so it comes after the whole reply,
   // whatever Claude wrote after the call. An error, or a transcript that never catches up, leaves it on its call's row.
+  // A later turn with no box of its own moves a box not yet answered under its reply, so the box stays at the end.
   on('turn.complete', { reason: /[\s\S]*/ }, async ($, e, next) => {
     const since = Date.now() - e.durationMs
     const result = await next(e)
     if (e.agentId !== undefined) return result
-    const call = await read($, PENDING)
+    const pending = await read($, PENDING)
+    const last = pending ? null : await read($, LAST)
+    const call = pending ?? last?.call
     if (!call) return result
     void (async () => {
+      if (!pending && (await read($, { plugin: 'toolkit', key: 'wrapUpAnswer', id: call.toolUseId } as const)) != null) {
+        await $.state.set(LAST, null)
+        return
+      }
       const anchor = e.reason === 'answer' || e.reason === 'aborted' ? await readTranscript($, jsonl => replyAnchor(jsonl, since, e.answer)) : null
       // The reply draws the box before its row stops drawing it, so no frame shows neither.
       if (anchor !== null && anchor !== 'behind') {
         await $.state.set({ ...AT, id: anchor.uuid }, call)
         await $.state.set({ ...IS_MOVED, id: call.toolUseId }, true)
-      }
+        if (last?.anchor && last.anchor !== anchor.uuid) await $.state.set({ ...AT, id: last.anchor }, null)
+        await $.state.set(LAST, { anchor: anchor.uuid, call })
+      } else if (pending) await $.state.set(LAST, { anchor: null, call })
       await $.state.set(PENDING, null)
     })().catch(err => $.ui.log(`toolkit: could not move the next step box under the reply: ${String(err)}`, { to: 'debug' }))
     return result

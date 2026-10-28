@@ -107,6 +107,8 @@ declare module 'claude-code' {
       wrapUpAt: StateFamily<WrapUpCall | null>
       /** Whether this next step call moved under its turn's reply, by its tool_use_id; a moved one leaves its row empty. */
       wrapUpIsMoved: StateFamily<boolean>
+      /** The newest box with a question, and the reply it is drawn under (null while on its call's row), so a later turn can move it to the end of the transcript. */
+      wrapUpLast: { anchor: string | null; call: WrapUpCall } | null
       /** The main loop's running turn, so a second next step call in the same turn replaces the first. */
       wrapUpTurn: string | null
       /** Whether a newer call in the same turn replaced this next step call, by its tool_use_id; a replaced one draws nothing. */

@@ -164,10 +164,43 @@ test('when the turn ends the box moves under the last reply text, at the end of 
   expect(await once(mountRow($, input))).toEqual([])
   expect(await once(mountReply($, 'a1'))).toEqual(['Text: engine: AssistantMessage', ...box])
   expect(await once(mountReply($, 'c0'))).toEqual(['Text: engine: AssistantMessage'])
-  // A typed prompt or a background turn leaves it under that reply.
-  await $.prompt.submit({ text: 'Do something else', wait: false, origin: { kind: 'composer' } })
-  await $.turn.start({ text: 'Do something else', turnId: 't2' })
+  // A background turn leaves it under that reply.
+  await $.prompt.submit({ text: 'task done', wait: false, origin: { kind: 'task-notification' } })
+  await $.turn.start({ text: 'task done', turnId: 't2' })
   expect(await once(mountReply($, 'a1'))).toEqual(['Text: engine: AssistantMessage', ...box])
+})
+
+test('a prompt typed instead of a press clears the box, on the reply and on its row, and a later turn does not bring it back', async ($, on) => {
+  engine(on)
+  const input = { recap: RECAP, ask: ASK, actions: [{ label: 'Yes' }] }
+  let jsonl = transcript([{ id: 'call-1', input }])
+  withTranscript(on, () => jsonl)
+  await $.turn.start({ text: 'Fix the parser.', turnId: 't1' })
+  await $.tool.call({ tool: TOOL, tool_use_id: 'call-1', ...input })
+  await endTurn($)
+  await $.prompt.submit({ text: 'No, do something else', wait: false, origin: { kind: 'composer' } })
+  expect(await once(mountReply($, 'a1'))).toEqual(['Text: engine: AssistantMessage'])
+  expect(await once(mountRow($, input))).toEqual([])
+  jsonl += `\n${line({ type: 'user', uuid: 'u2', timestamp: at(6), message: { content: 'No, do something else' } })}`
+  jsonl += `\n${line({ type: 'assistant', uuid: 'a2', timestamp: at(7), message: { content: [{ type: 'text', text: REPLY }] } })}`
+  await $.turn.start({ text: 'No, do something else', turnId: 't2' })
+  await endTurn($)
+  expect(await once(mountReply($, 'a2'))).toEqual(['Text: engine: AssistantMessage'])
+  expect(await once(mountRow($, input))).toEqual([])
+})
+
+test('a prompt typed after a press keeps the choice', async ($, on) => {
+  engine(on)
+  const input = { recap: RECAP, ask: ASK, actions: [{ label: 'Yes' }] }
+  withTranscript(on, transcript([{ id: 'call-1', input }]))
+  await $.turn.start({ text: 'Fix the parser.', turnId: 't1' })
+  await $.tool.call({ tool: TOOL, tool_use_id: 'call-1', ...input })
+  await endTurn($)
+  const ui = await mountReply($, 'a1')
+  await ui.press({ key: 'answer:0' })
+  await ui.unmount()
+  await $.prompt.submit({ text: 'And push it', wait: false, origin: { kind: 'composer' } })
+  expect(await once(mountReply($, 'a1'))).toEqual(['Text: engine: AssistantMessage', 'Text: Next step', `Text: ${RECAP}`, 'Text: You chose: Yes'])
 })
 
 test('a turn that ends in an error keeps the box on its call row', async ($, on) => {

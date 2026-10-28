@@ -12,6 +12,7 @@ const TURN = { plugin: 'toolkit', key: 'wrapUpTurn' } as const
 const AT = { plugin: 'toolkit', key: 'wrapUpAt' } as const
 const IS_MOVED = { plugin: 'toolkit', key: 'wrapUpIsMoved' } as const
 const LAST = { plugin: 'toolkit', key: 'wrapUpLast' } as const
+const IS_DISMISSED = { plugin: 'toolkit', key: 'wrapUpIsDismissed' } as const
 
 const LABEL_MAX = 24
 
@@ -206,6 +207,18 @@ export const register: Register = on => {
     return next(e)
   })
 
+  // A prompt the user typed instead of pressing a button answers the box another way, so its question is no longer open.
+  // A press arrives with a plugin origin, so it keeps its "You chose" line.
+  on('prompt.submit', { origin: { kind: 'composer' } }, async ($, e, next) => {
+    const call = (await read($, PENDING)) ?? (await read($, LAST))?.call
+    if (call && (await read($, { plugin: 'toolkit', key: 'wrapUpAnswer', id: call.toolUseId } as const)) == null) {
+      await $.state.set({ ...IS_DISMISSED, id: call.toolUseId }, true)
+      await $.state.set(PENDING, null)
+      await $.state.set(LAST, null)
+    }
+    return next(e)
+  })
+
   // When the turn ends the box moves under its last reply text, so it comes after the whole reply,
   // whatever Claude wrote after the call. An error, or a transcript that never catches up, leaves it on its call's row.
   // A later turn with no box of its own moves a box not yet answered under its reply, so the box stays at the end.
@@ -238,7 +251,7 @@ export const register: Register = on => {
   on('ui.render', { surface: 'terminal', component: 'AssistantMessage' }, async ($, e, next) => {
     if (e.props.isSummary) return next(e)
     const call = await read($, { ...AT, id: e.requestId })
-    if (!call) return next(e)
+    if (!call || (await read($, { ...IS_DISMISSED, id: call.toolUseId }))) return next(e)
     const reply = await next(e)
     const elements = $.ui.resolve(e)
     const { Box } = elements
@@ -262,6 +275,7 @@ export const register: Register = on => {
     if ((await read($, PENDING))?.toolUseId === e.props.tool_use_id) return <Box />
     if (await read($, { plugin: 'toolkit', key: 'wrapUpIsReplaced', id: e.props.tool_use_id } as const)) return <Box />
     if (await read($, { ...IS_MOVED, id: e.props.tool_use_id })) return <Box />
+    if (await read($, { ...IS_DISMISSED, id: e.props.tool_use_id })) return <Box />
     return drawCall($, $.ui.resolve(e), { toolUseId: e.props.tool_use_id, recap: wrapUp.recap, question: wrapUp.question })
   })
 

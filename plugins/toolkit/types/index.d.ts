@@ -115,6 +115,8 @@ declare module 'claude-code' {
       wrapUpTurn: string | null
       /** Whether a newer call in the same turn replaced this next step call, by its tool_use_id; a replaced one draws nothing. */
       wrapUpIsReplaced: StateFamily<boolean>
+      /** Whether the user typed a prompt instead of pressing this next step call's buttons, by its tool_use_id; a dismissed one draws nothing. */
+      wrapUpIsDismissed: StateFamily<boolean>
       /** The task list drawn above the prompt, and how many prompts the transcript held when it was made; null when there is none. */
       plan: { steps: PlanStep[]; prompts: number } | null
       /** Whether a long task list above the prompt shows every step; folded to five until "… +N more" is pressed. */

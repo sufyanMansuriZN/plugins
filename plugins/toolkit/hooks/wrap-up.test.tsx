@@ -120,12 +120,16 @@ const transcript = (calls: { id: string; input: object }[]) =>
     line({ type: 'assistant', uuid: 'a1', timestamp: at(5), message: { content: [{ type: 'text', text: REPLY }] } }),
   ].join('\n')
 
-// This session's transcript, read with `tail`.
+// This session's transcript, under the directory it started in, /w, though a cd has since moved it into /w/sub.
 function withTranscript(on: On, jsonl: string) {
+  const path = '/home/me/.claude/projects/-w/session-uuid.jsonl'
   mock.env(on, { HOME: '/home/me' })
-  on('session.cwd', () => ({ value: '/w' }))
+  on('session.cwd', () => ({ value: '/w/sub' }))
   on('session.id', () => ({ value: 'session-uuid' }))
-  on('process.run', () => ({ value: { exitCode: 0, stdout: jsonl, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
+  on('process.run', (_$, e) => {
+    const found = e.argv[0] === 'find' && e.argv.at(-1) === 'session-uuid.jsonl' ? `${path}\n` : e.argv[0] === 'tail' && e.argv.at(-1) === path ? jsonl : ''
+    return { value: { exitCode: 0, stdout: found, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+  })
   on('ui.log', () => ({ value: undefined }))
   on('turn.start', (_$, e) => ({ turnId: e.turnId }))
   on('turn.complete', (_$, e) => ({ text: 'answer' in e ? e.answer : '' }))
@@ -140,7 +144,7 @@ const mountReply = ($: Engine, requestId: string) =>
   $.ui.mount({ plugin: 'toolkit', surface: 'terminal', component: 'AssistantMessage', requestId, props: { text: REPLY, isFirstOfReply: true } })
 
 // The words a mount shows, then it goes, so the same row can be mounted again.
-async function once(mounting: ReturnType<typeof mountRow>): Promise<string[]> {
+async function once(mounting: ReturnType<typeof mountRow> | ReturnType<typeof mountReply>): Promise<string[]> {
   const ui = await mounting
   const words = await shown(ui)
   await ui.unmount()

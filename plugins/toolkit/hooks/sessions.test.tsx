@@ -22,6 +22,7 @@ function engine(on: On, transcript: string | (() => string) = ''): { registered:
   on('session.model', () => ({ value: 'claude-opus-5-5' }))
   on('process.run', (_$, e) => {
     const done = (exitCode: number, stdout = '', stderr = '') => ({ value: { exitCode, stdout, stderr, isStdoutTruncated: false, isStderrTruncated: false } })
+    if (e.argv[0] === 'find') return done(0, `${e.argv[1]}/-w/${e.argv.at(-1)}\n`)
     if (e.argv[0] === 'tail') return done(0, typeof transcript === 'string' ? transcript : transcript())
     if (e.argv[0] === 'claude' && e.argv.includes('--bg')) return done(0, 'backgrounded · abcdef12 · check-the-fix\n')
     if (e.argv[0] === 'claude') return done(0, '[]')

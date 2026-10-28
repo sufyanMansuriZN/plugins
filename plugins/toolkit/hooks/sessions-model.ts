@@ -220,7 +220,6 @@ export function parseAgents(stdout: string): Map<string, AgentRow> {
 }
 
 /** Where Claude Code keeps a session's transcript. */
-export const transcriptPath = (home: string, cwd: string, sessionId: string) => `${home}/.claude/projects/${cwd.replace(/[^A-Za-z0-9-]/g, '-')}/${sessionId}.jsonl`
 
 type Row = { type?: string; uuid?: string; isMeta?: boolean; timestamp?: string; message?: { content?: unknown } }
 type Block = { type?: string; id?: string; text?: string; name?: string; input?: { recap?: unknown; initiation?: unknown } }

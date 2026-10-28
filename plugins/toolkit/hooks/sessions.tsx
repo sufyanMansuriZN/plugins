@@ -22,7 +22,6 @@ import {
   reportText,
   shortId,
   startCommand,
-  transcriptPath,
 } from './sessions-model'
 import type { Caller } from './sessions-model'
 
@@ -240,8 +239,12 @@ async function launchNow($: EngineInterface, brief: Brief, callId: string): Prom
   }
 }
 
-// The end of a transcript: $.fs.read refuses files over 4 MiB, and a fork's starts as long as its parent's.
-async function transcriptTail($: EngineInterface, path: string): Promise<string> {
+// The end of a session's transcript: $.fs.read refuses files over 4 MiB, and a fork's starts as long as its parent's.
+// It stays under the directory the session started in, which a cd or /cd does not move, so it is found by its id.
+async function transcriptTail($: EngineInterface, home: string, sessionId: string): Promise<string> {
+  const found = await $.process.run(['find', `${home}/.claude/projects`, '-maxdepth', '2', '-name', `${sessionId}.jsonl`], { timeoutMs: 10_000 }).catch(() => null)
+  const path = found?.exitCode === 0 ? found.stdout.split('\n')[0] : ''
+  if (!path) return ''
   const run = await $.process.run(['tail', '-c', '1000000', path], { timeoutMs: 10_000 }).catch(() => null)
   return run?.exitCode === 0 ? run.stdout : ''
 }
@@ -266,7 +269,7 @@ async function look($: EngineInterface) {
     const sessionId = row?.sessionId ?? session.sessionId
     // Listed as idle a moment before its first turn starts.
     if (state === 'idle' && session.state === 'starting') {
-      const jsonl = sessionId === null ? '' : await transcriptTail($, transcriptPath(home, row?.cwd || session.cwd, sessionId))
+      const jsonl = sessionId === null ? '' : await transcriptTail($, home, sessionId)
       if (latestReport(jsonl, session.startedAt) === null) state = 'starting'
     }
     if (isAlive(session.state) && !isAlive(state)) $.ui.toast(`toolkit: session ${session.name} (${session.id}) ${state === 'gone' ? 'was removed' : `ended: ${state}`}`)
@@ -279,13 +282,13 @@ async function look($: EngineInterface) {
 
 /** In a session start_session started: its report, sent to the session that started it. */
 async function reportBack($: EngineInterface, reason: string, answer: string) {
-  const [home, sessionId, cwd] = await Promise.all([$.env.get('HOME').then(home => home ?? ''), $.session.id(), $.session.cwd()])
+  const [home, sessionId] = await Promise.all([$.env.get('HOME').then(home => home ?? ''), $.session.id()])
   const id = shortId(sessionId)
   const path = linkPath(home, id)
   if (!(await $.fs.exists(path))) return
   const link = parseLink(await $.fs.read(path))
   if (link === null) return
-  const latest = latestReport(await transcriptTail($, transcriptPath(home, cwd, sessionId)))
+  const latest = latestReport(await transcriptTail($, home, sessionId))
   // The transcript adds the recap and the text before a box; one not yet holding this turn's answer is a turn behind.
   const final = answer.trim() === '.' ? '' : answer.trim()
   const report = latest !== null && latest.report.includes(final.slice(0, 40)) ? latest.report : final
@@ -425,12 +428,11 @@ async function drawCard($: EngineInterface, elements: Elements['terminal'], task
  * may lag the end of the turn, so it is read again for up to three seconds.
  */
 export async function readTranscript<T>($: EngineInterface, find: (jsonl: string) => T | 'behind' | null): Promise<T | 'behind' | null> {
-  const [home, sessionId, cwd] = await Promise.all([$.env.get('HOME').then(home => home ?? ''), $.session.id(), $.session.cwd()])
-  const path = transcriptPath(home, cwd, sessionId)
-  let found = find(await transcriptTail($, path))
+  const [home, sessionId] = await Promise.all([$.env.get('HOME').then(home => home ?? ''), $.session.id()])
+  let found = find(await transcriptTail($, home, sessionId))
   for (let tries = 0; found === 'behind' && tries < 10; tries++) {
     await $.clock.sleep(300)
-    found = find(await transcriptTail($, path))
+    found = find(await transcriptTail($, home, sessionId))
   }
   return found
 }

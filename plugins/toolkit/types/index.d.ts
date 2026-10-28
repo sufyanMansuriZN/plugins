@@ -99,8 +99,12 @@ declare module 'claude-code' {
       cdPending: { dir: string; task: string } | null
       /** The label of the next step button pressed, by the call's tool_use_id; null until one is. */
       wrapUpAnswer: StateFamily<string | null>
-      /** The last next step call with a question, drawn above the prompt until a press or a typed prompt. */
+      /** The running turn's last next step call with a question, until the turn ends and it moves under the reply. */
       wrapUpPending: WrapUpCall | null
+      /** The next step call drawn under a reply block, by the block's requestId. */
+      wrapUpAt: StateFamily<WrapUpCall | null>
+      /** Whether this next step call moved under its turn's reply, by its tool_use_id; a moved one leaves its row empty. */
+      wrapUpIsMoved: StateFamily<boolean>
       /** The main loop's running turn, so a second next step call in the same turn replaces the first. */
       wrapUpTurn: string | null
       /** Whether a newer call in the same turn replaced this next step call, by its tool_use_id; a replaced one draws nothing. */

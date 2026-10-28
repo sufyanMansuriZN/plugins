@@ -40,16 +40,6 @@ function mountRow($: Engine, input: unknown, props: { tool?: string; isExpanded?
   })
 }
 
-function mountBand($: Engine, props: { isWorking?: boolean } = {}) {
-  return $.ui.mount({
-    plugin: 'toolkit',
-    surface: 'terminal',
-    component: 'AbovePrompt',
-    requestId: 'band',
-    props: { hasSurvey: false, isWorking: false, maxRows: 20, bodyColumns: 100, scroll: { offset: 0, bodyRows: 20 }, view: {}, ...props },
-  })
-}
-
 // The words the row shows, top to bottom, without the row's bullet, ⎿ and · marks.
 async function shown(ui: { findAll: Awaited<ReturnType<typeof mountRow>>["findAll"] }): Promise<string[]> {
   const all = await ui.findAll({})
@@ -119,46 +109,85 @@ test('the result names the question and asks for the full answer after the call,
   expect(asked.result).not.toContain('period')
 })
 
-test('the box waits above the prompt, after the whole reply, until a typed prompt moves it back to its call', async ($, on) => {
-  engine(on)
+const REPLY = 'The parser keeps blank lines now.'
+const at = (seconds: number) => new Date(Date.now() + seconds * 1000).toISOString()
+const line = (value: object) => JSON.stringify(value)
+// The turn's rows as the transcript holds them: the call, then the reply Claude writes after it.
+const transcript = (calls: { id: string; input: object }[]) =>
+  [
+    line({ type: 'user', uuid: 'u1', timestamp: at(0), message: { content: 'Fix the parser.' } }),
+    ...calls.map((call, i) => line({ type: 'assistant', uuid: `c${i}`, timestamp: at(1 + i), message: { content: [{ type: 'tool_use', id: call.id, name: TOOL, input: call.input }] } })),
+    line({ type: 'assistant', uuid: 'a1', timestamp: at(5), message: { content: [{ type: 'text', text: REPLY }] } }),
+  ].join('\n')
+
+// This session's transcript, read with `tail`.
+function withTranscript(on: On, jsonl: string) {
+  mock.env(on, { HOME: '/home/me' })
+  on('session.cwd', () => ({ value: '/w' }))
+  on('session.id', () => ({ value: 'session-uuid' }))
+  on('process.run', () => ({ value: { exitCode: 0, stdout: jsonl, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
+  on('ui.log', () => ({ value: undefined }))
   on('turn.start', (_$, e) => ({ turnId: e.turnId }))
+  on('turn.complete', (_$, e) => ({ text: 'answer' in e ? e.answer : '' }))
+}
+
+const endTurn = async ($: Engine, reason: 'answer' | 'error' = 'answer') => {
+  await $.turn.complete({ reason, answer: REPLY, durationMs: 60_000, isAborted: false, turnId: 't1' })
+  for (let i = 0; i < 300; i++) await Promise.resolve()
+}
+
+const mountReply = ($: Engine, requestId: string) =>
+  $.ui.mount({ plugin: 'toolkit', surface: 'terminal', component: 'AssistantMessage', requestId, props: { text: REPLY, isFirstOfReply: true } })
+
+// The words a mount shows, then it goes, so the same row can be mounted again.
+async function once(mounting: ReturnType<typeof mountRow>): Promise<string[]> {
+  const ui = await mounting
+  const words = await shown(ui)
+  await ui.unmount()
+  return words
+}
+
+test('when the turn ends the box moves under the last reply text, at the end of the transcript, and stays there', async ($, on) => {
+  engine(on)
   const input = { recap: RECAP, ask: ASK, actions: [{ label: 'Yes' }] }
+  withTranscript(on, transcript([{ id: 'call-1', input }]))
+  await $.turn.start({ text: 'Fix the parser.', turnId: 't1' })
   await $.tool.call({ tool: TOOL, tool_use_id: 'call-1', ...input })
-  const box = [`Text: ${RECAP}`, `Text: ${ASK}`, 'Button: Yes']
-  const row = await mountRow($, input)
-  expect(await shown(row)).toEqual([])
-  const band = await mountBand($, { isWorking: true })
-  expect(await shown(band)).toEqual(['Text: engine: AbovePrompt'])
-  await band.unmount()
-  const idle = await mountBand($)
-  expect(await shown(idle)).toEqual(['Text: Next step', ...box, 'Text: engine: AbovePrompt'])
-  await idle.unmount()
-  await row.unmount()
-  // A background task's report starts a turn of its own, and the question still waits for the user.
-  await $.prompt.submit({ text: 'task done', wait: false, origin: { kind: 'task-notification' } })
-  await $.turn.start({ text: 'task done', turnId: 't2' })
-  const after = await mountBand($)
-  expect(await shown(after)).toEqual(['Text: Next step', ...box, 'Text: engine: AbovePrompt'])
-  await after.unmount()
+  const box = ['Text: Next step', `Text: ${RECAP}`, `Text: ${ASK}`, 'Button: Yes']
+  // While the turn runs, nothing shows yet.
+  expect(await once(mountRow($, input))).toEqual([])
+  await endTurn($)
+  expect(await once(mountRow($, input))).toEqual([])
+  expect(await once(mountReply($, 'a1'))).toEqual(['Text: engine: AssistantMessage', ...box])
+  expect(await once(mountReply($, 'c0'))).toEqual(['Text: engine: AssistantMessage'])
+  // A typed prompt or a background turn leaves it under that reply.
   await $.prompt.submit({ text: 'Do something else', wait: false, origin: { kind: 'composer' } })
-  const next = await mountBand($)
-  expect(await shown(next)).toEqual(['Text: engine: AbovePrompt'])
-  const back = await mountRow($, input)
-  expect(await shown(back)).toEqual(['Text: Next step', ...box])
-  await Promise.all([next.unmount(), back.unmount()])
+  await $.turn.start({ text: 'Do something else', turnId: 't2' })
+  expect(await once(mountReply($, 'a1'))).toEqual(['Text: engine: AssistantMessage', ...box])
+})
+
+test('a turn that ends in an error keeps the box on its call row', async ($, on) => {
+  engine(on)
+  const input = { recap: RECAP, ask: ASK, actions: [{ label: 'Yes' }] }
+  withTranscript(on, transcript([{ id: 'call-1', input }]))
+  await $.turn.start({ text: 'Fix the parser.', turnId: 't1' })
+  await $.tool.call({ tool: TOOL, tool_use_id: 'call-1', ...input })
+  await endTurn($, 'error')
+  expect(await once(mountRow($, input))).toEqual(['Text: Next step', `Text: ${RECAP}`, `Text: ${ASK}`, 'Button: Yes'])
+  expect(await once(mountReply($, 'a1'))).toEqual(['Text: engine: AssistantMessage'])
 })
 
 test('a second call replaces the first, so only one box shows', async ($, on) => {
   engine(on)
   const first = { recap: RECAP, ask: ASK, actions: [{ label: 'Yes' }] }
   const second = { recap: 'Committed.', ask: 'Push it?', actions: [{ label: 'Push' }] }
+  withTranscript(on, transcript([{ id: 'call-1', input: first }, { id: 'call-2', input: second }]))
+  await $.turn.start({ text: 'Fix the parser.', turnId: 't1' })
   await $.tool.call({ tool: TOOL, tool_use_id: 'call-1', ...first })
   await $.tool.call({ tool: TOOL, tool_use_id: 'call-2', ...second })
-  const row = await mountRow($, first)
-  expect(await shown(row)).toEqual([])
-  const band = await mountBand($)
-  expect(await shown(band)).toEqual(['Text: Next step', 'Text: Committed.', 'Text: Push it?', 'Button: Push', 'Text: engine: AbovePrompt'])
-  await Promise.all([row.unmount(), band.unmount()])
+  await endTurn($)
+  expect(await once(mountRow($, first))).toEqual([])
+  expect(await once(mountReply($, 'a1'))).toEqual(['Text: engine: AssistantMessage', 'Text: Next step', 'Text: Committed.', 'Text: Push it?', 'Button: Push'])
 })
 
 test('a question from a later turn leaves the earlier one on its call row, still open', async ($, on) => {

@@ -421,18 +421,23 @@ async function drawCard($: EngineInterface, elements: Elements['terminal'], task
 }
 
 /**
- * Moves the turn's open or started cards under its last reply text. The transcript may not hold the
- * turn's last rows yet when it ends, so it is read again for up to three seconds; a miss leaves the
- * cards on their calls' rows.
+ * What `find` makes of this session's transcript once it holds the turn's last rows. The transcript
+ * may lag the end of the turn, so it is read again for up to three seconds.
  */
-async function moveCards($: EngineInterface, since: number, answer: string) {
+export async function readTranscript<T>($: EngineInterface, find: (jsonl: string) => T | 'behind' | null): Promise<T | 'behind' | null> {
   const [home, sessionId, cwd] = await Promise.all([$.env.get('HOME').then(home => home ?? ''), $.session.id(), $.session.cwd()])
   const path = transcriptPath(home, cwd, sessionId)
-  let anchor = cardAnchor(await transcriptTail($, path), since, answer)
-  for (let tries = 0; anchor === 'behind' && tries < 10; tries++) {
+  let found = find(await transcriptTail($, path))
+  for (let tries = 0; found === 'behind' && tries < 10; tries++) {
     await $.clock.sleep(300)
-    anchor = cardAnchor(await transcriptTail($, path), since, answer)
+    found = find(await transcriptTail($, path))
   }
+  return found
+}
+
+/** Moves the turn's open or started cards under its last reply text; a miss leaves them on their calls' rows. */
+async function moveCards($: EngineInterface, since: number, answer: string) {
+  const anchor = await readTranscript($, jsonl => cardAnchor(jsonl, since, answer))
   if (anchor === null || anchor === 'behind') return $.ui.log(`toolkit: the suggested sessions stay on their calls' rows: ${anchor === null ? 'no reply text or proposal in the transcript' : 'the transcript did not catch up'}`, { to: 'debug' })
   const taskIds: string[] = []
   for (const id of anchor.toolUseIds) {

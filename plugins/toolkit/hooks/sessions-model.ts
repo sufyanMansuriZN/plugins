@@ -262,12 +262,12 @@ export function latestReport(jsonl: string, since = 0): { uuid: string; report: 
 }
 
 /**
- * Where a turn's own_initiative cards go once it ends: under its last reply text that says something,
- * by that row's uuid, which is the reply block's `requestId`. `'behind'` while the transcript does not
- * yet hold the turn's final text `answer`; null when the turn has no such text or made no proposal.
- * Rows from before `since`, the turn's start, are left out, so an earlier turn or a fork's parent never counts.
+ * A turn's last reply text that says something, by that row's uuid, which is the reply block's
+ * `requestId`, with the turn's rows. `'behind'` while the transcript does not yet hold the turn's final
+ * text `answer`; null when the turn has no such text. Rows from before `since`, the turn's start, are
+ * left out, so an earlier turn or a fork's parent never counts.
  */
-export function cardAnchor(jsonl: string, since: number, answer: string): { uuid: string; toolUseIds: string[] } | 'behind' | null {
+export function replyAnchor(jsonl: string, since: number, answer: string): { uuid: string; turn: Row[] } | 'behind' | null {
   const turn: Row[] = []
   for (const line of jsonl.split('\n')) {
     if (line.trim() === '') continue
@@ -286,10 +286,17 @@ export function cardAnchor(jsonl: string, since: number, answer: string): { uuid
   const last = texts.at(-1)?.text ?? ''
   if (final !== '' && !(isPlaceholder(final) ? last === final : last.includes(final.slice(0, 40)))) return 'behind'
   const anchor = texts.findLast(row => !isPlaceholder(row.text))
-  const toolUseIds = turn.flatMap(row =>
+  return anchor ? { uuid: anchor.uuid, turn } : null
+}
+
+/** Where a turn's own_initiative cards go once it ends: under its reply anchor; null when the turn made no proposal. */
+export function cardAnchor(jsonl: string, since: number, answer: string): { uuid: string; toolUseIds: string[] } | 'behind' | null {
+  const anchor = replyAnchor(jsonl, since, answer)
+  if (anchor === null || anchor === 'behind') return anchor
+  const toolUseIds = anchor.turn.flatMap(row =>
     row.type === 'assistant' ? blocks(row).flatMap(block => (block.type === 'tool_use' && block.name?.endsWith('__start_session') && block.input?.initiation === 'own_initiative' && block.id ? [block.id] : [])) : [],
   )
-  return anchor && toolUseIds.length > 0 ? { uuid: anchor.uuid, toolUseIds } : null
+  return toolUseIds.length > 0 ? { uuid: anchor.uuid, toolUseIds } : null
 }
 
 /** A session whose process still runs, so it may work again. */

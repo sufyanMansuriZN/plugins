@@ -140,6 +140,14 @@ const endTurn = async ($: Engine, reason: 'answer' | 'error' = 'answer') => {
   for (let i = 0; i < 300; i++) await Promise.resolve()
 }
 
+// A box Claude asked that stays on its call's row, as a turn that ends in an error leaves it.
+async function askOnRow($: Engine, on: On, input: object) {
+  withTranscript(on, '')
+  await $.tool.call({ tool: TOOL, tool_use_id: 'call-1', ...input })
+  await endTurn($, 'error')
+  return mountRow($, input)
+}
+
 const mountReply = ($: Engine, requestId: string) =>
   $.ui.mount({ plugin: 'toolkit', surface: 'terminal', component: 'AssistantMessage', requestId, props: { text: REPLY, isFirstOfReply: true } })
 
@@ -227,17 +235,31 @@ test('a second call replaces the first, so only one box shows', async ($, on) =>
   expect(await once(mountReply($, 'a1'))).toEqual(['Text: engine: AssistantMessage', 'Text: Next step', 'Text: Committed.', 'Text: Push it?', 'Button: Push'])
 })
 
-test('a question from a later turn leaves the earlier one on its call row, still open', async ($, on) => {
+test('a question from a later turn removes the earlier box, open or answered, so the session shows one box', async ($, on) => {
   engine(on)
-  on('turn.start', (_$, e) => ({ turnId: e.turnId }))
   const first = { recap: RECAP, ask: ASK, actions: [{ label: 'Yes' }] }
+  const second = { recap: 'The task ended.', ask: 'Look at it?', actions: [{ label: 'Look' }] }
+  let jsonl = transcript([{ id: 'call-1', input: first }])
+  withTranscript(on, () => jsonl)
   await $.turn.start({ text: 'Fix the parser.', turnId: 't1' })
   await $.tool.call({ tool: TOOL, tool_use_id: 'call-1', ...first })
+  await endTurn($)
+  jsonl += `\n${line({ type: 'user', uuid: 'u2', timestamp: at(6), message: { content: 'task done' } })}`
+  jsonl += `\n${line({ type: 'assistant', uuid: 'c2', timestamp: at(7), message: { content: [{ type: 'tool_use', id: 'call-2', name: TOOL, input: second }] } })}`
+  jsonl += `\n${line({ type: 'assistant', uuid: 'a2', timestamp: at(8), message: { content: [{ type: 'text', text: REPLY }] } })}`
   await $.turn.start({ text: 'task done', turnId: 't2' })
-  await $.tool.call({ tool: TOOL, tool_use_id: 'call-2', recap: 'The task ended.', ask: 'Look at it?', actions: [{ label: 'Look' }] })
-  const row = await mountRow($, first)
-  expect(await shown(row)).toEqual(['Text: Next step', `Text: ${RECAP}`, `Text: ${ASK}`, 'Button: Yes'])
-  await row.unmount()
+  await $.tool.call({ tool: TOOL, tool_use_id: 'call-2', ...second })
+  await endTurn($)
+  expect(await once(mountReply($, 'a1'))).toEqual(['Text: engine: AssistantMessage'])
+  expect(await once(mountRow($, first))).toEqual([])
+  expect(await once(mountReply($, 'a2'))).toEqual(['Text: engine: AssistantMessage', 'Text: Next step', 'Text: The task ended.', 'Text: Look at it?', 'Button: Look'])
+
+  const ui = await mountReply($, 'a2')
+  await ui.press({ key: 'answer:0' })
+  await ui.unmount()
+  await $.turn.start({ text: 'Look', turnId: 't3' })
+  await $.tool.call({ tool: TOOL, tool_use_id: 'call-3', recap: 'Looked.', ask: 'Fix it?', actions: [{ label: 'Fix' }] })
+  expect(await once(mountReply($, 'a2'))).toEqual(['Text: engine: AssistantMessage'])
 })
 
 test('a later turn with no box of its own moves an unanswered box under its reply, and an answered box stays', async ($, on) => {
@@ -282,16 +304,21 @@ test('a row whose input has no question draws nothing', async ($, on) => {
   await ui.unmount()
 })
 
+test('a row the session did not ask in this run, as after /resume, draws nothing', async ($, on) => {
+  engine(on)
+  expect(await once(mountRow($, { recap: RECAP, ask: ASK, actions: [{ label: 'Yes' }] }))).toEqual([])
+})
+
 test('a call with a question and two answers draws both buttons under it', async ($, on) => {
   engine(on)
-  const ui = await mountRow($, { recap: RECAP, ask: ASK, actions: [{ label: 'Yes, commit' }, { label: 'Leave uncommitted' }] })
+  const ui = await askOnRow($, on, { recap: RECAP, ask: ASK, actions: [{ label: 'Yes, commit' }, { label: 'Leave uncommitted' }] })
   expect(await shown(ui)).toEqual(['Text: Next step', `Text: ${RECAP}`, `Text: ${ASK}`, 'Button: Yes, commit', 'Button: Leave uncommitted'])
   await ui.unmount()
 })
 
 test('a press sends exactly its label as the user and leaves only the choice', async ($, on) => {
   const host = engine(on)
-  const ui = await mountRow($, { recap: RECAP, ask: ASK, actions: [{ label: 'Yes, commit' }, { label: 'Leave uncommitted' }] })
+  const ui = await askOnRow($, on, { recap: RECAP, ask: ASK, actions: [{ label: 'Yes, commit' }, { label: 'Leave uncommitted' }] })
   await ui.press({ key: 'answer:1' })
   expect(host.prompts).toEqual([{ text: 'Leave uncommitted', asUser: true }])
   expect(await shown(ui)).toEqual(['Text: Next step', `Text: ${RECAP}`, 'Text: You chose: Leave uncommitted'])
@@ -304,7 +331,7 @@ test('a press sends exactly its label as the user and leaves only the choice', a
 
 test('an app action draws its own label and sends that label', async ($, on) => {
   const host = engine(on)
-  const ui = await mountRow($, { recap: RECAP, ask: ASK, actions: [{ action: 'create_pr', label: 'ignored' }] })
+  const ui = await askOnRow($, on, { recap: RECAP, ask: ASK, actions: [{ action: 'create_pr', label: 'ignored' }] })
   expect((await ui.findAll({ type: 'Button' })).map(button => button.text)).toEqual(['Create PR'])
   await ui.press({ key: 'answer:0' })
   expect(host.prompts).toEqual([{ text: 'Create PR', asUser: true }])

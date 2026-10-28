@@ -8,11 +8,11 @@ import { replyAnchor } from './sessions-model'
 const NAME = 'wrap_up'
 export const WRAP_UP_TOOL = `mcp__toolkit__${NAME}`
 const PENDING = { plugin: 'toolkit', key: 'wrapUpPending' } as const
-const TURN = { plugin: 'toolkit', key: 'wrapUpTurn' } as const
 const AT = { plugin: 'toolkit', key: 'wrapUpAt' } as const
 const IS_MOVED = { plugin: 'toolkit', key: 'wrapUpIsMoved' } as const
 const LAST = { plugin: 'toolkit', key: 'wrapUpLast' } as const
-const IS_DISMISSED = { plugin: 'toolkit', key: 'wrapUpIsDismissed' } as const
+const CURRENT = { plugin: 'toolkit', key: 'wrapUpCurrent' } as const
+const ANSWER = { plugin: 'toolkit', key: 'wrapUpAnswer' } as const
 
 const LABEL_MAX = 24
 
@@ -162,8 +162,8 @@ export function drawWrapUp(elements: Elements['terminal'], recap: string, questi
 }
 
 /** The box with its buttons, live: a press sends its label as the user, once. */
-async function drawCall($: EngineInterface, elements: Elements['terminal'], { toolUseId, recap, question }: Omit<WrapUpCall, 'turnId'>) {
-  const answerRef = { plugin: 'toolkit', key: 'wrapUpAnswer', id: toolUseId } as const
+async function drawCall($: EngineInterface, elements: Elements['terminal'], { toolUseId, recap, question }: WrapUpCall) {
+  const answerRef = { ...ANSWER, id: toolUseId }
   const answered = (await read($, answerRef)) ?? null
   const press = async (answer: string) => {
     let isFirst = false
@@ -191,28 +191,21 @@ export const register: Register = on => {
     if (question === null) return { result: 'Nothing waits on the user, so nothing is shown for this call. Now write your full answer to the user.' }
     if (question.isBlocked) void $.ui.notify(question.ask).catch(() => undefined)
     if (e.tool_use_id !== undefined) {
-      // One box per turn: a newer call in the same turn replaces the first, which then draws nothing.
-      const turnId = (await read($, TURN)) ?? ''
-      const was = await read($, PENDING)
-      if (was && was.turnId === turnId) await $.state.set({ plugin: 'toolkit', key: 'wrapUpIsReplaced', id: was.toolUseId }, true)
-      await $.state.set(PENDING, { toolUseId: e.tool_use_id, turnId, recap: wrapUp.recap, question })
+      // One box per session: the newest call with a question is the only one drawn.
+      await $.state.set(CURRENT, e.tool_use_id)
+      await $.state.set(PENDING, { toolUseId: e.tool_use_id, recap: wrapUp.recap, question })
     }
     return {
       result: `The user sees your question "${question.ask}" with its buttons under your reply. Now write your full answer to the user, once, and end the turn; do not ask the question again in your text.`,
     }
   })
 
-  on('turn.start', async ($, e, next) => {
-    if (e.agentId === undefined) await $.state.set(TURN, e.turnId)
-    return next(e)
-  })
-
   // A prompt the user typed instead of pressing a button answers the box another way, so its question is no longer open.
   // A press arrives with a plugin origin, so it keeps its "You chose" line.
   on('prompt.submit', { origin: { kind: 'composer' } }, async ($, e, next) => {
-    const call = (await read($, PENDING)) ?? (await read($, LAST))?.call
-    if (call && (await read($, { plugin: 'toolkit', key: 'wrapUpAnswer', id: call.toolUseId } as const)) == null) {
-      await $.state.set({ ...IS_DISMISSED, id: call.toolUseId }, true)
+    const current = await read($, CURRENT)
+    if (current != null && (await read($, { ...ANSWER, id: current })) == null) {
+      await $.state.set(CURRENT, null)
       await $.state.set(PENDING, null)
       await $.state.set(LAST, null)
     }
@@ -231,7 +224,7 @@ export const register: Register = on => {
     const call = pending ?? last?.call
     if (!call) return result
     void (async () => {
-      if (!pending && (await read($, { plugin: 'toolkit', key: 'wrapUpAnswer', id: call.toolUseId } as const)) != null) {
+      if (!pending && (await read($, { ...ANSWER, id: call.toolUseId })) != null) {
         await $.state.set(LAST, null)
         return
       }
@@ -251,7 +244,7 @@ export const register: Register = on => {
   on('ui.render', { surface: 'terminal', component: 'AssistantMessage' }, async ($, e, next) => {
     if (e.props.isSummary) return next(e)
     const call = await read($, { ...AT, id: e.requestId })
-    if (!call || (await read($, { ...IS_DISMISSED, id: call.toolUseId }))) return next(e)
+    if (!call || call.toolUseId !== (await read($, CURRENT))) return next(e)
     const reply = await next(e)
     const elements = $.ui.resolve(e)
     const { Box } = elements
@@ -272,10 +265,9 @@ export const register: Register = on => {
     const { Box } = $.ui.resolve(e)
     // As on Desktop, a turn with nothing pending draws no box, and no tool row either.
     if (wrapUp.question === null) return <Box />
+    if ((await read($, CURRENT)) !== e.props.tool_use_id) return <Box />
     if ((await read($, PENDING))?.toolUseId === e.props.tool_use_id) return <Box />
-    if (await read($, { plugin: 'toolkit', key: 'wrapUpIsReplaced', id: e.props.tool_use_id } as const)) return <Box />
     if (await read($, { ...IS_MOVED, id: e.props.tool_use_id })) return <Box />
-    if (await read($, { ...IS_DISMISSED, id: e.props.tool_use_id })) return <Box />
     return drawCall($, $.ui.resolve(e), { toolUseId: e.props.tool_use_id, recap: wrapUp.recap, question: wrapUp.question })
   })
 

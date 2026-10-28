@@ -58,11 +58,11 @@ test('under the shell function a call writes the resume arguments and stops Clau
   const host = engine(on)
   const clock = mock.clock(on)
   await start($, on, { CLAUDE_RESTART_FILE: FILE })
-  const call = await $.tool.call({ tool: TOOL, task: 'Check the\nMCP server.' })
+  const call = await $.tool.call({ tool: TOOL, prompt: ' carry\non ' })
   expect(call.deny).toBeUndefined()
   await settle(clock)
   expect(host.runs).toEqual([])
-  expect(host.files.get(FILE)?.split('\n')).toEqual(['--resume', 'abc-123', '--model', 'claude-opus-5-5', 'Restarted. Check the MCP server.'])
+  expect(host.files.get(FILE)?.split('\n')).toEqual(['--resume', 'abc-123', '--model', 'claude-opus-5-5', 'carry on'])
   await endTurn($)
   await settle(clock)
   await endTurn($)
@@ -70,12 +70,19 @@ test('under the shell function a call writes the resume arguments and stops Clau
   expect(host.runs).toEqual([KILL])
 })
 
+test('a call without a prompt resumes with no first prompt', async ($, on) => {
+  const host = engine(on)
+  await start($, on, { CLAUDE_RESTART_FILE: FILE })
+  expect((await $.tool.call({ tool: TOOL })).deny).toBeUndefined()
+  expect(host.files.get(FILE)?.split('\n')).toEqual(['--resume', 'abc-123', '--model', 'claude-opus-5-5'])
+})
+
 test('without the shell function a call adds it to .bashrc once, keeps what was there, and exits nothing', async ($, on) => {
   const host = engine(on, { [RC]: 'alias ll="ls -l"' })
   const clock = mock.clock(on)
   await start($, on, {})
-  const first = await $.tool.call({ tool: TOOL, task: 'Go on.' })
-  const second = await $.tool.call({ tool: TOOL, task: 'Go on.' })
+  const first = await $.tool.call({ tool: TOOL, prompt: 'continue' })
+  const second = await $.tool.call({ tool: TOOL, prompt: 'continue' })
   await endTurn($)
   await settle(clock)
   expect(first.deny).toContain('source ~/.bashrc')
@@ -91,7 +98,7 @@ test('a block from an older toolkit is replaced and what is around it stays', as
   const old = '# >>> toolkit restart >>>\nclaude() { :; }\n# <<< toolkit restart <<<'
   const host = engine(on, { [RC]: `export A=1\n${old}\nexport B=2\n` })
   await start($, on, { CLAUDE_RESTART_FILE: FILE })
-  await $.tool.call({ tool: TOOL, task: 'Go on.' })
+  await $.tool.call({ tool: TOOL, prompt: 'continue' })
   const rc = host.files.get(RC) ?? ''
   expect(rc.startsWith('export A=1\n# >>> toolkit restart >>>\n')).toBe(true)
   expect(rc.endsWith('# <<< toolkit restart <<<\nexport B=2\n')).toBe(true)
@@ -106,7 +113,7 @@ test('a running subagent refuses the restart, and a finished one does not', asyn
     { id: 'a1', type: 'Explore', description: 'Review the diff', status: 'running' },
     { id: 'a2', type: 'Explore', description: 'Old search', status: 'completed' },
   ]
-  const refused = await $.tool.call({ tool: TOOL, task: 'Go on.' })
+  const refused = await $.tool.call({ tool: TOOL, prompt: 'continue' })
   await endTurn($)
   await settle(clock)
   expect(refused.deny).toContain('Review the diff')
@@ -114,7 +121,7 @@ test('a running subagent refuses the restart, and a finished one does not', asyn
   expect(host.runs).toEqual([])
   expect(host.files.has(FILE)).toBe(false)
   host.agents[0].status = 'completed'
-  expect((await $.tool.call({ tool: TOOL, task: 'Go on.' })).deny).toBeUndefined()
+  expect((await $.tool.call({ tool: TOOL, prompt: 'continue' })).deny).toBeUndefined()
   await endTurn($)
   await settle(clock)
   expect(host.runs).toEqual([KILL])

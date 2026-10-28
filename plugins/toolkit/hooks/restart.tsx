@@ -9,7 +9,7 @@ Use it when a change needs a restart to take effect, such as a plugin installed 
 
 The restart ends everything this session runs. The call is refused while a subagent runs, but it cannot see background shells or monitors: stop the ones you started (TaskStop) before the call, or wait for them.
 
-The restart runs after your turn ends, so end your turn right after the call with one line that says you are restarting. The resumed session starts with your \`task\` text as its first prompt, the same model, and the options it was started with that a restart keeps (--plugin-dir, --add-dir, --permission-mode, --settings, --mcp-config, --strict-mcp-config, --dangerously-skip-permissions).
+The restart runs after your turn ends, so end your turn right after the call with one line that says you are restarting. The resumed session has this whole conversation. Leave \`prompt\` out to resume idle, waiting for the person, or pass one to start the resumed session with it. The resumed session keeps the same model and the options it was started with that a restart keeps (--plugin-dir, --add-dir, --permission-mode, --settings, --mcp-config, --strict-mcp-config, --dangerously-skip-permissions).
 
 It needs the toolkit's \`claude\` shell function. Without it, the call adds the function to ~/.bashrc, restarts nothing and says what the person must do once.`
 
@@ -85,13 +85,12 @@ export const register: Register = on => {
       inputSchema: {
         type: 'object',
         properties: {
-          task: {
+          prompt: {
             type: 'string',
             description:
-              'What you will do after the restart, in one sentence. It is the first prompt of the resumed session, so write it so you can continue from it alone.',
+              'Optional first prompt of the resumed session, sent as is. Omit it to resume without a prompt.',
           },
         },
-        required: ['task'],
       },
       isDeferred: false,
     })
@@ -101,9 +100,9 @@ export const register: Register = on => {
   on('tool.call', { tool: TOOL }, async ($, e) => {
     const ready = await relaunchFile($)
     if ('deny' in ready) return { deny: `Nothing was restarted: ${ready.deny}` }
-    const { task } = e as unknown as { task?: unknown }
-    const plan = typeof task === 'string' && task.trim() !== '' ? task.replace(/\s+/g, ' ').trim() : 'Continue the task you were on.'
-    await relaunch($, ready.file, ['--resume', await $.session.id(), '--model', await $.session.model(), `Restarted. ${plan}`])
+    const { prompt } = e as unknown as { prompt?: unknown }
+    const text = typeof prompt === 'string' ? prompt.replace(/\s+/g, ' ').trim() : ''
+    await relaunch($, ready.file, ['--resume', await $.session.id(), '--model', await $.session.model(), ...(text ? [text] : [])])
     return { result: 'Claude Code exits when your turn ends and starts again with this conversation, so end your turn now.' }
   })
 

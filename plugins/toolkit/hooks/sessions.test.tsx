@@ -7,7 +7,7 @@ const HAND_OFF = 'mcp__toolkit__hand_off_to_session'
 // Beneath the plugin: the engine's rows, the tools registered, and a session outside any git repository
 // whose transcript ends with `transcript`; `claude --bg` starts a session with id abcdef12.
 // `claude agents --json` prints `agents`; files written land in `files`, and messages sent in `sent`.
-function engine(on: On, transcript: string | (() => string) = '', agents = '[]') {
+function engine(on: On, transcript: string | (() => string) = '', agents = '[]', env: Record<string, string> = {}) {
   const host = { registered: [] as string[], prompts: [] as string[], logs: [] as string[], files: new Map<string, string>(), sent: [] as string[] }
   on('session.send', (_$, e) => {
     host.sent.push(e.text)
@@ -21,7 +21,8 @@ function engine(on: On, transcript: string | (() => string) = '', agents = '[]')
     host.logs.push(e.text)
     return { value: undefined }
   })
-  mock.env(on, { HOME: '/home/me' })
+  mock.env(on, { HOME: '/home/me', ...env })
+  on('agent.list', () => ({ value: [] }))
   on('session.cwd', () => ({ value: '/w' }))
   on('session.id', () => ({ value: 'parent-uuid' }))
   on('session.model', () => ({ value: 'claude-opus-5-5' }))
@@ -244,4 +245,25 @@ test('stop reports leaves the session working and cuts its link, from the row or
   expect((await $.tool.call({ tool: 'mcp__toolkit__stop_reports', name: 'nope' })).deny).toContain('No session "nope"')
   const byName = await $.tool.call({ tool: 'mcp__toolkit__stop_reports', name: 'check-the-fix' })
   expect(byName.result).toContain('sends no more reports')
+})
+
+test('a switch starts the session with no link back and opens it in this terminal when the turn ends', async ($, on) => {
+  const restartFile = '/run/user/1/claude-restart.42'
+  const host = engine(on, '', '[]', { CLAUDE_RESTART_FILE: restartFile })
+  host.files.set('/home/me/.bashrc', '')
+  const input = { ...PROPOSE, initiation: 'user_asked', use_worktree: false, switch: true }
+  const call = await $.tool.call({ tool: START, tool_use_id: CALL, ...input })
+  expect(call.result).toContain('sends no reports here')
+  expect(host.files.has('/home/me/.claude/toolkit/links/abcdef12.json')).toBe(false)
+  expect(host.files.get(restartFile)).toBe('attach\nabcdef12')
+  expect((await rowWords($, START, input, CALL)).some(w => w.includes('no reports'))).toBe(true)
+})
+
+test('a switch that could not come back to this terminal starts nothing', async ($, on) => {
+  const host = engine(on)
+  const call = await $.tool.call({ tool: START, tool_use_id: CALL, ...PROPOSE, initiation: 'user_asked', use_worktree: false, switch: true })
+  expect(call.deny).toContain('Nothing was started')
+  expect(call.deny).toContain('source ~/.bashrc')
+  expect([...host.files.keys()].some(path => path.includes('/links/'))).toBe(false)
+  expect((await $.tool.call({ tool: START, ...PROPOSE, initiation: 'own_initiative', switch: true })).deny).toContain('switch goes only with "user_asked"')
 })

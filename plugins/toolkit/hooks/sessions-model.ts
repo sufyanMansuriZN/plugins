@@ -85,6 +85,7 @@ export function planStart(input: unknown, caller: Caller): StartPlan {
   if (title === null) return deny('title is required: under 60 characters naming the task.')
   if (title.length > TITLE_MAX) return deny(`title must be under ${TITLE_MAX} characters.`)
   if (initiation === 'offer') return { kind: 'offer', title }
+  if (e.switch !== undefined && initiation !== 'user_asked') return deny('switch goes only with "user_asked": the user asked to go on in a new session.')
   if (initiation === 'user_asked' && caller.isEventTurn) return deny('This turn was started by another session\'s message or an automated event, so a start is refused: propose it instead (initiation "own_initiative").')
 
   const brief = makeBrief(e, title, context, caller, initiation === 'user_asked')

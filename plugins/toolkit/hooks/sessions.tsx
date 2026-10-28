@@ -24,6 +24,7 @@ import {
   startCommand,
 } from './sessions-model'
 import type { Caller } from './sessions-model'
+import { relaunch, relaunchFile } from './restart'
 
 export const START_TOOL = 'mcp__toolkit__start_session'
 export const DISMISS_TOOL = 'mcp__toolkit__dismiss_task'
@@ -102,6 +103,11 @@ const START_SCHEMA = {
       type: 'string',
       description:
         'Start a proposal the user told you to start, exactly as proposed: its task_id and nothing else. For an offer the user answered with New session: its task_id with prompt, background and context. To change a proposal, dismiss_task it and start a new session.',
+    },
+    switch: {
+      type: 'boolean',
+      description:
+        '"user_asked" only, not with target "cloud". true when the user wants to go on in the new session and leave this one ("start a new session and close this one", "carry on in a fresh session"). The new session sends no reports here; when your turn ends, this session closes and this terminal opens the new one.',
     },
   },
 }
@@ -204,37 +210,41 @@ async function prepare($: EngineInterface, brief: Brief): Promise<{ cwd: string;
   return { cwd: path, branch: place.branch }
 }
 
-/** Starts the session and links it here, or says why it could not start. */
-async function launch($: EngineInterface, brief: Brief, callId: string): Promise<{ text: string } | { error: string }> {
+type Launched = { text: string; id: string } | { error: string }
+
+/** Starts the session and links it here (or, for a switch, only lists it), or says why it could not start. */
+async function launch($: EngineInterface, brief: Brief, callId: string, isSwitch = false): Promise<Launched> {
   // The call's row says "starting…" until the session is linked or the start fails.
   const launching = { ...LAUNCHING, id: callId }
   await $.state.set(launching, true)
   try {
-    return await launchNow($, brief, callId)
+    return await launchNow($, brief, callId, isSwitch)
   } finally {
     await $.state.set(launching, false)
   }
 }
 
-async function launchNow($: EngineInterface, brief: Brief, callId: string): Promise<{ text: string } | { error: string }> {
+async function launchNow($: EngineInterface, brief: Brief, callId: string, isSwitch: boolean): Promise<Launched> {
   const ready = await prepare($, brief)
   if ('error' in ready) return ready
   const sessionId = await $.session.id()
   const run = await $.process.run(startCommand(brief, sessionId), { cwd: ready.cwd, timeoutMs: 90_000 }).catch((err: unknown) => ({ exitCode: -1, stdout: '', stderr: String(err) }))
   if (brief.place.kind === 'cloud') {
     if (run.exitCode !== 0) return { error: `The cloud session did not start: ${(run.stderr || run.stdout).trim().slice(0, 500)}` }
-    return { text: `Started a cloud session for "${brief.title}". A cloud session never reports back here. What it printed:\n${run.stdout.trim().slice(0, 800)}` }
+    return { text: `Started a cloud session for "${brief.title}". A cloud session never reports back here. What it printed:\n${run.stdout.trim().slice(0, 800)}`, id: '' }
   }
   const id = backgroundedId(run.stdout)
   if (run.exitCode !== 0 || id === null) return { error: `The session did not start: ${(run.stderr || run.stdout).trim().slice(0, 500) || `exit code ${run.exitCode}`}` }
   // The new session's toolkit reads this to send its reports here; its first turn takes longer than the write.
   const home = (await $.env.get('HOME')) ?? ''
-  await $.fs.write(linkPath(home, id), JSON.stringify({ parent: sessionId, name: brief.name }))
-  const session: LinkedSession = { name: brief.name, title: brief.title, id, sessionId: null, cwd: ready.cwd, branch: ready.branch, state: 'starting', startedAt: Date.now(), callId }
+  if (!isSwitch) await $.fs.write(linkPath(home, id), JSON.stringify({ parent: sessionId, name: brief.name }))
+  const session: LinkedSession = { name: brief.name, title: brief.title, id, sessionId: null, cwd: ready.cwd, branch: ready.branch, state: 'starting', startedAt: Date.now(), callId, isMuted: isSwitch }
   await update($, LINKED, was => [...(was ?? []), session])
   watch($)
   const where = ready.branch ? `its own worktree ${ready.cwd} on branch ${ready.branch}` : ready.cwd
+  if (isSwitch) return { id, text: `Started session "${brief.name}" (id ${id}) in ${where}. It sends no reports here. When your turn ends, this session closes and this terminal opens that one, so end your turn now with one line that says you are switching to it.` }
   return {
+    id,
     text: `Started session "${brief.name}" (id ${id}) in ${where}, in ${brief.permissionMode ?? "the user's default"} mode. It is a real session: the user can open it with \`claude attach ${id}\`. Each time it ends a turn, it sends you its report as a message from that session; never poll it. Follow-ups go to it with SendMessage (to "${brief.name}").\nLinked sessions now:\n${linkedLines((await read($, LINKED)) ?? [])}`,
   }
 }
@@ -543,6 +553,15 @@ export const register: Register = on => {
     if (plan.kind === 'accept') return accept($, plan, input)
 
     const taskId = taskIdOf(e.tool_use_id)
+    if (plan.kind === 'start' && input.switch === true) {
+      if (plan.brief.place.kind === 'cloud') return { deny: 'switch does not go with target "cloud": this terminal cannot open a cloud session.' }
+      const ready = await relaunchFile($)
+      if ('deny' in ready) return { deny: `Nothing was started: ${ready.deny}` }
+      const started = await launch($, plan.brief, e.tool_use_id, true)
+      if ('error' in started) return { deny: started.error }
+      await relaunch($, ready.file, ['attach', started.id])
+      return { result: started.text }
+    }
     if (plan.kind === 'start') {
       const started = await launch($, plan.brief, e.tool_use_id)
       return 'error' in started ? { deny: started.error } : { result: started.text }

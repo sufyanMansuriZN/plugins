@@ -1,4 +1,4 @@
-import type { Register } from 'claude-code'
+import type { EngineInterface, Register } from 'claude-code'
 
 const NAME = 'restart_claude_code'
 const TOOL = `mcp__toolkit__${NAME}`
@@ -43,6 +43,40 @@ const FUNCTION = [
   END,
 ].join('\n')
 
+/** The file the shell function reads the next run's arguments from, or why Claude Code cannot leave this terminal and come back. */
+export async function relaunchFile($: EngineInterface): Promise<{ file: string } | { deny: string }> {
+  const busy = (await $.agent.list()).filter(agent => ['pending', 'running', 'waiting'].includes(agent.status))
+  if (busy.length > 0) {
+    const names = busy.map(agent => agent.name ?? agent.description).join(', ')
+    return { deny: `exiting would cut off ${busy.length === 1 ? 'a running agent' : `${busy.length} running agents`} (${names}). Wait for them to finish or stop them, then call again.` }
+  }
+
+  const rc = `${(await $.env.get('HOME')) ?? ''}/.bashrc`
+  const text = (await $.fs.exists(rc)) ? await $.fs.read(rc) : ''
+  const start = text.indexOf(BEGIN)
+  const end = text.indexOf(END, start)
+  // A block from an older toolkit is replaced, so a fix to the function reaches the next shell.
+  const updated =
+    start === -1 || end === -1
+      ? `${text}${text === '' || text.endsWith('\n') ? '' : '\n'}\n${FUNCTION}\n`
+      : `${text.slice(0, start)}${FUNCTION}${text.slice(end + END.length)}`
+  const isChanged = updated !== text
+  if (isChanged) await $.fs.write(rc, updated)
+
+  const file = await $.env.get('CLAUDE_RESTART_FILE')
+  if (file) return { file }
+  return {
+    deny: `this Claude Code was not started through the toolkit's \`claude\` shell function, so nothing could run in this terminal after an exit. ${isChanged ? `The function is now in ${rc}. ` : `The function is in ${rc}, but this terminal has not loaded it. `}Tell the person to run \`source ~/.bashrc\` (or open a new terminal), exit Claude Code and start it again with \`claude --continue\`. From then on it works.`,
+  }
+}
+
+/** Claude Code exits when this turn ends, and the shell function runs `claude <args>` in its place. */
+export async function relaunch($: EngineInterface, file: string, args: string[]) {
+  // One argument per line, read back with mapfile.
+  await $.fs.write(file, args.join('\n'))
+  await $.state.set(PENDING, file)
+}
+
 export const register: Register = on => {
   on('session.start', { surface: 'terminal', isInteractive: true }, async ($, e, next) => {
     await $.tool.register({
@@ -65,36 +99,11 @@ export const register: Register = on => {
   })
 
   on('tool.call', { tool: TOOL }, async ($, e) => {
-    const busy = (await $.agent.list()).filter(agent => ['pending', 'running', 'waiting'].includes(agent.status))
-    if (busy.length > 0) {
-      const names = busy.map(agent => agent.name ?? agent.description).join(', ')
-      return { deny: `Nothing was restarted: a restart would cut off ${busy.length === 1 ? 'a running agent' : `${busy.length} running agents`} (${names}). Wait for them to finish or stop them, then call again.` }
-    }
-
-    const rc = `${(await $.env.get('HOME')) ?? ''}/.bashrc`
-    const text = (await $.fs.exists(rc)) ? await $.fs.read(rc) : ''
-    const start = text.indexOf(BEGIN)
-    const end = text.indexOf(END, start)
-    // A block from an older toolkit is replaced, so a fix to the function reaches the next shell.
-    const updated =
-      start === -1 || end === -1
-        ? `${text}${text === '' || text.endsWith('\n') ? '' : '\n'}\n${FUNCTION}\n`
-        : `${text.slice(0, start)}${FUNCTION}${text.slice(end + END.length)}`
-    const isChanged = updated !== text
-    if (isChanged) await $.fs.write(rc, updated)
-
-    const file = await $.env.get('CLAUDE_RESTART_FILE')
-    if (!file) {
-      return {
-        deny: `Nothing was restarted: this Claude Code was not started through the toolkit's \`claude\` shell function, so it could not come back after an exit. ${isChanged ? `The function is now in ${rc}. ` : `The function is in ${rc}, but this terminal has not loaded it. `}Tell the person to run \`source ~/.bashrc\` (or open a new terminal), exit Claude Code and start it again with \`claude --continue\`. From then on a restart works.`,
-      }
-    }
-
+    const ready = await relaunchFile($)
+    if ('deny' in ready) return { deny: `Nothing was restarted: ${ready.deny}` }
     const { task } = e as unknown as { task?: unknown }
     const plan = typeof task === 'string' && task.trim() !== '' ? task.replace(/\s+/g, ' ').trim() : 'Continue the task you were on.'
-    // One argument per line, read back with mapfile.
-    await $.fs.write(file, [`--resume`, await $.session.id(), '--model', await $.session.model(), `Restarted. ${plan}`].join('\n'))
-    await $.state.set(PENDING, file)
+    await relaunch($, ready.file, ['--resume', await $.session.id(), '--model', await $.session.model(), `Restarted. ${plan}`])
     return { result: 'Claude Code exits when your turn ends and starts again with this conversation, so end your turn now.' }
   })
 

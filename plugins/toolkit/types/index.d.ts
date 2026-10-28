@@ -115,6 +115,8 @@ declare module 'claude-code' {
       plan: { steps: PlanStep[]; prompts: number } | null
       /** Whether a long task list above the prompt shows every step; folded to five until "… +N more" is pressed. */
       planIsOpen: boolean
+      /** Whether the last turn ended with background work (a monitor, a shell) still running, which keeps the task list above the prompt until the next turn. */
+      planIsWaiting: boolean
       /** The sessions this one started, oldest first. */
       linked: LinkedSession[]
       /** Whether a start_session call is still starting its session, by the call's tool_use_id (a proposal's task id for a card's start). */

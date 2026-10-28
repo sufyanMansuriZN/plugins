@@ -133,17 +133,36 @@ test('a message typed mid-turn and a turn a background task wakes keep the list'
   expect(await spinner($)).toContain('Fix blank lines')
 })
 
-test('once Claude stops, an unfinished list is not drawn above the prompt', async ($, on) => {
-  engine(on)
-  await turn($, 't1', () => $.tool.call({ tool: TOOL, items: PLAN }))
+async function abovePrompt($: Engine): Promise<string[]> {
   const ui = await $.ui.mount({
     plugin: 'toolkit',
     surface: 'terminal',
     component: 'AbovePrompt',
     props: { hasSurvey: false, isWorking: false, maxRows: 20, bodyColumns: 100, scroll: { offset: 0, bodyRows: 20 }, view: {} },
   })
-  expect((await ui.findAll({ type: 'Text' })).map(found => found.text)).toEqual(['engine: AbovePrompt'])
+  const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text.trim()).filter(words => words !== '')
   await ui.unmount()
+  return texts
+}
+
+const MONITOR = { id: 'b1', type: 'monitor', status: 'running', description: 'watch CI' }
+
+test('once Claude stops, an unfinished list is not drawn above the prompt', async ($, on) => {
+  engine(on)
+  on('classic.Stop', () => ({}))
+  await turn($, 't1', () => $.tool.call({ tool: TOOL, items: PLAN }))
+  await $.classic.Stop({ stop_hook_active: false, background_tasks: [] })
+  expect(await abovePrompt($)).toEqual(['engine: AbovePrompt'])
+})
+
+test('while a monitor runs after Claude stops, the list stays above the prompt until the next turn', async ($, on) => {
+  engine(on)
+  on('classic.Stop', () => ({}))
+  await turn($, 't1', () => $.tool.call({ tool: TOOL, items: PLAN }))
+  await $.classic.Stop({ stop_hook_active: false, background_tasks: [MONITOR] })
+  expect(await abovePrompt($)).toEqual(['◼', 'Read the parser', '◻', 'Fix blank lines', '◻', 'Run the tests', 'engine: AbovePrompt'])
+  await $.turn.start({ text: '', turnId: 't2' })
+  expect(await abovePrompt($)).toEqual(['engine: AbovePrompt'])
 })
 
 test('a list goes away under the spinner the moment every step is done', async ($, on) => {

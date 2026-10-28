@@ -12,10 +12,6 @@ const STEPS_MAX = 12
 const STATUSES: PlanStatus[] = ['pending', 'in_progress', 'completed']
 // A long list shows five steps and a "… +N more" row, as Claude Code cuts its own lists short.
 const STEP_ROWS = 6
-// Above the prompt Claude Code's own list shows five steps, then one row for the finished steps it leaves out.
-const BAND_STEPS = 5
-// Above the prompt the list leaves room for its count and a status bar's row.
-const BAND_ROWS = 2
 
 const DESCRIPTION = `Keep the task list the terminal shows above the prompt while you work. Every request that edits files or runs more than one command gets one (implement-and-test, investigate-then-fix, anything the user listed); only a single-command answer or pure conversation does not.
 
@@ -172,47 +168,6 @@ export function drawPlan(elements: Elements['terminal'], plan: PlanStep[], toggl
   )
 }
 
-/**
- * The list above the prompt once Claude stops with steps still open, laid out as Claude Code lays out its own:
- * a count, the open steps (the one in progress first), then the finished ones, with the rest folded into one row.
- */
-export function drawOpenPlan(elements: Elements['terminal'], plan: PlanStep[], rows: number) {
-  const { Box, Text } = elements
-  const done = plan.filter(step => step.status === 'completed').length
-  const progress = plan.filter(step => step.status === 'in_progress').length
-  const open = plan.length - done - progress
-  const header = (
-    <Box flexDirection="row">
-      <Text dimColor weight="bold">{String(plan.length)}</Text>
-      <Text dimColor>{' tasks ('}</Text>
-      <Text dimColor weight="bold">{String(done)}</Text>
-      <Text dimColor>{' done, '}</Text>
-      {progress > 0 ? <Text dimColor>{`${progress} in progress, `}</Text> : null}
-      <Text dimColor weight="bold">{String(open)}</Text>
-      <Text dimColor>{' open)'}</Text>
-    </Box>
-  )
-  const current = plan.map((step, index): [number, PlanStep] => [index, step])
-  const ordered = [...current.filter(([, step]) => step.status === 'in_progress'), ...current.filter(([, step]) => step.status === 'pending'), ...current.filter(([, step]) => step.status === 'completed')]
-  const shown = ordered.slice(0, rows)
-  const hidden = ordered.length - shown.length
-  const hiddenLabel = ordered.slice(rows).some(([, step]) => step.status !== 'completed') ? 'more' : 'completed'
-  return (
-    <Box flexDirection="column" paddingLeft={2}>
-      {header}
-      {shown.map(([index, step]) => (
-        <Box key={`step:${index}`} flexDirection="row">
-          <Text color={MARKS[step.status].color}>{`${MARKS[step.status].mark} `}</Text>
-          <Text weight={step.status === 'in_progress' ? 'bold' : undefined} dimColor={step.status === 'completed'}>
-            {step.content}
-          </Text>
-        </Box>
-      ))}
-      {hidden > 0 ? <Text dimColor>{` … +${hidden} ${hiddenLabel}`}</Text> : null}
-    </Box>
-  )
-}
-
 export const register: Register = on => {
   // Desktop pins its own list under the reply, and a -p run has no band to draw in.
   on('session.start', { surface: 'terminal', isInteractive: true }, async ($, e, next) => {
@@ -230,24 +185,9 @@ export const register: Register = on => {
     return 'deny' in result ? result : { result: summary(result) }
   })
 
-  // Once the turn stops the list moves above the prompt.
-  // A typed prompt keeps an unfinished one, since a side question mid-task is not a new plan; a new list replaces it.
+  // Where Claude Code draws its own task list: under the spinner, so it shows only while the turn runs.
+  // An unfinished list comes back with the next turn's spinner; a new list replaces it.
   // A rewind sends no event: it only takes prompts out of the transcript, the one the list was made under too.
-  on('ui.render', { surface: 'terminal', component: 'AbovePrompt' }, async ($, e, next) => {
-    const plan = await read($, PLAN)
-    if (e.props.hasSurvey || e.props.isWorking || !plan || (await $.session.turns()) < plan.prompts) return next(e)
-    const below = await next(e)
-    const elements = $.ui.resolve(e)
-    const { Box } = elements
-    return (
-      <Box flexDirection="column">
-        {drawOpenPlan(elements, plan.steps, Math.min(BAND_STEPS, e.props.maxRows - BAND_ROWS))}
-        {below}
-      </Box>
-    )
-  })
-
-  // Where Claude Code draws its own task list: under the spinner, so it shows while the turn runs.
   on('ui.render', { surface: 'terminal', component: 'Spinner' }, async ($, e, next) => {
     const plan = await read($, PLAN)
     if (!plan || (await $.session.turns()) < plan.prompts) return next(e)

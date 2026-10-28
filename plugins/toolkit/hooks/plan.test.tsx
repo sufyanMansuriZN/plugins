@@ -133,29 +133,17 @@ test('a message typed mid-turn and a turn a background task wakes keep the list'
   expect(await spinner($)).toContain('Fix blank lines')
 })
 
-test('once Claude stops, the list moves above the prompt until every step is done', async ($, on) => {
+test('once Claude stops, an unfinished list is not drawn above the prompt', async ($, on) => {
   engine(on)
-  const band = async (props: { isWorking?: boolean; hasSurvey?: boolean } = {}) => {
-    const ui = await $.ui.mount({
-      plugin: 'toolkit',
-      surface: 'terminal',
-      component: 'AbovePrompt',
-      props: { hasSurvey: false, isWorking: false, maxRows: 20, bodyColumns: 100, scroll: { offset: 0, bodyRows: 20 }, view: {}, ...props },
-    })
-    const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
-    await ui.unmount()
-    return { first: texts.slice(0, 7).join(''), texts }
-  }
-  expect((await band()).texts).toEqual(['engine: AbovePrompt'])
-  await $.tool.call({ tool: TOOL, items: PLAN })
-  await $.tool.call({ tool: TOOL, advance: true })
-  const open = await band()
-  expect(open.first).toBe('3 tasks (1 done, 1 in progress, 1 open)')
-  expect(open.texts.at(-1)).toBe('engine: AbovePrompt')
-  expect((await band({ isWorking: true })).texts).toEqual(['engine: AbovePrompt'])
-  expect((await band({ hasSurvey: true })).texts).toEqual(['engine: AbovePrompt'])
-  await $.tool.call({ tool: TOOL, done: [2, 3] })
-  expect((await band()).texts).toEqual(['engine: AbovePrompt'])
+  await turn($, 't1', () => $.tool.call({ tool: TOOL, items: PLAN }))
+  const ui = await $.ui.mount({
+    plugin: 'toolkit',
+    surface: 'terminal',
+    component: 'AbovePrompt',
+    props: { hasSurvey: false, isWorking: false, maxRows: 20, bodyColumns: 100, scroll: { offset: 0, bodyRows: 20 }, view: {} },
+  })
+  expect((await ui.findAll({ type: 'Text' })).map(found => found.text)).toEqual(['engine: AbovePrompt'])
+  await ui.unmount()
 })
 
 test('a list goes away under the spinner the moment every step is done', async ($, on) => {
@@ -180,21 +168,9 @@ test('an unfinished list survives the next turn start', async ($, on) => {
 test('a rewind past the prompt the list was made under takes the list away', async ($, on) => {
   let prompts = 2
   engine(on, () => prompts)
-  const band = async () => {
-    const ui = await $.ui.mount({
-      plugin: 'toolkit',
-      surface: 'terminal',
-      component: 'AbovePrompt',
-      props: { hasSurvey: false, isWorking: false, maxRows: 20, bodyColumns: 100, scroll: { offset: 0, bodyRows: 20 }, view: {} },
-    })
-    const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
-    await ui.unmount()
-    return texts
-  }
   await $.tool.call({ tool: TOOL, items: PLAN })
-  expect(await band()).toContain('Read the parser')
+  expect(await spinner($)).toContain('Read the parser')
   prompts = 1
-  expect(await band()).toEqual(['engine: AbovePrompt'])
   expect(await spinner($)).toEqual(['engine: Spinner'])
 })
 
@@ -227,55 +203,4 @@ test('a long list shows five steps around the one in progress and counts the res
   await $.tool.call({ tool: TOOL, items: LONG })
   expect((await spinner($)).filter(words => words.startsWith('Step') || words.startsWith('…'))).toEqual(['Step 5', 'Step 6', 'Step 7', 'Step 8', 'Step 9', '… +4 more'])
   expect((await spinner($, 'toggle')).filter(words => /^(Step|…|show)/.test(words))).toEqual([...LONG.map(step => step.content), 'show less'])
-})
-
-test('above the prompt a long list folds to the step in progress, one row under the count', async ($, on) => {
-  engine(on)
-  await $.tool.call({ tool: TOOL, items: LONG })
-  const ui = await $.ui.mount({
-    plugin: 'toolkit',
-    surface: 'terminal',
-    component: 'AbovePrompt',
-    props: { hasSurvey: false, isWorking: false, maxRows: 6, bodyColumns: 100, scroll: { offset: 0, bodyRows: 6 }, view: {} },
-  })
-  const texts = (await ui.findAll({}))
-    .filter(found => found.type === 'Text' || found.type === 'Button')
-    .map(found => found.text.trim())
-    .filter(words => /^(Step|…|show)/.test(words))
-  await ui.unmount()
-  expect(texts).toEqual(['Step 8', 'Step 9', 'Step 1', 'Step 2', '… +5 completed'])
-})
-
-test('above the prompt a long list shows open steps first and folds the finished ones into one row', async ($, on) => {
-  engine(on)
-  await $.tool.call({ tool: TOOL, items: LONG })
-  const ui = await $.ui.mount({
-    plugin: 'toolkit',
-    surface: 'terminal',
-    component: 'AbovePrompt',
-    props: { hasSurvey: false, isWorking: false, maxRows: 20, bodyColumns: 100, scroll: { offset: 0, bodyRows: 20 }, view: {} },
-  })
-  const texts = (await ui.findAll({}))
-    .filter(found => found.type === 'Text' || found.type === 'Button')
-    .map(found => found.text.trim())
-    .filter(words => /^(Step|…)/.test(words))
-  await ui.unmount()
-  expect(texts).toEqual(['Step 8', 'Step 9', 'Step 1', 'Step 2', 'Step 3', '… +4 completed'])
-})
-
-test('above the prompt a short list shows every step with no fold row', async ($, on) => {
-  engine(on)
-  await $.tool.call({ tool: TOOL, items: PLAN })
-  const ui = await $.ui.mount({
-    plugin: 'toolkit',
-    surface: 'terminal',
-    component: 'AbovePrompt',
-    props: { hasSurvey: false, isWorking: false, maxRows: 20, bodyColumns: 100, scroll: { offset: 0, bodyRows: 20 }, view: {} },
-  })
-  const texts = (await ui.findAll({}))
-    .filter(found => found.type === 'Text' || found.type === 'Button')
-    .map(found => found.text.trim())
-    .filter(words => /^(Read|Fix|Run|…)/.test(words))
-  await ui.unmount()
-  expect(texts).toEqual(['Read the parser', 'Fix blank lines', 'Run the tests'])
 })

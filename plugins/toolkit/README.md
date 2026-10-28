@@ -95,7 +95,7 @@ Gives Claude a tool, `update_plan`, with the Claude desktop app's name and trigg
 
 It runs in an interactive terminal session only. The Claude desktop app has its own list, and a `claude -p` run has no band to draw in.
 
-### Other sessions (`start_session`, `hand_off_to_session`, `dismiss_task`, `list_sessions`)
+### Other sessions (`start_session`, `hand_off_to_session`, `dismiss_task`, `list_sessions`, `stop_reports`)
 
 Gives Claude the Claude desktop app's way to hand work to a separate session: its `start_session`, `hand_off_to_session` and `dismiss_task` tools, with Desktop's names, fields and rule. In the terminal, a new session is a background session (`claude --bg`). You can open it with `claude attach <id>`, talk to it and stop it, and it shows in `claude agents`.
 
@@ -109,9 +109,11 @@ Gives Claude the Claude desktop app's way to hand work to a separate session: it
   - the session was reopened with `/resume`, which starts without the toolkit's state
 
   In the ctrl+O view, a moved card shows under the reply, and the call's full row shows too.
-- **The row.** While `claude --bg` starts the session, the call's row says `starting…`. Then it shows the session's name, its state (`starting`, `working`, `idle`, `done`, `stopped`, `failed` or `removed`) and its branch. Under it are **claude attach &lt;id&gt;**, which copies that command, and **stop** while it works.
+- **The row.** While `claude --bg` starts the session, the call's row says `starting…`. Then it shows the session's name, its state (`starting`, `working`, `idle`, `done`, `stopped`, `failed` or `removed`) and its branch. Under it are **claude attach &lt;id&gt;**, which copies that command, **stop** while it works, and **stop reports** while it runs.
 - **The session reports back itself.** Each time a session Claude started ends a turn, it sends this session a message, as any other session's message arrives (`Message from @<name>`). The message holds the first 400 characters of its report: its next step box recap, then its last message. Claude checks the result before it tells you the work is done.
   - How it finds this session: right after `claude --bg` prints the new session's short id, the toolkit writes `~/.claude/toolkit/links/<short id>.json` with this session's id. The new session's toolkit reads it when a turn ends. The short id is the first 8 characters of the session id.
+  - Reports go only to a session that is still open. Before it sends one, the session looks for this session's id in `claude agents --json`. If this session is closed, the report is dropped. If you open it again, reports come back.
+  - **stop reports** on the row, or `stop_reports` when you ask Claude in words, ends the reports for good. It empties the link file, so the session keeps working but sends nothing. The row then says `no reports`. Use it when this session is still open but you have moved on.
   - A turn that Claude's own `SendMessage` follow-up started is reported too. Claude Code tells the sender of that turn only when `SendMessage` passes `notify_when_idle`, so the rule tells Claude not to pass it to a session it started.
   - A session that crashes, or is stopped or removed before it answers, sends nothing. Its row changes, and you get a toast. The toolkit looks at the linked sessions every 4 seconds for the rows and the toast.
   - A turn that another session's message or another automated message starts (a background task, a schedule) may propose sessions but not start them.

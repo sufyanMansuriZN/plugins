@@ -86,7 +86,6 @@ export function planStart(input: unknown, caller: Caller): StartPlan {
   if (title.length > TITLE_MAX) return deny(`title must be under ${TITLE_MAX} characters.`)
   if (initiation === 'offer') return { kind: 'offer', title }
   if (initiation === 'user_asked' && caller.isEventTurn) return deny('This turn was started by another session\'s message or an automated event, so a start is refused: propose it instead (initiation "own_initiative").')
-  if (initiation === 'own_initiative' && e.wake_when_done !== undefined) return deny('wake_when_done does not go with own_initiative.')
 
   const brief = makeBrief(e, title, context, caller, initiation === 'user_asked')
   if ('deny' in brief) return brief

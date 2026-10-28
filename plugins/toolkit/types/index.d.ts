@@ -67,6 +67,8 @@ export type LinkedSession = {
   startedAt: number
   /** The start_session call that started it, so that call's row shows its state. */
   callId: string
+  /** The user stopped its reports to this session. */
+  isMuted?: boolean
 }
 
 /** A card start_session put up: an offer waiting for the user's answer, or a proposal. */

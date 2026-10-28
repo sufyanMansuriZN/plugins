@@ -43,9 +43,7 @@ test('a fresh start needs a brief and enough background', () => {
 test('an offer is a title alone, and a proposal needs the full brief', () => {
   expect(planStart({ initiation: 'offer', title: 'Clean up the CLI' }, caller())).toEqual({ kind: 'offer', title: 'Clean up the CLI' })
   expect(planStart({ initiation: 'own_initiative', title: 'Clean up' }, caller()).kind).toBe('deny')
-  expect(planStart({ ...asked, initiation: 'own_initiative' }, caller()).kind).toBe('propose')
-  expect(planStart({ ...asked, initiation: 'own_initiative', wake_when_done: true }, caller()).kind).toBe('deny')
-})
+  expect(planStart({ ...asked, initiation: 'own_initiative' }, caller()).kind).toBe('propose')})
 
 test('a turn an event started may propose but not start', () => {
   expect(planStart(asked, caller({ isEventTurn: true })).kind).toBe('deny')

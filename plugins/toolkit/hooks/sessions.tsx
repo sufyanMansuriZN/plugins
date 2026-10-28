@@ -29,6 +29,7 @@ export const START_TOOL = 'mcp__toolkit__start_session'
 export const DISMISS_TOOL = 'mcp__toolkit__dismiss_task'
 export const HAND_OFF_TOOL = 'mcp__toolkit__hand_off_to_session'
 export const LIST_TOOL = 'mcp__toolkit__list_sessions'
+export const MUTE_TOOL = 'mcp__toolkit__stop_reports'
 
 const LINKED = { plugin: 'toolkit', key: 'linked' } as const
 const PROPOSALS = { plugin: 'toolkit', key: 'proposals' } as const
@@ -102,11 +103,6 @@ const START_SCHEMA = {
       description:
         'Start a proposal the user told you to start, exactly as proposed: its task_id and nothing else. For an offer the user answered with New session: its task_id with prompt, background and context. To change a proposal, dismiss_task it and start a new session.',
     },
-    wake_when_done: {
-      type: 'boolean',
-      description:
-        'Each time this session ends a turn, it sends you its report as a message, which wakes you when you are idle, whether or not this is set. Default false; not with own_initiative; ignored with target "cloud", which never reports back.',
-    },
   },
 }
 
@@ -141,6 +137,10 @@ const HAND_OFF_SCHEMA = {
 const LIST_DESCRIPTION =`List Claude Code sessions. {"linked": true} lists the sessions this one started with start_session (name, id, state, branch or folder) — use it, never a search, to find a session you started. Without it, every running background and interactive session on this computer.`
 
 const LIST_SCHEMA = { type: 'object', properties: { linked: { type: 'boolean', description: 'true: only the sessions this one started.' } } }
+
+const MUTE_DESCRIPTION = `Stop a session you started with start_session from sending its reports here. It keeps working, and the user can still open it with \`claude attach\`. Use it when the user no longer wants that session's reports in this session.`
+
+const MUTE_SCHEMA = { type: 'object', properties: { name: { type: 'string', description: 'The session\'s name or id, as list_sessions {"linked": true} gives it.' } }, required: ['name'] }
 
 const taskIdOf = (toolUseId: string) => `task_${toolUseId.replace(/[^A-Za-z0-9]/g, '').slice(-8).toLowerCase()}`
 const randomSuffix = () => Array.from(crypto.getRandomValues(new Uint8Array(3)), byte => byte.toString(16).padStart(2, '0')).join('')
@@ -288,12 +288,23 @@ async function reportBack($: EngineInterface, reason: string, answer: string) {
   if (!(await $.fs.exists(path))) return
   const link = parseLink(await $.fs.read(path))
   if (link === null) return
+  // Reports go only to a session that is still open; one the user closed is left closed.
+  const listing = await $.process.run(['claude', 'agents', '--json'], { timeoutMs: 20_000 }).catch(() => null)
+  if (listing?.exitCode === 0 && !listing.stdout.includes(`"${link.parent}"`)) return
   const latest = latestReport(await transcriptTail($, home, sessionId))
   // The transcript adds the recap and the text before a box; one not yet holding this turn's answer is a turn behind.
   const final = answer.trim() === '.' ? '' : answer.trim()
   const report = latest !== null && latest.report.includes(final.slice(0, 40)) ? latest.report : final
   const sent = await $.session.send({ to: { sessionId: link.parent }, text: reportText(link.name, id, reason, report) })
   if (!sent.isDelivered) $.ui.log(`toolkit: the report to the session that started this one was not delivered: ${sent.reason}`, { to: 'debug' })
+}
+
+/** Stops a linked session's reports to this one; it keeps working. */
+async function mute($: EngineInterface, id: string) {
+  const home = (await $.env.get('HOME')) ?? ''
+  // An empty link reads as no link, so the session sends nothing.
+  await $.fs.write(linkPath(home, id), '')
+  await update($, LINKED, was => (was ?? []).map(s => (s.id === id ? { ...s, isMuted: true } : s)))
 }
 
 function watch($: EngineInterface) {
@@ -388,6 +399,11 @@ function sessionLine($: EngineInterface, elements: Elements['terminal'], session
       <Text>{`${session.name} · ${session.state === 'gone' ? 'removed' : session.state}${session.branch ? ` · ${session.branch}` : ''}  `}</Text>
       {link(elements, 'attach', `claude attach ${session.id}`, copy)}
       {session.state === 'working' ? [<Text dimColor>{'  ·  '}</Text>, link(elements, 'stop', 'stop', stop, true)] : []}
+      {session.isMuted
+        ? [<Text dimColor>{'  ·  no reports'}</Text>]
+        : isAlive(session.state)
+          ? [<Text dimColor>{'  ·  '}</Text>, link(elements, 'mute', 'stop reports', () => void mute($, session.id), true)]
+          : []}
     </Box>
   )
 }
@@ -460,6 +476,7 @@ export const register: Register = on => {
     await $.tool.register({ name: 'dismiss_task', description: DISMISS_DESCRIPTION, inputSchema: DISMISS_SCHEMA, isDeferred: false })
     await $.tool.register({ name: 'list_sessions', description: LIST_DESCRIPTION, inputSchema: LIST_SCHEMA, isDeferred: false })
     await $.tool.register({ name: 'hand_off_to_session', description: HAND_OFF_DESCRIPTION, inputSchema: HAND_OFF_SCHEMA, isDeferred: false })
+    await $.tool.register({ name: 'stop_reports', description: MUTE_DESCRIPTION, inputSchema: MUTE_SCHEMA, isDeferred: false })
     // A reload drops the module's timer, so the reloaded module watches again.
     if (((await read($, LINKED)) ?? []).some(s => isAlive(s.state))) watch($)
     return next(e)
@@ -577,6 +594,14 @@ export const register: Register = on => {
     if (proposal.status === 'started') return { result: `${taskId} was already started as session "${proposal.session}", so it was not withdrawn. Its work is that session's: do not do it here unless the user tells you to.` }
     if (proposal.status !== 'open') return { result: `${taskId} had already left (${proposal.status}); nothing to withdraw.` }
     return { result: `Withdrew ${taskId}.` }
+  })
+
+  on('tool.call', { tool: MUTE_TOOL }, async ($, e) => {
+    const { name } = e as unknown as { name?: unknown }
+    const session = ((await read($, LINKED)) ?? []).find(s => s.name === name || s.id === name)
+    if (!session) return { deny: `No session "${String(name)}" was started here. Linked sessions:\n${linkedLines((await read($, LINKED)) ?? [])}` }
+    await mute($, session.id)
+    return { result: `Session "${session.name}" (id ${session.id}) sends no more reports here. It keeps working; the user can open it with \`claude attach ${session.id}\`.` }
   })
 
   on('tool.call', { tool: LIST_TOOL }, async ($, e) => {

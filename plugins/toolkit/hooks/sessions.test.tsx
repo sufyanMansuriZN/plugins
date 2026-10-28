@@ -6,8 +6,13 @@ const HAND_OFF = 'mcp__toolkit__hand_off_to_session'
 
 // Beneath the plugin: the engine's rows, the tools registered, and a session outside any git repository
 // whose transcript ends with `transcript`; `claude --bg` starts a session with id abcdef12.
-function engine(on: On, transcript: string | (() => string) = ''): { registered: string[]; prompts: string[]; logs: string[] } {
-  const host = { registered: [] as string[], prompts: [] as string[], logs: [] as string[] }
+// `claude agents --json` prints `agents`; files written land in `files`, and messages sent in `sent`.
+function engine(on: On, transcript: string | (() => string) = '', agents = '[]') {
+  const host = { registered: [] as string[], prompts: [] as string[], logs: [] as string[], files: new Map<string, string>(), sent: [] as string[] }
+  on('session.send', (_$, e) => {
+    host.sent.push(e.text)
+    return { isDelivered: true }
+  })
   on('ui.log', (_$, e) => {
     host.logs.push(e.text)
     return { value: undefined }
@@ -25,11 +30,16 @@ function engine(on: On, transcript: string | (() => string) = ''): { registered:
     if (e.argv[0] === 'find') return done(0, `${e.argv[1]}/-w/${e.argv.at(-1)}\n`)
     if (e.argv[0] === 'tail') return done(0, typeof transcript === 'string' ? transcript : transcript())
     if (e.argv[0] === 'claude' && e.argv.includes('--bg')) return done(0, 'backgrounded · abcdef12 · check-the-fix\n')
+    if (e.argv[0] === 'claude' && e.argv[1] === 'agents' && !e.argv.includes('--all')) return done(0, agents)
     if (e.argv[0] === 'claude') return done(0, '[]')
     return done(128, '', 'not a git repository')
   })
-  on('fs.write', () => ({ value: undefined }))
-  on('fs.exists', () => ({ value: false }))
+  on('fs.write', (_$, e) => {
+    host.files.set(e.path, e.text)
+    return { value: undefined }
+  })
+  on('fs.exists', (_$, e) => ({ value: host.files.has(e.path) }))
+  on('fs.read', (_$, e) => ({ value: host.files.get(e.path) ?? '' }))
   on('fs.stat', () => ({ value: { kind: 'dir', realPath: '/w', size: 0, mtimeMs: 0, isLink: false } }))
   on('turn.start', (_$, e) => ({ turnId: e.turnId }))
   on('turn.complete', (_$, e) => ({ text: 'answer' in e ? e.answer : '' }))
@@ -186,4 +196,52 @@ test('a hand-off call draws as a session row headed Handed off', async ($, on) =
   expect(words.some(w => w.includes('Fix blank lines'))).toBe(true)
   const start = await rowWords($, 'mcp__toolkit__start_session', { initiation: 'user_asked', title: 'Clean up' })
   expect(start).toContain('New session')
+})
+
+const LINK = '/home/me/.claude/toolkit/links/parent-u.json'
+
+test('a started session reports to the session that started it only while that session is open', async ($, on) => {
+  const open = engine(on, '', JSON.stringify([{ kind: 'interactive', sessionId: 'starter-uuid', status: 'idle' }]))
+  open.files.set(LINK, JSON.stringify({ parent: 'starter-uuid', name: 'check-the-fix' }))
+  await $.turn.complete({ reason: 'answer', answer: 'Fixed.', durationMs: 1000, isAborted: false, turnId: 't1' })
+  await settle()
+  expect(open.sent).toHaveLength(1)
+  expect(open.sent[0]).toContain('Fixed.')
+})
+
+test('a started session sends nothing once the session that started it is closed', async ($, on) => {
+  const closed = engine(on, '', '[]')
+  closed.files.set(LINK, JSON.stringify({ parent: 'starter-uuid', name: 'check-the-fix' }))
+  await $.turn.complete({ reason: 'answer', answer: 'Fixed.', durationMs: 1000, isAborted: false, turnId: 't1' })
+  await settle()
+  expect(closed.sent).toEqual([])
+})
+
+test('stop reports leaves the session working and cuts its link, from the row or by name', async ($, on) => {
+  const host = engine(on)
+  const input = { ...PROPOSE, initiation: 'user_asked', use_worktree: false }
+  const started = await $.tool.call({ tool: START, tool_use_id: CALL, ...input })
+  expect(started.result).toContain('abcdef12')
+  const link = '/home/me/.claude/toolkit/links/abcdef12.json'
+  expect(host.files.get(link)).toContain('parent-uuid')
+  expect(await rowWords($, START, input, CALL)).toContain('stop reports')
+
+  const ui = await $.ui.mount({
+    plugin: 'toolkit',
+    surface: 'terminal',
+    component: 'ToolUse',
+    requestId: CALL,
+    props: { tool_use_id: CALL, tool: START, input, isRunning: false, isErrored: false, isInterrupted: false, output: 'ok' },
+  })
+  await ui.press({ key: 'mute' })
+  await settle()
+  await ui.unmount()
+  expect(host.files.get(link)).toBe('')
+  const after = await rowWords($, START, input, CALL)
+  expect(after).not.toContain('stop reports')
+  expect(after.some(w => w.includes('no reports'))).toBe(true)
+
+  expect((await $.tool.call({ tool: 'mcp__toolkit__stop_reports', name: 'nope' })).deny).toContain('No session "nope"')
+  const byName = await $.tool.call({ tool: 'mcp__toolkit__stop_reports', name: 'check-the-fix' })
+  expect(byName.result).toContain('sends no more reports')
 })

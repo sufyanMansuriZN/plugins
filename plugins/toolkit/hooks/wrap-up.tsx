@@ -118,6 +118,31 @@ export function parseWrapUp(input: unknown): WrapUp | { deny: string } {
   return { recap, question: { ask, answers, isBlocked: blocked === true } }
 }
 
+/** The tool_use_id of the transcript's last next step call with a question, while no prompt from the user follows it; else null. */
+export function openWrapUp(jsonl: string): string | null {
+  let open: string | null = null
+  for (const line of jsonl.split('\n')) {
+    let row: { type?: string; isMeta?: boolean; message?: { content?: unknown } }
+    try {
+      row = JSON.parse(line)
+    } catch {
+      // A blank line, a line still being written, or the first one of a file read from its end.
+      continue
+    }
+    const content = row.message?.content
+    const blocks = (Array.isArray(content) ? content : []) as { type?: string; id?: string; name?: string; input?: unknown }[]
+    // shortcut: a task notification or another session's message also closes the question, as the transcript does not say who sent a prompt.
+    if (row.type === 'user' && !row.isMeta && (typeof content === 'string' || blocks.some(block => block.type === 'text'))) open = null
+    if (row.type !== 'assistant') continue
+    for (const block of blocks) {
+      if (block.type !== 'tool_use' || block.name !== WRAP_UP_TOOL || !block.id) continue
+      const wrapUp = parseWrapUp(block.input)
+      if (!('deny' in wrapUp) && wrapUp.question !== null) open = block.id
+    }
+  }
+  return open
+}
+
 /** The whole look of the box: swap this to change the layout. `answered` is the label pressed. */
 export function drawWrapUp(elements: Elements['terminal'], recap: string, question: WrapUpQuestion, answered: string | null, onPress: (answer: string) => void) {
   const { Box, Button, Text } = elements
@@ -182,6 +207,11 @@ export const register: Register = on => {
   // Desktop draws its own wrap_up, and a -p run has no one to press a button.
   on('session.start', { surface: 'terminal', isInteractive: true }, async ($, e, next) => {
     await $.tool.register({ name: NAME, description: DESCRIPTION, inputSchema: INPUT_SCHEMA, isDeferred: false })
+    // A resumed session starts without this state, so its last open question comes back from the transcript, on its call's row.
+    void (async () => {
+      const open = await readTranscript($, openWrapUp)
+      if (open !== null && open !== 'behind' && (await read($, CURRENT)) == null) await $.state.set(CURRENT, open)
+    })().catch(err => $.ui.log(`toolkit: could not bring back the open next step box: ${String(err)}`, { to: 'debug' }))
     return next(e)
   })
   on('tool.call', { tool: WRAP_UP_TOOL }, async ($, e) => {

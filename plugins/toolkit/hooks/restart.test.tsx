@@ -6,11 +6,13 @@ const TOOL = 'mcp__toolkit__restart_claude_code'
 const FILE = '/run/user/1/claude-restart.42'
 const RC = '/home/me/.bashrc'
 
-type Host = { registered: string[]; commands: string[]; files: Map<string, string> }
+type Agent = { id: string; type: string; description: string; status: 'running' | 'completed' }
+type Host = { registered: string[]; commands: string[]; files: Map<string, string>; agents: Agent[] }
 
-// Beneath the plugin: a disk of `files`, the session's id and model, and its commands.
+// Beneath the plugin: a disk of `files`, the session's id, model and agents, and its commands.
 function engine(on: On, files: Record<string, string> = {}): Host {
-  const host: Host = { registered: [], commands: [], files: new Map(Object.entries(files)) }
+  const host: Host = { registered: [], commands: [], files: new Map(Object.entries(files)), agents: [] }
+  on('agent.list', () => ({ value: host.agents }))
   on('tool.register', (_$, e) => {
     host.registered.push(e.name)
     return { value: { tool: `mcp__toolkit__${e.name}` } }
@@ -74,4 +76,35 @@ test('without the shell function a call adds it to .bashrc once, keeps what was 
   expect(rc.startsWith('alias ll="ls -l"\n')).toBe(true)
   expect(rc.split('# >>> toolkit restart >>>').length).toBe(2)
   expect(rc).toContain('CLAUDE_RESTART_FILE="$f" command claude "${args[@]}"')
+})
+
+test('a block from an older toolkit is replaced and what is around it stays', async ($, on) => {
+  const old = '# >>> toolkit restart >>>\nclaude() { :; }\n# <<< toolkit restart <<<'
+  const host = engine(on, { [RC]: `export A=1\n${old}\nexport B=2\n` })
+  await start($, on, { CLAUDE_RESTART_FILE: FILE })
+  await $.tool.call({ tool: TOOL, task: 'Go on.' })
+  const rc = host.files.get(RC) ?? ''
+  expect(rc.startsWith('export A=1\n# >>> toolkit restart >>>\n')).toBe(true)
+  expect(rc.endsWith('# <<< toolkit restart <<<\nexport B=2\n')).toBe(true)
+  expect(rc).not.toContain('claude() { :; }')
+})
+
+test('a running subagent refuses the restart, and a finished one does not', async ($, on) => {
+  const host = engine(on)
+  const clock = mock.clock(on)
+  await start($, on, { CLAUDE_RESTART_FILE: FILE })
+  host.agents = [
+    { id: 'a1', type: 'Explore', description: 'Review the diff', status: 'running' },
+    { id: 'a2', type: 'Explore', description: 'Old search', status: 'completed' },
+  ]
+  const refused = await $.tool.call({ tool: TOOL, task: 'Go on.' })
+  await settle(clock)
+  expect(refused.deny).toContain('Review the diff')
+  expect(refused.deny).not.toContain('Old search')
+  expect(host.commands).toEqual([])
+  expect(host.files.has(FILE)).toBe(false)
+  host.agents[0].status = 'completed'
+  expect((await $.tool.call({ tool: TOOL, task: 'Go on.' })).deny).toBeUndefined()
+  await settle(clock)
+  expect(host.commands).toEqual(['exit'])
 })

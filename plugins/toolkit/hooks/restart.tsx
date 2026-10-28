@@ -7,7 +7,9 @@ const DESCRIPTION = `Exits Claude Code and starts it again in the same terminal,
 
 Use it when a change needs a restart to take effect and /reload-plugins is not enough, or when the person asks for a restart. For a plugin change alone, prefer reload_plugins: it keeps the prompt cache.
 
-The restart runs after your turn ends, so end your turn right after the call with one line that says you are restarting. The resumed session starts with your \`task\` text as its first prompt.
+The restart ends everything this session runs. The call is refused while a subagent runs, but it cannot see background shells or monitors: stop the ones you started (TaskStop) before the call, or wait for them.
+
+The restart runs after your turn ends, so end your turn right after the call with one line that says you are restarting. The resumed session starts with your \`task\` text as its first prompt, the same model, and the options it was started with that a restart keeps (--plugin-dir, --add-dir, --permission-mode, --settings, --mcp-config, --strict-mcp-config, --dangerously-skip-permissions).
 
 It needs the toolkit's \`claude\` shell function. Without it, the call adds the function to ~/.bashrc, restarts nothing and says what the person must do once.`
 
@@ -15,15 +17,25 @@ const BEGIN = '# >>> toolkit restart >>>'
 const END = '# <<< toolkit restart <<<'
 
 // Runs claude with a file to write the next run's arguments to; claude never gets the terminal back from a child it starts.
+// A restart keeps only the options listed here: the others pick a session or carry a prompt, which the restart sets itself.
 const FUNCTION = [
   BEGIN,
   'claude() {',
-  '  local f="${XDG_RUNTIME_DIR:-/tmp}/claude-restart.$$" args=("$@") s',
+  '  local f="${XDG_RUNTIME_DIR:-/tmp}/claude-restart.$$" args=("$@") keep=() s',
+  '  while (($#)); do',
+  '    case $1 in',
+  '      --plugin-dir|--permission-mode|--settings) keep+=("$1" "${2-}"); shift ;;',
+  '      --add-dir|--mcp-config) keep+=("$1"); while [[ $# -gt 1 && $2 != -* ]]; do keep+=("$2"); shift; done ;;',
+  '      --plugin-dir=*|--permission-mode=*|--settings=*|--add-dir=*|--mcp-config=*|--strict-mcp-config|--dangerously-skip-permissions) keep+=("$1") ;;',
+  '    esac',
+  '    (($#)) && shift',
+  '  done',
   '  while :; do',
   '    rm -f "$f"',
   '    CLAUDE_RESTART_FILE="$f" command claude "${args[@]}"; s=$?',
   '    [ -s "$f" ] || return "$s"',
   '    mapfile -t args < "$f"',
+  '    args=("${keep[@]}" "${args[@]}")',
   '  done',
   '}',
   END,
@@ -51,14 +63,28 @@ export const register: Register = on => {
   })
 
   on('tool.call', { tool: TOOL }, async ($, e) => {
+    const busy = (await $.agent.list()).filter(agent => ['pending', 'running', 'waiting'].includes(agent.status))
+    if (busy.length > 0) {
+      const names = busy.map(agent => agent.name ?? agent.description).join(', ')
+      return { deny: `Nothing was restarted: a restart would cut off ${busy.length === 1 ? 'a running agent' : `${busy.length} running agents`} (${names}). Wait for them to finish or stop them, then call again.` }
+    }
+
+    const rc = `${(await $.env.get('HOME')) ?? ''}/.bashrc`
+    const text = (await $.fs.exists(rc)) ? await $.fs.read(rc) : ''
+    const start = text.indexOf(BEGIN)
+    const end = text.indexOf(END, start)
+    // A block from an older toolkit is replaced, so a fix to the function reaches the next shell.
+    const updated =
+      start === -1 || end === -1
+        ? `${text}${text === '' || text.endsWith('\n') ? '' : '\n'}\n${FUNCTION}\n`
+        : `${text.slice(0, start)}${FUNCTION}${text.slice(end + END.length)}`
+    const isChanged = updated !== text
+    if (isChanged) await $.fs.write(rc, updated)
+
     const file = await $.env.get('CLAUDE_RESTART_FILE')
     if (!file) {
-      const rc = `${(await $.env.get('HOME')) ?? ''}/.bashrc`
-      const text = (await $.fs.exists(rc)) ? await $.fs.read(rc) : ''
-      const isNew = !text.includes(BEGIN)
-      if (isNew) await $.fs.write(rc, `${text}${text === '' || text.endsWith('\n') ? '' : '\n'}\n${FUNCTION}\n`)
       return {
-        deny: `Nothing was restarted: this Claude Code was not started through the toolkit's \`claude\` shell function, so it could not come back after an exit. ${isNew ? `The function is now at the end of ${rc}. ` : `The function is in ${rc}, but this terminal has not loaded it. `}Tell the person to run \`source ~/.bashrc\` (or open a new terminal), exit Claude Code and start it again with \`claude --continue\`. From then on a restart works.`,
+        deny: `Nothing was restarted: this Claude Code was not started through the toolkit's \`claude\` shell function, so it could not come back after an exit. ${isChanged ? `The function is now in ${rc}. ` : `The function is in ${rc}, but this terminal has not loaded it. `}Tell the person to run \`source ~/.bashrc\` (or open a new terminal), exit Claude Code and start it again with \`claude --continue\`. From then on a restart works.`,
       }
     }
 

@@ -60,9 +60,22 @@ Gives Claude a tool, `reload_plugins`, that runs `/reload-plugins --force` for y
 
 The reload runs when Claude's turn ends. Then Claude gets the reload's report and its task back as a new prompt, once, even when the reload reloads toolkit itself. In that case the report is only in the transcript, under `/reload-plugins`.
 
-Claude Code has no way for a plugin to restart the whole process, so this tool does not restart it. Some changes, such as a plugin's MCP servers, still need a real restart. The reload's report says so, and Claude then asks you to run `claude --continue`.
+A reload does not restart the process. Some changes, such as a plugin's MCP servers, still need a real restart. The reload's report says so, and Claude then uses `restart_claude_code`.
 
 In the terminal, the call shows as one row, **Reload plugins**, with `reloads when this turn ends` under it. Press ctrl+o to see the whole call. It runs in an interactive terminal session only.
+
+### Restart Claude Code (`restart_claude_code`)
+
+Gives Claude a tool, `restart_claude_code`, that exits Claude Code and starts it again in the same terminal, with the same conversation. A restart loads everything Claude Code reads only at startup: plugins and their MCP servers, settings, environment variables and a newly installed Claude Code version. For a plugin change alone, Claude uses `reload_plugins`, which keeps the prompt cache.
+
+The restart runs when Claude's turn ends. The new Claude Code runs `claude --resume <session id> --model <model>`, with the task Claude named as its first prompt.
+
+- **Why it needs a shell function.** Claude Code gives a plugin no way to relaunch the process. Once Claude Code exits, the shell takes the terminal back, so only the shell can start Claude Code again. The toolkit's `claude` function in `~/.bashrc` runs Claude Code with `CLAUDE_RESTART_FILE` set. The tool writes the next run's arguments to that file, and the function runs `claude` again with them. When the file is empty, the function returns Claude Code's exit code.
+- **First use.** If Claude Code was not started through the function, the first call adds it to the end of `~/.bashrc`, between `# >>> toolkit restart >>>` and `# <<< toolkit restart <<<`, and restarts nothing. Run `source ~/.bashrc` or open a new terminal, then start `claude --continue`. To remove the function, delete that block.
+- **What is not carried over.** The restart keeps the session and the model. Other flags you started Claude Code with, such as `--plugin-dir`, are not passed again.
+- **Bash only.** The function uses `mapfile`, so it works in bash, not in zsh or fish.
+
+In the terminal, the call shows as one row, **Restart Claude Code**, with `restarts when this turn ends` under it. Press ctrl+o to see the whole call. It runs in an interactive terminal session only.
 
 ### Next step box (`wrap_up`)
 

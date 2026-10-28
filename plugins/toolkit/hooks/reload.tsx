@@ -5,9 +5,9 @@ const TOOL = `mcp__toolkit__${NAME}`
 
 const DESCRIPTION = `Reloads this Claude Code session's plugins, the same as the person typing /reload-plugins --force. It loads what a restart of Claude Code would load for plugins, and the conversation stays.
 
-Use it right after a plugin change that has not taken effect: a plugin installed, enabled, disabled, updated or removed, or a plugin's skills, agents, commands, hooks or mods changed on disk. Use it instead of asking the person to restart Claude Code or to run /reload-plugins.
+Use it right after a plugin change that has not taken effect: a plugin installed, enabled, disabled, updated or removed, or a plugin's skills, agents, commands, hooks or mods changed on disk. Use it instead of asking the person to run /reload-plugins.
 
-Some changes still need a real restart, such as a plugin's MCP servers. The reload's report says which ones; then tell the person to restart with \`claude --continue\`.
+Some changes still need a real restart, such as a plugin's MCP servers. The reload's report says which ones; then use restart_claude_code.
 
 The reload runs after your turn ends, so end your turn right after the call with one line that says you are reloading. A new turn then starts with the reload's report and your \`task\` text.`
 

@@ -5,6 +5,7 @@ import { register as mermaid } from './mermaid'
 import { register as plan } from './plan'
 import { register as reload } from './reload'
 import { register as reply } from './reply'
+import { register as restart } from './restart'
 import { register as sessions } from './sessions'
 import { register as wrapUp } from './wrap-up'
 
@@ -20,5 +21,6 @@ export const register: Register = (on, options) => {
   reply(on, options)
   cd(on, options)
   reload(on, options)
+  restart(on, options)
   plan(on, options)
 }

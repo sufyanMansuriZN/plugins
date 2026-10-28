@@ -7,8 +7,9 @@ const HAND_OFF = 'mcp__toolkit__hand_off_to_session'
 // Beneath the plugin: the engine's rows, the tools registered, and a session outside any git repository
 // whose transcript ends with `transcript`; `claude --bg` starts a session with id abcdef12.
 // `claude agents --json` prints `agents`; files written land in `files`, and messages sent in `sent`.
+// A test can put a repository there: `git` maps a git command's arguments to its output; `git worktree add` lands in `worktrees`.
 function engine(on: On, transcript: string | (() => string) = '', agents = '[]', env: Record<string, string> = {}) {
-  const host = { registered: [] as string[], prompts: [] as string[], logs: [] as string[], files: new Map<string, string>(), sent: [] as string[] }
+  const host = { registered: [] as string[], prompts: [] as string[], logs: [] as string[], files: new Map<string, string>(), sent: [] as string[], git: new Map<string, string>(), worktrees: [] as string[][] }
   on('session.send', (_$, e) => {
     host.sent.push(e.text)
     return { isDelivered: true }
@@ -33,7 +34,13 @@ function engine(on: On, transcript: string | (() => string) = '', agents = '[]',
     if (e.argv[0] === 'claude' && e.argv.includes('--bg')) return done(0, 'backgrounded · abcdef12 · check-the-fix\n')
     if (e.argv[0] === 'claude' && e.argv[1] === 'agents' && !e.argv.includes('--all')) return done(0, agents)
     if (e.argv[0] === 'claude') return done(0, '[]')
-    return done(128, '', 'not a git repository')
+    if (e.argv[0] === 'git' && e.argv[3] === 'worktree') {
+      host.worktrees.push(e.argv.slice(3))
+      return done(0)
+    }
+    const git = host.git.get(e.argv.slice(3).join(' '))
+    if (git !== undefined) return done(0, `${git}\n`)
+    return done(host.git.size > 0 ? 1 : 128, '', 'not a git repository')
   })
   on('fs.write', (_$, e) => {
     host.files.set(e.path, e.text)
@@ -41,7 +48,8 @@ function engine(on: On, transcript: string | (() => string) = '', agents = '[]',
   })
   on('fs.exists', (_$, e) => ({ value: host.files.has(e.path) }))
   on('fs.read', (_$, e) => ({ value: host.files.get(e.path) ?? '' }))
-  on('fs.stat', () => ({ value: { kind: 'dir', realPath: '/w', size: 0, mtimeMs: 0, isLink: false } }))
+  // Every folder exists but the worktrees a test has not made.
+  on('fs.stat', (_$, e) => ({ value: e.path.includes('/.claude/worktrees/') ? undefined : { kind: 'dir', realPath: '/w', size: 0, mtimeMs: 0, isLink: false } }))
   on('turn.start', (_$, e) => ({ turnId: e.turnId }))
   on('turn.complete', (_$, e) => ({ text: 'answer' in e ? e.answer : '' }))
   on('prompt.submit', (_$, e) => {
@@ -216,6 +224,21 @@ test('a started session sends nothing once the session that started it is closed
   await $.turn.complete({ reason: 'answer', answer: 'Fixed.', durationMs: 1000, isAborted: false, turnId: 't1' })
   await settle()
   expect(closed.sent).toEqual([])
+})
+
+test('a branch that already exists gets a short suffix on the branch and its folder', async ($, on) => {
+  const host = engine(on)
+  host.git.set('rev-parse --path-format=absolute --git-common-dir', '/repo/.git')
+  host.git.set('symbolic-ref --short refs/remotes/origin/HEAD', 'origin/main')
+  host.git.set('rev-parse --verify --quiet refs/heads/main', 'abc123')
+  host.git.set('rev-parse --verify --quiet refs/heads/feat/check-the-fix', 'abc123')
+  const started = await $.tool.call({ tool: START, tool_use_id: CALL, ...PROPOSE, initiation: 'user_asked', use_worktree: true })
+  expect(host.worktrees).toHaveLength(1)
+  const [, , , branch, path, source] = host.worktrees[0]
+  expect(branch).toMatch(/^feat\/check-the-fix-[0-9a-f]{6}$/)
+  expect(path).toBe(`/repo/.claude/worktrees/${branch.replace('/', '-')}`)
+  expect(source).toBe('main')
+  expect(started.result).toContain(`on branch ${branch}`)
 })
 
 test('stop reports leaves the session working and cuts its link, from the row or by name', async ($, on) => {

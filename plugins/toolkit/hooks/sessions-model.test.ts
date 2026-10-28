@@ -10,7 +10,6 @@ const caller = (over: Partial<Caller> = {}): Caller => ({
   isWorktree: false,
   isEventTurn: false,
   names: [],
-  suffix: 'a1b2c3',
   ...over,
 })
 const BACKGROUND = 'The parser drops blank lines between list items; we agreed to keep the old public API and fix it in place.'
@@ -54,12 +53,19 @@ test('a turn an event started may propose but not start', () => {
 
 test('a worktree session gives a fresh start its own worktree, and a fork one cut from its tip', () => {
   const fresh = planStart(asked, caller({ isWorktree: true }))
-  expect(fresh.kind === 'start' && fresh.brief.place).toEqual({ kind: 'worktree', root: '/repo', branch: 'claude/fix-blank-lines-a1b2c3', source: null })
+  expect(fresh.kind === 'start' && fresh.brief.place).toEqual({ kind: 'worktree', root: '/repo', branch: 'fix/blank-lines', source: null })
   const fork = planStart({ ...asked, context: 'fork' }, caller({ isWorktree: true }))
-  expect(fork.kind === 'start' && fork.brief.place).toEqual({ kind: 'worktree', root: '/repo', branch: 'claude/fix-blank-lines-a1b2c3', source: 'HEAD' })
+  expect(fork.kind === 'start' && fork.brief.place).toEqual({ kind: 'worktree', root: '/repo', branch: 'fix/blank-lines', source: 'HEAD' })
   const shared = planStart({ ...asked, use_worktree: false }, caller({ isWorktree: true }))
   expect(shared.kind === 'start' && shared.brief.place).toEqual({ kind: 'folder', cwd: '/repo' })
   expect(planStart({ ...asked, context: 'fork', use_worktree: true }, caller()).kind).toBe('deny')
+})
+
+test('a given branch name is kept as it is, and a title with no type word gets feat/', () => {
+  const given = planStart({ ...asked, branch_name: ' fix/same-time-fuel-stock-VES-6244 ' }, caller({ isWorktree: true }))
+  expect(given.kind === 'start' && given.brief.place).toEqual({ kind: 'worktree', root: '/repo', branch: 'fix/same-time-fuel-stock-VES-6244', source: null })
+  const untyped = planStart({ ...asked, title: 'Blank lines in lists' }, caller({ isWorktree: true }))
+  expect(untyped.kind === 'start' && untyped.brief.place).toEqual({ kind: 'worktree', root: '/repo', branch: 'feat/blank-lines-in-lists', source: null })
 })
 
 test('a switch from a worktree carries on in that worktree, fresh or fork, unless told otherwise', () => {
@@ -98,7 +104,7 @@ test('a hand-off forks this conversation with the remaining plan, and the fork l
   expect(handed.text.endsWith('## What is left\nRun the parser tests; done when they pass.')).toBe(true)
   expect(startCommand(handed, 'parent-uuid')).toContain('--fork-session')
   const inWorktree = planHandOff({ title: 'Fix', remaining_plan: 'Finish it.' }, caller({ isWorktree: true }))
-  expect('place' in inWorktree && inWorktree.place).toEqual({ kind: 'worktree', root: '/repo', branch: 'claude/fix-a1b2c3', source: 'HEAD' })
+  expect('place' in inWorktree && inWorktree.place).toEqual({ kind: 'worktree', root: '/repo', branch: 'fix/fix', source: 'HEAD' })
 })
 
 test('a hand-off into another repository forks there, in that folder as it is', () => {

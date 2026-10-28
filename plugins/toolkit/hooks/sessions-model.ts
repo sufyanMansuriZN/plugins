@@ -34,8 +34,14 @@ export type Caller = {
   /** True on a turn another session's message or another automated event started. */
   isEventTurn: boolean
   names: string[]
-  /** For branch and folder names; random in use, fixed in tests. */
-  suffix: string
+}
+
+export const BRANCH_TYPES = ['feat', 'fix', 'perf', 'refactor', 'test', 'docs', 'chore', 'build', 'ci', 'style', 'revert']
+
+/** `<type>/<slug>` from a session name: its first word when that is a type, else feat. */
+function typedBranch(slug: string): string {
+  const [first, ...rest] = slug.split('-')
+  return BRANCH_TYPES.includes(first) ? `${first}/${rest.join('-') || slug}` : `feat/${slug}`
 }
 
 export type StartPlan =
@@ -113,8 +119,7 @@ export function makeBrief(e: Record<string, unknown>, title: string, context: 'f
   const givenName = text(e.name)
   if (givenName !== null && !NAME_PATTERN.test(givenName)) return { kind: 'deny', deny: `name must be up to ${NAME_MAX} characters, only a-z, 0-9 and hyphens.` }
   const name = sessionName(givenName ?? title, caller.names)
-  const branchSlug = sessionName(text(e.branch_name) ?? name, [])
-  const branch = `claude/${branchSlug}-${caller.suffix}`
+  const branch = text(e.branch_name) ?? typedBranch(name)
   const source = text(e.source_branch)
 
   let place: Place

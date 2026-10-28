@@ -4,6 +4,7 @@ import type { Elements, EngineInterface, Register } from 'claude-code'
 import type { Brief, LinkedSession, Proposal } from '../types'
 import {
   BACKGROUND_MIN,
+  BRANCH_TYPES,
   cardAnchor,
   EFFORTS,
   MODES,
@@ -43,7 +44,7 @@ const WEEK_MS = 7 * 24 * 60 * 60 * 1000
 const START_DESCRIPTION = `Start a separate Claude Code session for a task while you stay with the user (when: see "Starting other sessions"). It runs as a background session (\`claude --bg\`) the user can open with \`claude attach\`, talk to and stop. \`initiation\` says who wants it: "user_asked" starts it now and returns its name and id; "offer" is for a task the user named in their latest message (new work here, or "suggest / split off / make a task or session for X"): called with a title alone, it asks the user "New session" or "Do it here" and WAITS for their answer, so it must be the only call in that message (no update_plan, no other tool); the result then tells you to carry on here, or to send the brief with proposal_id so the session starts; "own_initiative" is for work you propose yourself that the user has not told you to do — something you noticed, or the follow-up your own answer or work turned up (when your reply calls work a follow-up or a separate PR, propose it here rather than only saying so, unless it acts on what this session just found and so stays here), never a part of what the user asked this turn, never what "Starting other sessions" keeps here or gives to a subagent; the user sees a card and nothing runs until they start it, by pressing Start on it or by telling you (then call this again with just proposal_id).
 "user_asked" and "own_initiative" both need a \`prompt\` — the brief: the task, the files or area, what done looks like — and the call is refused without it; \`background\` does not stand in for it. Only an "offer" is a title alone.
 context: "fork" = this whole conversation + your \`prompt\`. "fresh" (default) = your \`prompt\` + \`background\` only, so \`background\` is required too, at least 80 characters.
-Checkout here ("fresh" only): use_worktree false = shares this checkout and can edit it (in a worktree session its branch and PR too: never for work that ends in a branch or PR of its own or belongs in another repository); true = its own worktree (the default when this session is in one).
+Checkout here ("fresh" only): use_worktree false = shares this checkout and can edit it (in a worktree session its branch and PR too: never for work that ends in a branch or PR of its own or belongs in another repository); true = its own worktree (the default when this session is in one), on the branch \`branch_name\` names.
 Elsewhere (user_asked only, when the user named the place): \`cwd\` for another folder, or \`target\` "cloud" (+ \`environment\`, "fresh" only).`
 
 const START_SCHEMA = {
@@ -77,7 +78,7 @@ const START_SCHEMA = {
       description:
         '"fresh" only (rejected with "fork"). false = shares this session\'s checkout and can edit it (in a worktree session: its worktree, branch and PR, so never for work that ends in a branch or PR of its own or belongs in another repository). At another place named by `cwd`, false = that folder as it is. true = its own git worktree. Omitted: the same folder when this session works in a plain folder; otherwise its own worktree; with `cwd`, that folder as it is.',
     },
-    branch_name: { type: 'string', description: "A short slug for the new worktree's branch (it gets the prefix claude/ and a suffix). Only with a worktree." },
+    branch_name: { type: 'string', description: `The new worktree's full branch name, used as given: the name the user gave, or their branch convention (CLAUDE.md or memory), else \`<type>/<slug>\` with a conventional-commit type (${BRANCH_TYPES.join(', ')}). Omitted, it is derived from the title. A short suffix is added only when the branch or its folder already exists. Only with a worktree.` },
     source_branch: {
       type: 'string',
       description: "The existing local branch the new worktree is cut from. Default: the repository's default branch, or the folder's current commit if that is unknown. Only for a session that gets its own worktree; not with target \"cloud\".",
@@ -181,7 +182,6 @@ async function caller($: EngineInterface): Promise<Caller> {
     isWorktree: gitDir !== null && commonDir !== null && gitDir !== commonDir,
     isEventTurn,
     names: linked.map(s => s.name),
-    suffix: randomSuffix(),
   }
 }
 
@@ -204,10 +204,17 @@ async function prepare($: EngineInterface, brief: Brief): Promise<{ cwd: string;
     const local = remoteHead?.replace(/^origin\//, '') ?? null
     source = local !== null && (await git($, place.root, ['rev-parse', '--verify', '--quiet', `refs/heads/${local}`])) !== null ? local : (remoteHead ?? 'HEAD')
   }
-  const path = `${repo}/.claude/worktrees/${place.branch.replace(/^claude\//, '')}`
-  const run = await $.process.run(['git', '-C', place.root, 'worktree', 'add', '-b', place.branch, path, source], { timeoutMs: 60_000 })
+  let branch = place.branch
+  let path = `${repo}/.claude/worktrees/${branch.replaceAll('/', '-')}`
+  const isTaken = (await git($, place.root, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`])) !== null || (await $.fs.stat(path).catch(() => undefined)) !== undefined
+  if (isTaken) {
+    const suffix = randomSuffix()
+    branch = `${branch}-${suffix}`
+    path = `${path}-${suffix}`
+  }
+  const run = await $.process.run(['git', '-C', place.root, 'worktree', 'add', '-b', branch, path, source], { timeoutMs: 60_000 })
   if (run.exitCode !== 0) return { error: `git worktree add failed: ${run.stderr.trim()}` }
-  return { cwd: path, branch: place.branch }
+  return { cwd: path, branch }
 }
 
 type Launched = { text: string; id: string } | { error: string }

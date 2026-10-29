@@ -391,6 +391,32 @@ test('a terminal with no place to open offers here and the command to copy', asy
   expect(words.some(word => ['window', 'tab', 'pane', 'popup'].includes(word))).toBe(false)
 })
 
+test('after a restart the sessions this one started that still run come back in one card under the last reply', async ($, on) => {
+  const dir = '/home/me/.claude/toolkit/links'
+  on('fs.list', () => ({ value: ['abcdef12', 'gone0001', 'other002', 'muted003'].map(name => ({ name: `${name}.json`, kind: 'file' as const, size: 1, mtimeMs: 0 })) }))
+  const agents = JSON.stringify([
+    { id: 'abcdef12', sessionId: 'abcdef12-uuid', cwd: '/w', status: 'idle', state: 'working' },
+    { id: 'other002', sessionId: 'other002-uuid', cwd: '/w', status: 'busy', state: 'working' },
+    { id: 'muted003', sessionId: 'muted003-uuid', cwd: '/w', status: 'busy', state: 'working' },
+  ])
+  const host = engine(on, TRANSCRIPT, agents)
+  host.files.set(dir, '')
+  host.files.set(`${dir}/abcdef12.json`, JSON.stringify({ parent: 'parent-uuid', name: 'check-the-fix' }))
+  // Stopped since: no longer listed.
+  host.files.set(`${dir}/gone0001.json`, JSON.stringify({ parent: 'parent-uuid', name: 'old-one' }))
+  // Another session's.
+  host.files.set(`${dir}/other002.json`, JSON.stringify({ parent: 'someone-else', name: 'not-mine' }))
+  // Its reports were stopped, so its link is empty.
+  host.files.set(`${dir}/muted003.json`, '')
+  on('session.start', () => ({ cwd: '/w' }))
+  await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
+  const card = await words(await replyBlock($, 'a3', REPLY))
+  expect(card).toContain('Running sessions')
+  expect(card).toContain('claude attach abcdef12')
+  expect(card.some(word => /gone0001|other002|muted003/.test(word))).toBe(false)
+  expect((await $.tool.call({ tool: 'mcp__toolkit__list_sessions', linked: true })).result).toContain('check-the-fix (id abcdef12')
+})
+
 test('a switch that could not come back to this terminal starts nothing', async ($, on) => {
   const host = engine(on)
   const call = await $.tool.call({ tool: START, tool_use_id: CALL, ...PROPOSE, initiation: 'user_asked', use_worktree: false, switch: true })

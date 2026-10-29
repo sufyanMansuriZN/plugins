@@ -155,7 +155,11 @@ Left out, because nothing behind them exists in the terminal yet:
 - Clickable session links.
 - `list_start_targets`.
 
-The running sessions card keeps its reply and its sessions in the state key `sessionsAt`. The linked sessions and the cards live in the session's plugin state, so a restart of Claude Code forgets them. The sessions themselves keep running.
+The running sessions card keeps its reply and its sessions in the state key `sessionsAt`. The linked sessions and the cards live in the session's plugin state, which a restart of Claude Code empties. The sessions themselves keep running. When a session starts or resumes with no linked sessions, the toolkit brings back the ones it can from disk:
+
+- It reads the link files in `~/.claude/toolkit/links/` that name this session, and keeps those that `claude agents --json` lists as running.
+- They come back in one **Running sessions** card under the last reply, with the name the session was started under as their title. The call that started them is not known, so they show in the card only.
+- A session whose reports you stopped has an empty link file, so it does not come back. Suggested sessions that were not started do not come back either.
 
 It runs in an interactive terminal session only. The Claude desktop app has its own sessions, and a `claude -p` run has no one to answer a card.
 

@@ -326,6 +326,22 @@ export function linkedLines(linked: LinkedSession[]): string {
   return linked.map(s => `- ${s.name} (id ${s.id}${s.sessionId ? `, session ${s.sessionId}` : ''}): ${s.state}; "${s.title}"; ${s.branch ? `branch refs/heads/${s.branch}` : `folder ${s.cwd}`}`).join('\n')
 }
 
+/**
+ * After a restart, the sessions this one started that still run: each link file (short id → its text)
+ * that names `parent`, whose session `claude agents` lists as running. A muted session's link is empty,
+ * so it does not come back. The call that started it is unknown, so it shows in the card only.
+ */
+export function recoveredSessions(parent: string, links: Map<string, string>, rows: Map<string, AgentRow>): LinkedSession[] {
+  const found: LinkedSession[] = []
+  for (const [id, text] of links) {
+    const link = parseLink(text)
+    const row = rows.get(id)
+    if (link?.parent !== parent || !row || !isAlive(row.state)) continue
+    found.push({ name: link.name, title: link.name, id, sessionId: row.sessionId, cwd: row.cwd, branch: null, state: row.state, startedAt: 0, callId: '' })
+  }
+  return found
+}
+
 /** Where a started session finds the session that started it, by its short id. */
 export const linkPath = (home: string, id: string) => `${home}/.claude/toolkit/links/${id}.json`
 

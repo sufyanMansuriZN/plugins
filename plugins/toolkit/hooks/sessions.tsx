@@ -19,6 +19,7 @@ import {
   parseAgents,
   parseLink,
   planHandOff,
+  recoveredSessions,
   planStart,
   replyAnchor,
   reportText,
@@ -321,6 +322,25 @@ async function reportBack($: EngineInterface, reason: string, answer: string) {
   if (!sent.isDelivered) $.ui.log(`toolkit: the report to the session that started this one was not delivered: ${sent.reason}`, { to: 'debug' })
 }
 
+/** Lists again the sessions this one started that still run, in one card under the last reply. */
+async function recover($: EngineInterface) {
+  const [home, sessionId] = await Promise.all([$.env.get('HOME').then(home => home ?? ''), $.session.id()])
+  const dir = linkPath(home, '').replace(/\/\.json$/, '')
+  if (!(await $.fs.exists(dir))) return
+  const links = new Map<string, string>()
+  for (const entry of await $.fs.list(dir)) {
+    if (entry.kind === 'file' && entry.name.endsWith('.json')) links.set(entry.name.slice(0, -5), await $.fs.read(`${dir}/${entry.name}`))
+  }
+  if (![...links.values()].some(text => text.includes(`"${sessionId}"`))) return
+  const listing = await $.process.run(['claude', 'agents', '--json'], { timeoutMs: 20_000 })
+  if (listing.exitCode !== 0) return
+  const sessions = recoveredSessions(sessionId, links, parseAgents(listing.stdout))
+  if (sessions.length === 0) return
+  await $.state.set(LINKED, sessions)
+  const anchor = replyAnchor(await transcriptTail($, home, sessionId), 0, '')
+  if (anchor !== null && anchor !== 'behind') await $.state.set(SESSIONS_AT, { anchor: anchor.uuid, ids: sessions.map(s => s.id) })
+}
+
 /** Stops a linked session's reports to this one; it keeps working. */
 async function mute($: EngineInterface, id: string) {
   const home = (await $.env.get('HOME')) ?? ''
@@ -551,6 +571,8 @@ export const register: Register = on => {
     await $.tool.register({ name: 'stop_reports', description: MUTE_DESCRIPTION, inputSchema: MUTE_SCHEMA, isDeferred: false })
     terminal = terminalOf($)
     await terminal
+    // A restart starts with no plugin state: the sessions still running come back from their link files.
+    if (((await read($, LINKED)) ?? []).length === 0) await recover($).catch(err => $.ui.log(`toolkit: could not bring back the running sessions: ${String(err)}`, { to: 'debug' }))
     // A reload drops the module's timer, so the reloaded module watches again.
     if (((await read($, LINKED)) ?? []).some(s => isAlive(s.state))) watch($)
     return next(e)

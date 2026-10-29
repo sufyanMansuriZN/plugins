@@ -15,6 +15,8 @@ It needs the toolkit's \`claude\` shell function. Without it, the call adds the 
 
 const PENDING = { plugin: 'toolkit', key: 'restartPending' } as const
 
+const TURN_RUNNING = { plugin: 'toolkit', key: 'isTurnRunning' } as const
+
 const BEGIN = '# >>> toolkit restart >>>'
 const END = '# <<< toolkit restart <<<'
 
@@ -77,6 +79,27 @@ export async function relaunch($: EngineInterface, file: string, args: string[])
   await $.state.set(PENDING, file)
 }
 
+/** Relaunches with `args` now between turns, or when the running turn ends; says which. */
+export async function relaunchSoon($: EngineInterface, file: string, args: string[]): Promise<'now' | 'after turn'> {
+  await relaunch($, file, args)
+  if ((await $.state.get(TURN_RUNNING)).value) return 'after turn'
+  await exit($)
+  return 'now'
+}
+
+// SIGTERM ends Claude Code as /exit does (transcript saved, terminal restored) but leaves no /exit row.
+async function exit($: EngineInterface) {
+  const file = (await $.state.get(PENDING)).value
+  if (!file) return
+  await $.state.set(PENDING, null)
+  $.clock.after(0, () => {
+    void $.process.run(['sh', '-c', 'kill -TERM "$PPID"']).catch(async err => {
+      await $.fs.write(file, '')
+      $.ui.toast(`toolkit: the restart failed: ${String(err)}`)
+    })
+  })
+}
+
 export const register: Register = on => {
   on('session.start', { surface: 'terminal', isInteractive: true }, async ($, e, next) => {
     await $.tool.register({
@@ -106,19 +129,20 @@ export const register: Register = on => {
     return { result: 'Claude Code exits when your turn ends and starts again with this conversation, so end your turn now.' }
   })
 
-  // SIGTERM ends Claude Code as /exit does (transcript saved, terminal restored) but leaves no /exit row.
+  on('turn.start', { text: /[\s\S]*/ }, async ($, e, next) => {
+    await $.state.set(TURN_RUNNING, true)
+    return next(e)
+  })
+
+  on('turn.abort', async ($, e, next) => {
+    await $.state.set(TURN_RUNNING, false)
+    return next(e)
+  })
+
   on('turn.complete', { reason: /[\s\S]*/ }, async ($, e, next) => {
     const result = await next(e)
-    const file = (await $.state.get(PENDING)).value
-    if (file) {
-      await $.state.set(PENDING, null)
-      $.clock.after(0, () => {
-        void $.process.run(['sh', '-c', 'kill -TERM "$PPID"']).catch(async err => {
-          await $.fs.write(file, '')
-          $.ui.toast(`toolkit: the restart failed: ${String(err)}`)
-        })
-      })
-    }
+    await $.state.set(TURN_RUNNING, false)
+    await exit($)
     return result
   })
 

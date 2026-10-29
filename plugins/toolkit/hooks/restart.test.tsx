@@ -27,8 +27,8 @@ function engine(on: On, files: Record<string, string> = {}): Host {
   on('session.id', () => ({ value: 'abc-123' }))
   on('session.model', () => ({ value: 'claude-opus-5-5' }))
   on('process.run', (_$, e) => {
-    // The next step box looks for the session's transcript at start; that lookup is not the restart's.
-    if (e.argv[0] !== 'find') host.runs.push([...e.argv])
+    // At start the next step box looks for the session's transcript and the sessions card asks the OS; neither is the restart's.
+    if (e.argv[0] !== 'find' && e.argv[0] !== 'uname') host.runs.push([...e.argv])
     return { value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
   })
   return host

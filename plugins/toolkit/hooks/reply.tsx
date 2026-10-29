@@ -17,6 +17,7 @@ import {
   RENDER_TIMEOUT_MS,
   rendererFiles,
 } from './mermaid'
+import { fileLinks, linkSpans, openFile } from './open'
 import { toHtml, toTsv } from './tables'
 
 // The one hook that draws a reply. Each tool that draws part of a reply would otherwise take over
@@ -37,9 +38,16 @@ export const register: Register = on => {
     // Empty until session start finds a terminal that draws pictures; till then fences stay text.
     const dir = (e.props.text.includes('```mermaid') ? await read($, { plugin: 'toolkit', key: 'mermaidDir' } as const) : undefined) ?? ''
     const parts = blocks(e.props.text, { mermaid: dir !== '' })
-    if (parts.every(part => part.kind === 'text')) return next(e)
+    // Code spans that name a file become links a plain click opens.
+    const files = await fileLinks($, parts.flatMap(part => (part.kind === 'text' ? [part.text] : [])))
+    if (files.size === 0 && parts.every(part => part.kind === 'text')) return next(e)
 
     const { Box, Button, Image, Markdown, Text } = $.ui.resolve(e)
+    const prose = (key: string, text: string) => {
+      const hrefs = [...new Set([...files].filter(([written]) => text.includes(written)).map(([, href]) => href))]
+      if (hrefs.length === 0) return <Markdown text={text} />
+      return <Markdown key={key} text={linkSpans(text, files)} onLinkPress={pressed => void openFile($, pressed.href)} pressableLinks={hrefs.slice(0, 256)} />
+    }
     const viewport = { columns: e.viewport?.columns ?? 80, rows: e.viewport?.rows ?? 24 }
     const tableCount = parts.filter(part => part.kind === 'table').length
     const quoteCount = parts.filter(part => part.kind === 'quote').length
@@ -61,7 +69,7 @@ export const register: Register = on => {
         // One blank row between blocks and none around them: the bullet stands beside the first line,
         // and the engine's own gap follows the last.
         const marginTop = index === 0 ? 0 : 1
-        if (part.kind === 'text') return <Box marginTop={marginTop}><Markdown text={part.text} /></Box>
+        if (part.kind === 'text') return <Box marginTop={marginTop}>{prose(`prose:${index}`, part.text)}</Box>
         if (part.kind === 'quote') {
           const { quote } = part
           const quoteNo = parts.slice(0, index).filter(earlier => earlier.kind === 'quote').length + 1

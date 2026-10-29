@@ -44,6 +44,17 @@ The button copies the quote as plain text. Each line loses one `>` and the space
 
 A quote inside a code fence is not a quote.
 
+### File links
+
+Makes a file that Claude names in a reply clickable, in the terminal. Claude writes a file as a code span, such as `` `hooks/reply.tsx:187` ``. When that span names a file or folder that exists, the toolkit draws it as a link, and a plain click opens it.
+
+- **Where it opens.**
+  - Code and other text files open in your graphical editor, at the line when the span gives one. The editor is `$VISUAL`, else `$EDITOR`. A `--wait` or `-w` flag is dropped, so the click does not wait for the file to close. Zed and Sublime Text get `path:line`. VS Code, Cursor, VSCodium and Windsurf get `-g path:line`. Another editor gets the path alone.
+  - Folders, pictures, PDFs, HTML pages, media and office files open in the desktop's app for their type (`xdg-open`, or `open` on macOS).
+  - When neither variable is set, or it names an editor that draws in a terminal (vim, nano, emacs and the like), text files open in the desktop's app too. A click has no terminal to give such an editor.
+- **Which spans.** A span with no spaces that holds a `/` or a file extension, with an optional `:line` or `:line:column`. A relative path is read from the session's folder, and `~/` from your home folder. A span inside a code fence stays as written, and so does a path that does not exist.
+- **The rest of the reply.** A reply that names no existing file is drawn by Claude Code as before. A reply with a link is drawn by the toolkit's `Markdown`, which draws as a reply's text does. A ctrl+click still goes to the terminal, which opens the `file://` link itself.
+
 ### Change session directory (`cd`)
 
 Gives Claude a tool, `change_session_directory`, that moves the session to another folder, the same as when you type `/cd`. Claude uses it when the work belongs to another project. After the move, Claude continues with the task it named.
@@ -109,7 +120,13 @@ Gives Claude the Claude desktop app's way to hand work to a separate session: it
   - the session was reopened with `/resume`, which starts without the toolkit's state
 
   In the ctrl+O view, a moved card shows under the reply, and the call's full row shows too.
-- **The row.** While `claude --bg` starts the session, the call's row says `starting…`. Then it shows the session's name, its state (`starting`, `working`, `idle`, `done`, `stopped`, `failed` or `removed`) and its branch. Under it are **claude attach &lt;id&gt;**, which copies that command, **stop** while it works, and **stop reports** while it runs.
+- **The row.** While `claude --bg` starts the session, the call's row says `starting…`. Then it shows the session's name, its state (`starting`, `working`, `idle`, `done`, `stopped`, `failed` or `removed`) and its branch. Under it are **open in** while it runs, **claude attach &lt;id&gt;**, which copies that command, **stop** while it works, and **stop reports** while it runs.
+- **Open in.** The row offers only the places your terminal lets another program open, then **here**:
+  - In tmux: **pane** (a split beside this one), **tab** (a tmux window) and **popup** (a floating window over this one).
+  - In Ghostty on Linux: **window**, and from Ghostty 1.4 also **tab**. Ghostty on Linux lets no other program open a split, and Ghostty on macOS starts no window from the command line.
+  - In any other terminal, only **here** and the command to copy.
+  - **here** switches this terminal to the session, as a switch does: this session closes, and the toolkit's `claude` shell function runs `claude attach <id>`. Between turns it switches at once, and while Claude works it waits for the turn to end. You come back to this session with `claude --resume`. It needs the same shell function as a restart.
+  - Each place runs `claude attach <id>` in the session's folder. A place that fails shows a toast with the reason.
 - **The running sessions card.** When a turn ends, the rows of the sessions that still run (`starting`, `working` or `idle`) move into one **Running sessions** card under that turn's last reply text. Each later turn moves the card under its own reply, so the card stays at the end of the transcript, before the next step box. A session that ends stays in the card with its new state until the next turn ends. Then its row goes back to its call. When no session runs, there is no card. The card stays where it was when the turn ended in an error, or when the toolkit cannot find the reply text in the transcript. While a turn runs, the card stays under the previous reply, and a session started in that turn shows on its call's row.
 - **The count under the prompt.** While a session Claude started still runs, the dim hint line under the prompt ends with how many are working (`starting` or `working`) and how many are idle, for example `· 1 session working · 2 idle`, `· 2 sessions working` or `· 1 session idle`. A part that is zero is left out. Idle means the session ended a turn: it may be done, waiting for Claude here, or waiting for your answer in `claude attach <id>`, and the toolkit cannot tell which. The count follows the rows, which the toolkit checks every 4 seconds, and it goes away when no session runs. When another plugin already added text to that line, the count comes after it. Only the terminal draws it.
 - **The session reports back itself.** Each time a session Claude started ends a turn, it sends this session a message, as any other session's message arrives (`Message from @<name>`). The message holds the first 400 characters of its report: its next step box recap, then its last message. Claude checks the result before it tells you the work is done.

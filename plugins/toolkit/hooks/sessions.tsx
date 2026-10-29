@@ -27,7 +27,9 @@ import {
   startCommand,
 } from './sessions-model'
 import type { Caller } from './sessions-model'
-import { relaunch, relaunchFile } from './restart'
+import { openArgv, placesOf, terminalOf } from './open'
+import type { Place, Terminal } from './open'
+import { relaunch, relaunchFile, relaunchSoon } from './restart'
 
 export const START_TOOL = 'mcp__toolkit__start_session'
 export const DISMISS_TOOL = 'mcp__toolkit__dismiss_task'
@@ -410,14 +412,41 @@ function frame({ Box, Text }: Elements['terminal'], heading: string, title: stri
   )
 }
 
-function sessionLine($: EngineInterface, elements: Elements['terminal'], session: LinkedSession) {
+// The terminal Claude Code runs in, read once when a row first draws: it decides where a row can open its session.
+let terminal: Promise<Terminal> | undefined
+const terminalOnce = ($: EngineInterface) => (terminal ??= terminalOf($))
+
+/** Opens `session` in a pane, tab, popup or window beside this one, or toasts why not. */
+async function openBeside($: EngineInterface, term: Terminal, session: LinkedSession, place: Place) {
+  const run = await $.process.run(openArgv(term, place, session), { timeoutMs: 10_000 }).catch((err: unknown) => ({ exitCode: -1, stderr: String(err) }))
+  if (run.exitCode !== 0) $.ui.toast(`toolkit: could not open ${session.name} in a ${place}: ${run.stderr.trim().split('\n')[0] || `exit ${run.exitCode}`}`)
+}
+
+/** Switches this terminal to `session`: this session exits and comes back with `claude --resume`. */
+async function openHere($: EngineInterface, session: LinkedSession) {
+  const ready = await relaunchFile($)
+  if ('deny' in ready) return $.ui.toast(`toolkit: could not open ${session.name} here: ${ready.deny}`)
+  if ((await relaunchSoon($, ready.file, ['attach', session.id])) === 'after turn') $.ui.toast(`${session.name} opens here when this turn ends`)
+}
+
+async function sessionLine($: EngineInterface, elements: Elements['terminal'], session: LinkedSession) {
   const { Box, Text } = elements
+  const term = await terminalOnce($)
   const stop = () => void $.process.run(['claude', 'stop', session.id]).then(() => tick($))
   const copy = () => void $.ui.copy({ text: `claude attach ${session.id}`, surface: 'terminal' })
+  const opens = isAlive(session.state)
+    ? [
+        <Text dimColor>{'open in '}</Text>,
+        ...placesOf(term).flatMap(place => [link(elements, `${place}:${session.id}`, place, () => void openBeside($, term, session, place)), <Text dimColor>{' · '}</Text>]),
+        link(elements, `here:${session.id}`, 'here', () => void openHere($, session)),
+        <Text dimColor>{'  ·  '}</Text>,
+      ]
+    : []
   // Keyed by the session's id, as the running sessions card draws several lines.
   return (
     <Box key={session.id} flexDirection="row" flexWrap="wrap">
       <Text>{`${session.name} · ${session.state === 'gone' ? 'removed' : session.state}${session.branch ? ` · ${session.branch}` : ''}  `}</Text>
+      {opens}
       {link(elements, `attach:${session.id}`, `claude attach ${session.id}`, copy)}
       {session.state === 'working' ? [<Text dimColor>{'  ·  '}</Text>, link(elements, `stop:${session.id}`, 'stop', stop, true)] : []}
       {session.isMuted
@@ -439,7 +468,7 @@ async function drawCard($: EngineInterface, elements: Elements['terminal'], task
   if (!proposal) return <Box />
   // Only a started card reads the linked sessions, which the poll rewrites every few seconds.
   const session = proposal.status === 'started' ? ((await read($, LINKED)) ?? []).find(s => s.callId === taskId) : undefined
-  if (session) return (await isInCard($, session)) ? <Box /> : frame(elements, 'New session', proposal.title, sessionLine($, elements, session))
+  if (session) return (await isInCard($, session)) ? <Box /> : frame(elements, 'New session', proposal.title, await sessionLine($, elements, session))
   const start = () =>
     void (async () => {
       if (!proposal.brief) return
@@ -505,9 +534,10 @@ async function moveSessions($: EngineInterface, since: number, answer: string) {
   await $.state.set(SESSIONS_AT, { anchor: anchor.uuid, ids })
 }
 
-function drawSessions($: EngineInterface, elements: Elements['terminal'], sessions: LinkedSession[]) {
+async function drawSessions($: EngineInterface, elements: Elements['terminal'], sessions: LinkedSession[]) {
   const { Box } = elements
-  return frame(elements, 'Running sessions', '', <Box flexDirection="column">{sessions.map(session => sessionLine($, elements, session))}</Box>)
+  const lines = await Promise.all(sessions.map(session => sessionLine($, elements, session)))
+  return frame(elements, 'Running sessions', '', <Box flexDirection="column">{lines}</Box>)
 }
 
 export const register: Register = on => {
@@ -585,7 +615,7 @@ export const register: Register = on => {
       <Box flexDirection="column">
         {reply}
         {cards}
-        {running.length > 0 ? drawSessions($, elements, running) : []}
+        {running.length > 0 ? await drawSessions($, elements, running) : []}
       </Box>
     )
   })
@@ -696,7 +726,7 @@ export const register: Register = on => {
     const title = proposal?.title ?? (typeof input.title === 'string' ? input.title : 'session')
 
     const heading = e.props.tool === HAND_OFF_TOOL ? 'Handed off' : 'New session'
-    if (session) return (await isInCard($, session)) ? <Box /> : frame(elements, heading, title, sessionLine($, elements, session))
+    if (session) return (await isInCard($, session)) ? <Box /> : frame(elements, heading, title, await sessionLine($, elements, session))
     if (proposal?.initiation === 'offer') {
       const said = { open: 'New session or do it here?', new_session: 'You chose: New session', here: 'You chose: Do it here', started: `Started as ${proposal.session}`, dismissed: 'Closed' }
       return frame(elements, 'New task', title, <Text dimColor>{said[proposal.status]}</Text>)

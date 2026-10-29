@@ -9,7 +9,7 @@ const HAND_OFF = 'mcp__toolkit__hand_off_to_session'
 // `claude agents --json` prints `agents`; files written land in `files`, and messages sent in `sent`.
 // A test can put a repository there: `git` maps a git command's arguments to its output; `git worktree add` lands in `worktrees`.
 function engine(on: On, transcript: string | (() => string) = '', agents = '[]', env: Record<string, string> = {}) {
-  const host = { registered: [] as string[], prompts: [] as string[], logs: [] as string[], files: new Map<string, string>(), sent: [] as string[], git: new Map<string, string>(), worktrees: [] as string[][] }
+  const host = { registered: [] as string[], prompts: [] as string[], logs: [] as string[], files: new Map<string, string>(), sent: [] as string[], git: new Map<string, string>(), worktrees: [] as string[][], runs: [] as string[][] }
   on('session.send', (_$, e) => {
     host.sent.push(e.text)
     return { isDelivered: true }
@@ -29,6 +29,9 @@ function engine(on: On, transcript: string | (() => string) = '', agents = '[]',
   on('session.model', () => ({ value: 'claude-opus-5-5' }))
   on('process.run', (_$, e) => {
     const done = (exitCode: number, stdout = '', stderr = '') => ({ value: { exitCode, stdout, stderr, isStdoutTruncated: false, isStderrTruncated: false } })
+    host.runs.push([...e.argv])
+    if (e.argv[0] === 'uname') return done(0, 'Linux\n')
+    if (['ghostty', 'tmux', 'sh'].includes(e.argv[0] ?? '')) return done(0)
     if (e.argv[0] === 'find') return done(0, `${e.argv[1]}/-w/${e.argv.at(-1)}\n`)
     if (e.argv[0] === 'tail') return done(0, typeof transcript === 'string' ? transcript : transcript())
     if (e.argv[0] === 'claude' && e.argv.includes('--bg')) return done(0, 'backgrounded · abcdef12 · check-the-fix\n')
@@ -343,6 +346,49 @@ test('a switch starts the session with no link back and opens it in this termina
   expect(host.files.has('/home/me/.claude/toolkit/links/abcdef12.json')).toBe(false)
   expect(host.files.get(restartFile)).toBe('attach\nabcdef12')
   expect((await rowWords($, START, input, CALL)).some(w => w.includes('no reports'))).toBe(true)
+})
+
+test("a row offers the places this terminal can open the session in, and opens it there", async ($, on) => {
+  const restartFile = '/run/user/1/claude-restart.42'
+  const host = engine(on, '', '[]', { TERM_PROGRAM: 'ghostty', TERM_PROGRAM_VERSION: '1.3.1', CLAUDE_RESTART_FILE: restartFile })
+  host.files.set('/home/me/.bashrc', '')
+  const clock = mock.clock(on)
+  const input = { ...PROPOSE, initiation: 'user_asked', use_worktree: false }
+  await $.tool.call({ tool: START, tool_use_id: CALL, ...input })
+  const words = await rowWords($, START, input, CALL)
+  expect(words).toContain('window')
+  expect(words).toContain('here')
+  expect(words).not.toContain('tab')
+
+  const ui = await $.ui.mount({
+    plugin: 'toolkit',
+    surface: 'terminal',
+    component: 'ToolUse',
+    requestId: CALL,
+    props: { tool_use_id: CALL, tool: START, input, isRunning: false, isErrored: false, isInterrupted: false, output: 'ok' },
+  })
+  await ui.press({ key: 'window:abcdef12' })
+  await settle()
+  expect(host.runs).toContainEqual(['ghostty', '+new-window', '--working-directory=/w', '-e', 'claude', 'attach', 'abcdef12'])
+
+  // Between turns, here exits at once and the shell function attaches.
+  await ui.press({ key: 'here:abcdef12' })
+  await settle()
+  await clock.advance(1)
+  await settle()
+  await ui.unmount()
+  expect(host.files.get(restartFile)).toBe('attach\nabcdef12')
+  expect(host.runs).toContainEqual(['sh', '-c', 'kill -TERM "$PPID"'])
+})
+
+test('a terminal with no place to open offers here and the command to copy', async ($, on) => {
+  engine(on, '', '[]', { TERM_PROGRAM: 'vscode' })
+  const input = { ...PROPOSE, initiation: 'user_asked', use_worktree: false }
+  await $.tool.call({ tool: START, tool_use_id: CALL, ...input })
+  const words = await rowWords($, START, input, CALL)
+  expect(words).toContain('here')
+  expect(words).toContain('claude attach abcdef12')
+  expect(words.some(word => ['window', 'tab', 'pane', 'popup'].includes(word))).toBe(false)
 })
 
 test('a switch that could not come back to this terminal starts nothing', async ($, on) => {

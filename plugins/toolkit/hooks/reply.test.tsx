@@ -1,4 +1,4 @@
-import { expect, test } from 'claude-code/testing'
+import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
@@ -185,5 +185,27 @@ test('before session start finds a terminal that draws pictures, the fence stays
     'Button: copy table',
     `Markdown: And more text.\n\n${FENCE}`,
   ])
+  await ui.unmount()
+})
+
+test('a code span that names a file becomes a link a click opens in the editor at its line', async ($, on) => {
+  const host = await engine(on)
+  mock.env(on, { HOME: '/home/me', VISUAL: 'zed --wait' })
+  on('session.cwd', () => ({ value: '/repo' }))
+  on('fs.stat', (_$, e) => (e.path === '/repo/src/a.ts' ? { value: { kind: 'file', realPath: e.path, size: 1, mtimeMs: 0, isLink: false } } : { deny: 'no such file' }))
+  const ui = await mount($, 'The fix is in `src/a.ts:12`, not in `src/gone.ts` or `npm test`.')
+  expect(await shown(ui)).toEqual(['Markdown: The fix is in [`src/a.ts:12`](file:///repo/src/a.ts#L12), not in `src/gone.ts` or `npm test`.'])
+  await ui.press({ key: 'prose:0', link: { href: 'file:///repo/src/a.ts#L12' } })
+  await ui.unmount()
+  expect(host.runs.map(run => run.argv)).toContainEqual(['zed', '/repo/src/a.ts:12'])
+  expect(host.toasts).toEqual([])
+})
+
+test('a reply that names no file is left to the engine', async ($, on) => {
+  await engine(on)
+  on('session.cwd', () => ({ value: '/repo' }))
+  on('fs.stat', () => ({ deny: 'no such file' }))
+  const ui = await mount($, 'Run `npm test` and check `src/gone.ts`.')
+  expect(await shown(ui)).toEqual([])
   await ui.unmount()
 })

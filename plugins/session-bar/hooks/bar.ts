@@ -7,9 +7,10 @@ export type { Git }
 // window: the main view knows the model's window; a subagent's view knows only its tokens
 export type Ctx = { kind: 'window'; tokens: number; window: number } | { kind: 'tokens'; tokens: number }
 export type Window = { label: string; percent: number; resetsAt: number | null; length: number | null }
-// where: the repo's name, or the directory's outside a repo
+// where: the repo's name, or the directory's outside a repo; cache: when the warm prompt cache goes cold
 export type BarInput = {
   where: string | null; git: Git | null; agent: string | null; model: string | null; ctx: Ctx | null; windows: Window[]; now: number
+  cache?: number | null
 }
 // the part of the branch a run draws, which a surface may color as robbyrussell does; its cyan repo name
 // and yellow counts fall under 2.2:1 on a light theme, so those stay plain
@@ -24,6 +25,14 @@ export type Segment = Run[]
 export type Zones = { left: Segment[]; right: Segment[] }
 // what an alert asks for: nothing, or a badge in one of the colors
 type Tone = 'plain' | Extract<Run, { badge: true }>['tone']
+
+// Okabe-Ito colors, told apart with the common color vision deficiencies; orange and vermillion
+// also differ in lightness. Fixed, not theme keys, so black on each keeps 5:1 in light and dark themes.
+export const BADGE: Record<Extract<Run, { badge: true }>['tone'], string> = {
+  yellow: '#E69F00',
+  red: '#D55E00',
+  blue: '#56B4E9',
+}
 
 export const SEP = ' · '
 // the fewest cells between the zones; the render's margin and the fit both use it, so a fitted row never wraps
@@ -247,11 +256,14 @@ const shed = (names: Name[], key: Key, room: number): Name[] => {
   })
 }
 
+const cacheSegment = (endsAt: number, now: number): Segment => [{ text: 'cache ', tone: 'dim' }, { text: countdown(endsAt - now), tone: 'plain' }]
+
 const gaugesAt = (input: BarInput, detail: Detail): Segment[] => [
   ...(input.ctx ? [ctxSegment(input.ctx, detail)] : []),
   ...input.windows
     .filter(w => w.resetsAt === null || w.resetsAt > input.now)
     .map(w => windowSegment(w, input.now, detail)),
+  ...(input.cache && input.cache > input.now ? [cacheSegment(input.cache, input.now)] : []),
 ]
 
 export const segments = (input: BarInput, columns: number): Zones => {

@@ -1,17 +1,12 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, SessionUsage } from 'claude-code'
 
-import type { AgentReading, Git } from '../types'
-import {
-  type BarInput, type Ink, type Run, type Segment, GAP, SEP, folderName, modelLabel, parseContext, parseGit, parseWindowSize, segments, stepTokens, toWindows,
-} from './bar'
-import { type Limit, REFRESH_EVERY, STORED, fetchLimits } from './usage'
+import type { AgentReading } from '../types'
+import { type BarInput, type Run, type Segment, BADGE, GAP, SEP, modelLabel, parseContext, parseWindowSize, segments, stepTokens } from './bar'
+import { REFRESH_EVERY, fetchLimits, sharedPath } from './usage'
 
 const agents = atom({ plugin: 'session-bar', key: 'agents' } as const, {} as Record<string, AgentReading>)
-const git = atom({ plugin: 'session-bar', key: 'git' } as const, null as Git | null)
-const where = atom({ plugin: 'session-bar', key: 'where' } as const, null as string | null)
 const tick = atom({ plugin: 'session-bar', key: 'tick' } as const, 0)
-const limits = atom({ plugin: 'session-bar', key: 'limits' } as const, [] as Limit[])
 
 // the Desktop app shows the repo, model, context and usage itself, so there the bar does nothing
 let isDesktop: boolean | undefined
@@ -20,25 +15,20 @@ const inDesktop = async ($: EngineInterface) => (isDesktop ??= (await $.env.get(
 // one fetch at a time; a second caller shares the first one's answer
 let inFlight: Promise<void> | null = null
 
-const applyLimits = async ($: EngineInterface) => {
+// The status line script draws the usage windows but has no credential, so the reading goes to a file it reads.
+// A failed fetch writes nothing, and the script drops a reading once it is stale.
+const shareLimits = async ($: EngineInterface) => {
   const next = await fetchLimits($)
-  if (!next) return
-  await $.store.set(STORED, next)
-  await update($, limits, () => next)
+  const path = sharedPath(await $.env.get('XDG_CACHE_HOME'), await $.env.get('HOME'))
+  if (!next || !path) return
+  await $.fs.write(path, JSON.stringify({ at: await $.clock.now(), limits: next })).catch(() => {})
 }
 
 const refreshLimits = ($: EngineInterface): Promise<void> => {
-  inFlight ??= applyLimits($).finally(() => {
+  inFlight ??= shareLimits($).finally(() => {
     inFlight = null
   })
   return inFlight
-}
-
-// the last reading from an earlier session stands in until the first fetch lands
-const loadLimits = async ($: EngineInterface) => {
-  const stored = await $.store.get(STORED)
-  if (!Array.isArray(stored) || (await read($, limits)).length) return
-  await update($, limits, () => stored as Limit[])
 }
 
 // a module variable on purpose: a reload drops the timer with it, and the next hook starts it again
@@ -50,49 +40,9 @@ const startRefreshing = ($: EngineInterface) => {
   $.clock.every(REFRESH_EVERY, () => void refreshLimits($))
 }
 
-// Okabe-Ito colors, told apart with the common color vision deficiencies; orange and vermillion
-// also differ in lightness. Fixed, not theme keys, so black on each keeps 5:1 in light and dark themes.
-const BADGE: Record<Extract<Run, { badge: true }>['tone'], string> = {
-  yellow: '#E69F00',
-  red: '#D55E00',
-  blue: '#56B4E9',
-}
-
-// oh-my-zsh robbyrussell's prompt colors, as the terminal's named ANSI colors: its theme sets them for light
-// and dark, so they are not fixed colors. A desktop has no such palette and would draw a fixed CSS color,
-// so it draws no ink.
-const INK: Record<Ink, { color: string; bold?: true }> = {
-  paren: { color: 'blue', bold: true },
-  branch: { color: 'red' },
-}
-
-const props = (r: Run, inks: boolean) =>
+const props = (r: Run) =>
   r.badge ? { backgroundColor: BADGE[r.tone], color: '#000000', bold: true }
-  : inks && r.ink ? INK[r.ink]
   : r.tone === 'dim' ? { dimColor: true } : {}
-
-// the root the git segment and the name were last read in; a render that finds another reads them again
-let readRoot: string | null = null
-
-// the session's root, not its cwd or repo(): both follow a Bash call's `cd`, the root does not
-const refreshRepo = async ($: EngineInterface) => {
-  const root = await $.session.root()
-  readRoot = root
-  const inRoot = (...args: string[]) => $.process.run(['git', '--no-optional-locks', ...args], { cwd: root, timeoutMs: 2000 })
-  let next: Git | null = null
-  try {
-    const r = await inRoot('status', '--porcelain=v2', '--branch')
-    if (r.exitCode === 0) next = parseGit(r.stdout)
-  } catch {} // git missing or too slow: no git segment
-  if (JSON.stringify(await read($, git)) !== JSON.stringify(next)) await update($, git, () => next)
-  try {
-    // the list starts with the main working tree, so a worktree shows the repo's own name
-    const r = await inRoot('worktree', 'list', '--porcelain')
-    const main = r.exitCode === 0 ? /^worktree (.+)$/m.exec(r.stdout)?.[1] : undefined
-    const name = folderName(main ?? root)
-    if ((await read($, where)) !== name) await update($, where, () => name)
-  } catch {} // the name stays as it was
-}
 
 // update() always writes, and a write redraws the band, so most steps (same model, same tokens) write nothing
 const record = async ($: EngineInterface, id: string, change: (was: AgentReading | undefined) => AgentReading) => {
@@ -102,13 +52,15 @@ const record = async ($: EngineInterface, id: string, change: (was: AgentReading
   await update($, agents, all => ({ ...all, [id]: reading }))
 }
 
-const mainView = async ($: EngineInterface, usage: SessionUsage): Promise<Pick<BarInput, 'agent' | 'model' | 'ctx'>> => {
+type View = Pick<BarInput, 'agent' | 'model' | 'ctx'>
+
+const mainView = async ($: EngineInterface, usage: SessionUsage): Promise<View> => {
   const id = await $.session.model()
   return { agent: null, model: id ? modelLabel(id, parseWindowSize(usage.context)) : null, ctx: parseContext(usage.context) }
 }
 
 // the main loop's model and context say nothing about a subagent, so before its first step both are left out
-const agentView = async ($: EngineInterface, agentId: string): Promise<Pick<BarInput, 'agent' | 'model' | 'ctx'>> => {
+const agentView = async ($: EngineInterface, agentId: string): Promise<View> => {
   const [all, list] = await Promise.all([read($, agents), $.agent.list()])
   const info = list.find(a => a.id === agentId)
   const reading = all[agentId]
@@ -119,26 +71,13 @@ const agentView = async ($: EngineInterface, agentId: string): Promise<Pick<BarI
   }
 }
 
-// a module variable on purpose: a reload drops the timer with it, and the next hook starts it again
-let isTicking = false
-
-const startTicking = ($: EngineInterface) => {
-  if (isTicking) return
-  isTicking = true
-  $.clock.every(30_000, () => {
-    void update($, tick, n => n + 1)
-    void refreshRepo($)
-  })
-}
-
+// The band draws only what follows the transcript in view: the agent, the model and the context.
+// The status line script draws the rest, which is the same in every view.
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     if (await inDesktop($)) return next(e)
     const started = await next(e)
-    await loadLimits($)
-    startTicking($)
     startRefreshing($)
-    void refreshRepo($)
     void refreshLimits($)
     return started
   })
@@ -146,8 +85,7 @@ export const register: Register = on => {
   on('turn.complete', async ($, e, next) => {
     if (await inDesktop($)) return next(e)
     const done = await next(e)
-    startTicking($)
-    void refreshRepo($)
+    startRefreshing($)
     void refreshLimits($)
     return done
   })
@@ -172,16 +110,14 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.props.hasSurvey || (await inDesktop($))) return next(e)
-    const [g, w, now, usage, root, lim] = await Promise.all([read($, git), read($, where), $.clock.now(), $.session.usage(), $.session.root(), read($, limits), read($, tick)])
-    // `/cd` raises no event the bar can rely on, and its output redraws the band
-    if (root !== readRoot) void refreshRepo($)
+    const [now, usage] = await Promise.all([$.clock.now(), $.session.usage(), read($, tick)])
     const agentId = e.props.view?.agentId
     const shown = agentId ? await agentView($, agentId) : await mainView($, usage)
-    const { left, right } = segments({ where: w, git: g, ...shown, windows: toWindows(lim), now }, e.props.bodyColumns)
+    const { left, right } = segments({ where: null, git: null, windows: [], now, ...shown }, e.props.bodyColumns)
     const { Box, Text } = $.ui.resolve(e)
     const zone = (segs: Segment[]) => segs
       .flatMap((seg, i): Run[] => (i ? [{ text: SEP, tone: 'dim' }, ...seg] : seg))
-      .map(r => <Text {...props(r, e.surface === 'terminal')}>{r.text}</Text>)
+      .map(r => <Text {...props(r)}>{r.text}</Text>)
     const below = await next(e)
 
     // the bar is the band's last row, on the prompt, whatever order other hooks drawing here run in;

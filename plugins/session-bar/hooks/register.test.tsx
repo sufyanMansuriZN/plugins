@@ -3,65 +3,48 @@ import { type Engine, expect, mock, test } from 'claude-code/testing'
 
 const NOW = 1_792_162_404_000
 const MIN = 60_000
-const PORCELAIN = [
-  '# branch.oid 0123456789abcdef',
-  '# branch.head main',
-  '1 A. N... 100644 100644 100644 a b new.py',
-  '? a.txt',
-  '? b.txt',
-  '1 .M N... 100644 100644 100644 a b edited.py',
-  '1 .M N... 100644 100644 100644 a b other.py',
-].join('\n')
-const LONG_BRANCH = '# branch.oid 0123456789abcdef\n# branch.head feature/a-very-long-branch-name\n? new.txt\n'
 const USAGE: SessionUsage = {
   startedAt: 0,
   context: { tokens: 60_000, window: 1_000_000, percent: 6 },
   rateLimits: [],
 }
-// the usage endpoint's answer: every meter comes from here, the context from the session's usage
+// the usage endpoint's answer, which the band shares with the status line script
 const LIMITS = JSON.stringify({ limits: [
   { kind: 'session', percent: 66, resets_at: new Date(NOW + 46 * MIN).toISOString() },
-  { kind: 'weekly_all', percent: 43, resets_at: new Date(NOW + (3 * 24 + 21) * 60 * MIN).toISOString() },
+  { kind: 'weekly_scoped', percent: 19, resets_at: new Date(NOW + 7200 * MIN).toISOString(), scope: { model: { display_name: 'Fable' } } },
 ] })
-const WINDOWS = '5h ━━━╾╂─ 66%  behind  46m · 7d ━━╉─── 43% 3d21h'
-// 60K of a 1M window: half a cell used, and the tick for 250K after cell 2
+const READING = { at: NOW, limits: [
+  { kind: 'five_hour', percent: 66, resetsAt: NOW + 46 * MIN },
+  { kind: 'model', name: 'Fable', percent: 19, resetsAt: NOW + 7200 * MIN },
+] }
+const SHARED = '/home/me/.cache/session-bar/limits.json'
+// 60K of a 1M window: half a cell used, and the tick for 250K after cell 1
 const CTX = 'ctx ╾╂──── 60K'
 const context = (tokens: number, window: number): SessionUsage => ({ ...USAGE, context: { tokens, window, percent: Math.round((tokens / window) * 100) } })
 const SURFACES = ['terminal', 'desktop'] as const
 type Surface = (typeof SURFACES)[number]
 const cells = (s: string) => [...s].length
-// a worktree of the repo: the repo's root is the main working tree, not the session's directory
-const ROOT = '/home/me/plugins/.claude/worktrees/feat-x'
-const WORKTREES = 'worktree /home/me/plugins\nHEAD 0123\nbranch refs/heads/main\n\nworktree /home/me/plugins/.claude/worktrees/feat-x\nHEAD 0123\nbranch refs/heads/feat-x\n'
-// a Bash call's `cd` took the shell out of the repo
-const SHELL = '/tmp/scratch'
 
-// worktrees: `git worktree list` in the session's root; null outside a repo
-type Setup = { porcelain?: string; usage?: SessionUsage; limits?: string; worktrees?: string | null | Error; place?: { root: string }; entrypoint?: string }
+type Setup = { usage?: SessionUsage; fetched?: { ok: boolean; text: string }; env?: Record<string, string> }
 
-const ran = (exitCode: number, stdout: string) => ({ value: { exitCode, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
-
-// the engine beneath the plugin: a session in a worktree of repo `plugins` on `main`, two subagents,
-// one of them yet to make a request
-const engine = async ($: Engine, on: On, { porcelain = PORCELAIN, usage = USAGE, limits = LIMITS, worktrees = WORKTREES, place = { root: ROOT }, entrypoint }: Setup = {}) => {
+// the engine beneath the plugin: a session on Opus with two subagents, one of them yet to make a request;
+// writes collects each file the plugin writes, in order
+const engine = async ($: Engine, on: On, { usage = USAGE, fetched = { ok: true, text: LIMITS }, env = { HOME: '/home/me' } }: Setup = {}) => {
   const clock = mock.clock(on, { now: NOW })
+  const writes: { path: string; text: string }[] = []
   mock.store(on)
-  mock.env(on, entrypoint ? { CLAUDE_CODE_ENTRYPOINT: entrypoint } : {})
+  mock.env(on, env)
   on('ui.render', () => h('Box', {}) as never)
   on('session.start', (_, e) => ({ cwd: e.cwd }))
-  on('session.root', () => ({ value: place.root }))
-  on('session.cwd', () => ({ value: SHELL }))
-  on('session.repo', () => ({ value: null }))
   on('session.model', () => ({ value: 'claude-opus-5-5' }))
   on('session.usage', () => ({ value: usage }))
   on('session.authorize', () => ({ value: { handle: 'handle', kind: 'bearer' } }))
-  on('http.fetch', () => ({ value: { status: 200, ok: true, headers: {}, text: limits } }))
+  on('http.fetch', () => ({ value: { status: fetched.ok ? 200 : 500, ok: fetched.ok, headers: {}, text: fetched.text } }))
   on('session.measure', (_, e) => ({ changed: e.changed }))
-  on('process.run', (_, e) => {
-    if (e.init?.cwd !== ROOT || worktrees === null) return ran(128, '')
-    if (!e.argv.includes('worktree')) return ran(0, porcelain)
-    if (worktrees instanceof Error) throw worktrees
-    return ran(0, worktrees)
+  on('turn.complete', () => ({ text: '' }))
+  on('fs.write', (_, e) => {
+    writes.push({ path: e.path, text: e.text })
+    return { value: undefined }
   })
   on('agent.list', () => ({ value: [
     { id: 'a1', type: 'Explore', description: 'look', status: 'running' },
@@ -73,9 +56,9 @@ const engine = async ($: Engine, on: On, { porcelain = PORCELAIN, usage = USAGE,
       usage: { model: e.model, input_tokens: 2_000, cache_read_input_tokens: 30_000, cache_creation_input_tokens: 10_000, output_tokens: 10 },
     }
   })
-  await $.session.start({ source: 'startup', cwd: ROOT, surface: 'terminal', isInteractive: true } as never)
+  await $.session.start({ source: 'startup', cwd: '/home/me/plugins', surface: 'terminal', isInteractive: true } as never)
   await clock.settle()
-  return clock
+  return { clock, writes }
 }
 
 const step = async ($: Engine, agentId: string | undefined, model: string) => {
@@ -95,29 +78,30 @@ const zonesOn = async ($: Engine, surface: Surface, agentId?: string, bodyColumn
   return { left: left?.text, right: right?.text, gap: right?.props.marginLeft }
 }
 
-test("main view, the shell elsewhere: the session root's repo, git and the main model on the left; context and the windows on the right", async ($, on) => {
+test('main view: only the main model on the left and the context on the right; the repo, branch and usage windows are the status line\'s', async ($, on) => {
   await engine($, on)
   for (const surface of SURFACES) {
     const { left, right } = await zonesOn($, surface)
-    expect([left, right], surface).toEqual(['plugins (main) · Opus 5.5 1M', `${CTX} · ${WINDOWS}`])
+    expect([left, right], surface).toEqual(['Opus 5.5 1M', CTX])
   }
 })
 
-test('the Desktop app draws no row, on any surface', async ($, on) => {
-  await engine($, on, { entrypoint: 'claude-desktop' })
+test('the Desktop app draws no row, and fetches and writes nothing', async ($, on) => {
+  const { writes } = await engine($, on, { env: { HOME: '/home/me', CLAUDE_CODE_ENTRYPOINT: 'claude-desktop' } })
   for (const surface of SURFACES) expect(await zonesOn($, surface), surface).toEqual({ left: undefined, right: undefined, gap: undefined })
+  expect(writes).toEqual([])
 })
 
 test('the CLI entrypoint draws the row', async ($, on) => {
-  await engine($, on, { entrypoint: 'cli' })
-  expect((await zonesOn($, 'terminal')).left).toBe('plugins (main) · Opus 5.5 1M')
+  await engine($, on, { env: { HOME: '/home/me', CLAUDE_CODE_ENTRYPOINT: 'cli' } })
+  expect((await zonesOn($, 'terminal')).left).toBe('Opus 5.5 1M')
 })
 
-test('a 200K window: the context meter fills over 200K, its tick for 160K after cell 6', async ($, on) => {
+test('a 200K window: the context meter fills over 200K, its tick for 160K after cell 4', async ($, on) => {
   await engine($, on, { usage: context(120_000, 200_000) })
   for (const surface of SURFACES) {
     const { left, right } = await zonesOn($, surface)
-    expect([left, right], surface).toEqual(['plugins (main) · Opus 5.5 200K', `ctx ━━━─╂─ 120K · ${WINDOWS}`])
+    expect([left, right], surface).toEqual(['Opus 5.5 200K', 'ctx ━━━─╂─ 120K'])
   }
 })
 
@@ -134,40 +118,21 @@ for (const [tokens, window, shown, badge] of [
       const right = (await ui.find({ type: 'Box', key: 'right' }))?.text
       const ctx = await ui.find({ type: 'Text', text: new RegExp(`^ ?${tokens / 1000}K ?$`) })
       await ui.unmount()
-      expect(right, surface).toBe(`${shown} · ${WINDOWS}`)
-      expect([ctx?.text, ctx?.props.backgroundColor, ctx?.props.color], surface)
-        .toEqual(badge ? [badge, '#D55E00', '#000000'] : [`${tokens / 1000}K`, undefined, undefined])
+      expect(right, surface).toBe(shown)
+      expect([ctx?.text, ctx?.props.backgroundColor, ctx?.props.color, ctx?.props.bold], surface)
+        .toEqual(badge ? [badge, '#D55E00', '#000000', true] : [`${tokens / 1000}K`, undefined, undefined, undefined])
     }
   })
 }
-
-test("outside a git repo, the left zone starts with the session root's directory name", async ($, on) => {
-  await engine($, on, { worktrees: null })
-  for (const surface of SURFACES) {
-    expect((await zonesOn($, surface)).left, surface).toBe('feat-x · Opus 5.5 1M')
-  }
-})
-
-test('a `/cd` out of the repo: the next redraw reads the new root, with no event and no tick', async ($, on) => {
-  const place = { root: ROOT }
-  await engine($, on, { place })
-  place.root = '/tmp'
-  expect((await zonesOn($, 'terminal')).left).toBe('tmp · Opus 5.5 1M')
-})
-
-test('a repo that cannot be read leaves the name out', async ($, on) => {
-  await engine($, on, { worktrees: new Error('git timed out') })
-  expect((await zonesOn($, 'terminal')).left).toBe('main · Opus 5.5 1M')
-})
 
 test('a subagent in view after a Haiku step: its type and model on the left, its tokens on the right, no main model', async ($, on) => {
   await engine($, on)
   await step($, 'a1', 'claude-haiku-4-5-20251001')
   for (const surface of SURFACES) {
     const { left, right } = await zonesOn($, surface, 'a1')
-    expect([left, right], surface).toEqual(['plugins (main) · Explore · Haiku 4.5', `ctx 42K · ${WINDOWS}`])
+    expect([left, right], surface).toEqual(['Explore · Haiku 4.5', 'ctx 42K'])
   }
-  expect((await zonesOn($, 'terminal')).left).toBe('plugins (main) · Opus 5.5 1M')
+  expect((await zonesOn($, 'terminal')).left).toBe('Opus 5.5 1M')
 })
 
 test('a subagent with no step yet: its type, no model and no context', async ($, on) => {
@@ -176,11 +141,11 @@ test('a subagent with no step yet: its type, no model and no context', async ($,
   await step($, undefined, 'claude-fable-5-1')
   for (const surface of SURFACES) {
     const { left, right } = await zonesOn($, surface, 'a2')
-    expect([left, right], surface).toEqual(['plugins (main) · Plan', WINDOWS])
+    expect([left, right], surface).toEqual(['Plan', undefined])
   }
 })
 
-test('a row at exactly its width keeps every part, and its zones and gap add up to the band', async ($, on) => {
+test('a row at exactly its width keeps every part, and a narrower band drops the context meter first', async ($, on) => {
   await engine($, on)
   for (const surface of SURFACES) {
     const wide = await zonesOn($, surface)
@@ -188,108 +153,49 @@ test('a row at exactly its width keeps every part, and its zones and gap add up 
     const exact = await zonesOn($, surface, undefined, columns)
     expect(exact, surface).toEqual(wide)
     expect(cells(exact.left!) + Number(exact.gap) + cells(exact.right!), surface).toBe(columns)
-    expect((await zonesOn($, surface, undefined, columns - 1)).right, surface).not.toBe(wide.right)
+    expect((await zonesOn($, surface, undefined, columns - 1)).right, surface).toBe('ctx 60K')
   }
 })
 
-test('a narrow band drops the meters, then the words, then cuts the branch, then the repo name', async ($, on) => {
-  await engine($, on, { porcelain: LONG_BRANCH })
-  for (const surface of SURFACES) {
-    const meters = `${CTX} · ${WINDOWS}`
-    const words = 'ctx 60K · 5h 66%  behind  46m · 7d 43% 3d21h'
-    const bare = 'ctx 60K · 5h 66% 46m · 7d 43% 3d21h'
-    const kept = 'plugins (feature/a-v…) · Opus 5.5 1M'
-    const at = async (left: string, right: string) => {
-      const { left: l, right: r } = await zonesOn($, surface, undefined, cells(left) + 3 + cells(right))
-      return [l, r]
-    }
-    expect(await at(kept, meters), `${surface} branch cut to 12`).toEqual([kept, meters])
-    expect(await at(kept, words), `${surface} meters off`).toEqual([kept, words])
-    expect(await at(kept, bare), `${surface} words off`).toEqual([kept, bare])
-    expect(await at('plugins (f…) · Opus 5.5 1M', bare), `${surface} branch cut`).toEqual(['plugins (f…) · Opus 5.5 1M', bare])
-    expect(await at('plugins · Opus 5.5 1M', bare), `${surface} branch left out`).toEqual(['plugins · Opus 5.5 1M', bare])
-    expect(await at('plu… · Opus 5.5 1M', bare), `${surface} name cut`).toEqual(['plu… · Opus 5.5 1M', bare])
-    expect(await at('', bare), `${surface} never the model or a gauge`).toEqual(['Opus 5.5 1M', bare])
-  }
-})
-
-test('a badge is black bold text on its Okabe-Ito color; the percent stays plain, and a tick on the unused track is dim', async ($, on) => {
+test('the tick on the unused track is dim; no text has a color of its own', async ($, on) => {
   await engine($, on)
   for (const surface of SURFACES) {
     const ui = await mountBand($, surface)
-    const props = async (text: string) => (await ui.find({ type: 'Text', text }))?.props
-    const behind = await props(' behind ')
-    expect([behind?.backgroundColor, behind?.color, behind?.bold], surface).toEqual(['#56B4E9', '#000000', true])
-    for (const plain of ['66%', '43%']) {
-      const p = await props(plain)
-      expect([p?.color, p?.backgroundColor, p?.dimColor], `${surface} ${plain}`).toEqual([undefined, undefined, undefined])
-    }
-    const tick = await props('╂')
+    const tick = (await ui.find({ type: 'Text', text: '╂────' }))?.props
     expect([tick?.color, tick?.backgroundColor, tick?.dimColor], `${surface} tick`).toEqual([undefined, undefined, true])
+    const inColor = (await ui.findAll({ type: 'Text' })).filter(t => t.props.color !== undefined).map(t => t.text)
+    expect(inColor, surface).toEqual([])
     await ui.unmount()
   }
 })
 
-test('a fixed color is only a badge background: ahead, far ahead, the spend percent and the context tokens; only the branch and its parentheses have a named color, on the terminal', async ($, on) => {
-  await engine($, on, {
-    usage: { ...USAGE, context: { tokens: 850_000, window: 1_000_000, percent: 85 } },
-    limits: JSON.stringify({ limits: [
-      { kind: 'session', percent: 70, resets_at: new Date(NOW + 150 * MIN).toISOString() },
-      { kind: 'weekly_all', percent: 80, resets_at: new Date(NOW + 84 * 60 * MIN).toISOString() },
-    ] }),
+test('each fetch writes its reading to the shared file in ~/.cache, at start and at each turn\'s end', async ($, on) => {
+  const { clock, writes } = await engine($, on)
+  expect(writes.map(w => [w.path, JSON.parse(w.text)])).toEqual([[SHARED, READING]])
+  await $.turn.complete({ reason: 'answer', answer: 'Done.', durationMs: 1, isAborted: false, turnId: 't' })
+  await clock.settle()
+  expect(writes.length).toBe(2)
+})
+
+test('the shared file goes under XDG_CACHE_HOME when it is set', async ($, on) => {
+  const { writes } = await engine($, on, { env: { HOME: '/home/me', XDG_CACHE_HOME: '/x/cache' } })
+  expect(writes.map(w => w.path)).toEqual(['/x/cache/session-bar/limits.json'])
+})
+
+for (const [what, fetched] of [['a failed fetch', { ok: false, text: '' }], ['a fetch with no windows', { ok: true, text: '{"limits":[]}' }]] as const) {
+  test(`${what} writes nothing, so the last reading stands until it goes stale`, async ($, on) => {
+    const { writes } = await engine($, on, { fetched })
+    expect(writes).toEqual([])
   })
-  for (const surface of SURFACES) {
-    const ui = await mountBand($, surface)
-    const colors = async (text: string) => {
-      const p = (await ui.find({ type: 'Text', text: new RegExp(`^${text}$`) }))?.props
-      return [p?.backgroundColor, p?.color, p?.bold]
-    }
-    expect(await colors(' 850K '), `${surface} context`).toEqual(['#D55E00', '#000000', true])
-    expect(await colors(' ahead '), surface).toEqual(['#E69F00', '#000000', true])
-    expect(await colors(' far ahead '), surface).toEqual(['#D55E00', '#000000', true])
-    const texts = await ui.findAll({ type: 'Text' })
-    const inColor = texts.filter(t => t.props.color !== undefined && t.props.color !== '#000000').map(t => t.text)
-    expect(inColor, `${surface} text in color`).toEqual(surface === 'terminal' ? [' (', 'main', ')'] : [])
-    const bare = texts.filter(t => t.props.color === '#000000' && !t.props.backgroundColor).map(t => t.text)
-    expect(bare, `${surface} black text without a badge`).toEqual([])
-    await ui.unmount()
-  }
+}
+
+test('an idle session writes a new reading every 5 minutes', async ($, on) => {
+  const { clock, writes } = await engine($, on)
+  await clock.advance(5 * MIN)
+  expect(writes.map(w => JSON.parse(w.text).at)).toEqual([NOW, NOW + 5 * MIN])
 })
 
-test("the terminal draws the branch and its parentheses in robbyrussell's named colors, the repo name and counts plain; the desktop draws them plain, with dim parentheses", async ($, on) => {
-  await engine($, on)
-  const drawn = async (surface: Surface) => {
-    const ui = await mountBand($, surface)
-    const left = await ui.find({ type: 'Box', key: 'left' })
-    const texts = await ui.findAll({ type: 'Text' })
-    await ui.unmount()
-    return texts.slice(0, 4).map(t => [t.text, t.props.color ?? null, t.props.bold ?? null, t.props.dimColor ?? null]).concat([[left?.text ?? null]])
-  }
-  expect(await drawn('terminal')).toEqual([
-    ['plugins', null, null, null], [' (', 'blue', true, null], ['main', 'red', null, null], [')', 'blue', true, null],
-    ['plugins (main) · Opus 5.5 1M'],
-  ])
-  expect(await drawn('desktop')).toEqual([
-    ['plugins', null, null, null], [' (', null, null, true], ['main', null, null, null], [')', null, null, true],
-    ['plugins (main) · Opus 5.5 1M'],
-  ])
-})
-
-test('a band left open redraws its countdowns every 30 seconds', async ($, on) => {
-  const clock = await engine($, on)
-  const ui = await mountBand($, 'terminal')
-  const fiveHour = async () => (await ui.find({ type: 'Text', text: /^ \d+m$/ }))?.text
-  const before = await fiveHour()
-  await clock.advance(29_000)
-  const early = await fiveHour()
-  await clock.advance(2 * MIN)
-  const after = await fiveHour()
-  await ui.unmount()
-  // the last tick inside 149 s is at 120 s, so the band shows 46m less two minutes
-  expect([before, early, after]).toEqual([' 46m', ' 46m', ' 44m'])
-})
-
-test("rows another hook draws in the band sit above the bar, so the bar stays on the prompt", async ($, on) => {
+test('rows another hook draws in the band sit above the bar, so the bar stays on the prompt', async ($, on) => {
   on('ui.render', { component: 'AbovePrompt' }, ($, e) => {
     const { Text } = $.ui.resolve(e)
     return <Text>3 tasks (1 done, 2 open)</Text>
@@ -299,7 +205,7 @@ test("rows another hook draws in the band sit above the bar, so the bar stays on
   const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
   await ui.unmount()
   expect(texts[0]).toBe('3 tasks (1 done, 2 open)')
-  expect(texts.slice(1).join('')).toMatch(/^plugins/)
+  expect(texts.slice(1).join('')).toMatch(/^Opus/)
 })
 
 test('a survey has the band to itself', async ($, on) => {

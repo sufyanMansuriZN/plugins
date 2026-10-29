@@ -187,6 +187,20 @@ describe('segments', () => {
     expect(right(five(88, NOW - 1))).toBe(CTX_ROW)
   })
 
+  test('a warm prompt cache comes last, with its time to cold; a cold or unknown one is left out', () => {
+    expect(right({ cache: NOW + 52 * MIN })).toBe(`${GAUGES} · cache 52m`)
+    expect(right({ cache: NOW + 30_000 })).toBe(`${GAUGES} · cache <1m`)
+    expect(right({ cache: NOW })).toBe(GAUGES)
+    expect(right({ cache: null })).toBe(GAUGES)
+    expect([tone({ cache: NOW + 52 * MIN }, 'cache'), tone({ cache: NOW + 52 * MIN }, '52m')]).toEqual(['dim', 'plain'])
+  })
+
+  test('a narrow row keeps the cache countdown at every step', () => {
+    const cache = NOW + 52 * MIN
+    expect(zones({ cache }, fitted(LEFT, `${WORDS} · cache 52m`))).toEqual([LEFT, `${WORDS} · cache 52m`])
+    expect(zones({ cache }, fitted(LEFT, `${BARE} · cache 52m`))).toEqual([LEFT, `${BARE} · cache 52m`])
+  })
+
   test('the context meter fills over the whole window, with its tick at 250K on a 1M window', () => {
     const ctx = (tokens: number): Partial<BarInput> => ({ ctx: { kind: 'window', tokens, window: 1_000_000 }, windows: [] })
     expect(alone(ctx(60_000))).toBe('ctx ╾╂──── 60K')

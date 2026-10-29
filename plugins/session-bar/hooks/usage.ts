@@ -10,10 +10,35 @@ export type Limit = {
 }
 
 export const USAGE_URL = 'https://api.anthropic.com/api/oauth/usage'
-export const STORED = 'limits'
 export const REFRESH_EVERY = 5 * 60_000
+// a reading this old has missed three fetches: no session is fetching, so it says nothing about now
+export const SHARED_MAX_AGE = 3 * REFRESH_EVERY
 
 const finite = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value)
+
+// the last reading, for the status line script, which has no credential to fetch with; a cache file,
+// as losing it costs one fetch. XDG_CACHE_HOME counts only when absolute, as the spec says.
+export const sharedPath = (cacheHome: string | undefined, home: string | undefined): string | null => {
+  const base = cacheHome?.startsWith('/') ? cacheHome : home ? `${home}/.cache` : null
+  return base && `${base}/session-bar/limits.json`
+}
+
+const isLimit = (l: Partial<Limit> | null): l is Limit =>
+  !!l && finite(l.percent) && (l.resetsAt === null || finite(l.resetsAt))
+  && (l.kind === 'five_hour' || l.kind === 'seven_day' || (l.kind === 'model' && typeof l.name === 'string'))
+
+// the file's text in, its limits out while the reading is fresh; anything else gives none
+export const parseShared = (text: string, now: number): Limit[] => {
+  let body: { at?: unknown; limits?: unknown }
+  try {
+    body = JSON.parse(text)
+  } catch {
+    return []
+  }
+  const age = finite(body?.at) ? now - body.at : NaN
+  if (!(age >= 0 && age <= SHARED_MAX_AGE) || !Array.isArray(body.limits)) return []
+  return (body.limits as (Partial<Limit> | null)[]).filter(isLimit)
+}
 
 // the reset comes as an ISO string or as Unix seconds; either way it becomes epoch milliseconds
 const resetMs = (value: unknown): number | null => {

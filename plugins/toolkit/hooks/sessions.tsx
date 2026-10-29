@@ -412,7 +412,8 @@ function frame({ Box, Text }: Elements['terminal'], heading: string, title: stri
   )
 }
 
-// The terminal Claude Code runs in, read once when a row first draws: it decides where a row can open its session.
+// The terminal Claude Code runs in: it decides where a row can open its session. Read at session start, as a
+// drawing cannot run uname; a row drawn with none read yet reads it then.
 let terminal: Promise<Terminal> | undefined
 const terminalOnce = ($: EngineInterface) => (terminal ??= terminalOf($))
 
@@ -548,6 +549,8 @@ export const register: Register = on => {
     await $.tool.register({ name: 'list_sessions', description: LIST_DESCRIPTION, inputSchema: LIST_SCHEMA, isDeferred: false })
     await $.tool.register({ name: 'hand_off_to_session', description: HAND_OFF_DESCRIPTION, inputSchema: HAND_OFF_SCHEMA, isDeferred: false })
     await $.tool.register({ name: 'stop_reports', description: MUTE_DESCRIPTION, inputSchema: MUTE_SCHEMA, isDeferred: false })
+    terminal = terminalOf($)
+    await terminal
     // A reload drops the module's timer, so the reloaded module watches again.
     if (((await read($, LINKED)) ?? []).some(s => isAlive(s.state))) watch($)
     return next(e)

@@ -22,6 +22,7 @@ import {
   planStart,
   replyAnchor,
   reportText,
+  sessionsTail,
   shortId,
   startCommand,
 } from './sessions-model'
@@ -560,6 +561,13 @@ export const register: Register = on => {
       })()
     }
     return result
+  })
+
+  // How many linked sessions are running a turn, after whatever another plugin already added to the hint line.
+  on('ui.render', { surface: 'terminal', component: 'PromptHint' }, async ($, e, next) => {
+    const tail = sessionsTail((await read($, LINKED)) ?? [])
+    if (tail === null) return next(e)
+    return next({ ...e, props: { ...e.props, tail: e.props.tail ? `${e.props.tail} · ${tail}` : tail } })
   })
 
   // A turn's suggested sessions, then the running sessions card, under its last reply text, so they come after the whole reply.

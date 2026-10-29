@@ -1,7 +1,8 @@
 import { expect, test } from 'claude-code/testing'
 
-import { backgroundedId, cardAnchor, latestReport, linkPath, parseAgents, parseLink, planHandOff, planStart, reportText, sessionName, shortId, startCommand } from './sessions-model'
+import { backgroundedId, cardAnchor, latestReport, linkPath, parseAgents, parseLink, planHandOff, planStart, reportText, sessionName, sessionsTail, shortId, startCommand } from './sessions-model'
 import type { Caller } from './sessions-model'
+import type { LinkedSession } from '../types'
 
 const caller = (over: Partial<Caller> = {}): Caller => ({
   cwd: '/repo',
@@ -246,4 +247,16 @@ test('a turn\'s cards go under its last reply text, once the transcript holds th
   expect(cardAnchor(turn.slice(0, 2).join('\n'), since, '')).toBe(null)
   // No proposal this turn, though an earlier turn's text is there.
   expect(cardAnchor([earlier, turn[2]].join('\n'), since, 'Checking the shape.')).toBe(null)
+})
+
+test('the hint line counts the linked sessions working and idle, leaves out a zero, and says nothing when none runs', () => {
+  const linked = (...states: string[]): LinkedSession[] =>
+    states.map((state, i) => ({ name: `s${i}`, title: 'T', id: `id${i}`, sessionId: null, cwd: '/w', branch: null, state, startedAt: 0, callId: `c${i}` }))
+  expect(sessionsTail([])).toBe(null)
+  expect(sessionsTail(linked('done', 'stopped', 'failed', 'gone'))).toBe(null)
+  expect(sessionsTail(linked('starting'))).toBe('1 session working')
+  expect(sessionsTail(linked('working', 'starting', 'failed'))).toBe('2 sessions working')
+  expect(sessionsTail(linked('working', 'idle', 'idle', 'done'))).toBe('1 session working · 2 idle')
+  expect(sessionsTail(linked('idle', 'gone'))).toBe('1 session idle')
+  expect(sessionsTail(linked('idle', 'idle'))).toBe('2 sessions idle')
 })

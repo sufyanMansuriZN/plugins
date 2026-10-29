@@ -308,6 +308,31 @@ test('a running session moves into one card under each turn\'s last reply text, 
   expect(await rowWords($, START, input, CALL)).toContain('claude attach abcdef12')
 })
 
+test('the hint line under the prompt counts the running sessions after any tail already there, and drops it once none runs', async ($, on) => {
+  const tails: (string | undefined)[] = []
+  on('ui.render', { component: 'PromptHint' }, ($, e) => {
+    tails.push(e.props.tail)
+    const { Text } = $.ui.resolve(e)
+    return <Text>{e.props.hint}</Text>
+  })
+  engine(on, TRANSCRIPT)
+  const hint = async (tail?: string) => {
+    const ui = await $.ui.mount({ plugin: 'toolkit', surface: 'terminal', component: 'PromptHint', props: { hint: '? for shortcuts', isDraft: false, isWorking: false, ...(tail === undefined ? {} : { tail }) } })
+    await ui.unmount()
+    return tails.at(-1)
+  }
+  expect(await hint()).toBe(undefined)
+
+  await $.turn.start({ text: 'Check it in a session.', turnId: 't1' })
+  await $.tool.call({ tool: START, tool_use_id: CALL, ...PROPOSE, initiation: 'user_asked', use_worktree: false })
+  expect(await hint()).toBe('1 session working')
+  expect(await hint('cache 56m')).toBe('cache 56m · 1 session working')
+
+  // `claude agents` no longer lists it.
+  await $.tool.call({ tool: 'mcp__toolkit__list_sessions', linked: true })
+  expect(await hint('cache 56m')).toBe('cache 56m')
+})
+
 test('a switch starts the session with no link back and opens it in this terminal when the turn ends', async ($, on) => {
   const restartFile = '/run/user/1/claude-restart.42'
   const host = engine(on, '', '[]', { CLAUDE_RESTART_FILE: restartFile })

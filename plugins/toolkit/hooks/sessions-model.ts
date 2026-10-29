@@ -307,6 +307,19 @@ export function cardAnchor(jsonl: string, since: number, answer: string): { uuid
 /** A session whose process still runs, so it may work again. */
 export const isAlive = (state: string) => state === 'starting' || state === 'working' || state === 'idle'
 
+/**
+ * What the hint line under the prompt says about the linked sessions still running: how many run a turn
+ * (`starting` counts) and how many are idle between turns, a zero left out; null when none runs.
+ */
+export function sessionsTail(linked: LinkedSession[]): string | null {
+  const working = linked.filter(s => s.state === 'starting' || s.state === 'working').length
+  const idle = linked.filter(s => s.state === 'idle').length
+  const sessions = (count: number) => `${count} session${count === 1 ? '' : 's'}`
+  if (working > 0) return `${sessions(working)} working${idle > 0 ? ` · ${idle} idle` : ''}`
+  if (idle > 0) return `${sessions(idle)} idle`
+  return null
+}
+
 /** One line per linked session, as the linked sessions note and list_sessions give them. */
 export function linkedLines(linked: LinkedSession[]): string {
   if (linked.length === 0) return 'No linked sessions.'

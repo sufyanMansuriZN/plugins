@@ -32,7 +32,6 @@ function engine(on: On, cd?: () => Promise<unknown>): Host {
     if (e.command === 'cd') await cd?.()
     return {}
   })
-  on('classic.CwdChanged', () => ({}))
   on('prompt.submit', (_$, e) => {
     host.prompts.push(e.text)
     return { text: e.text }
@@ -97,50 +96,36 @@ test('a move from a call that left out its task asks the model to carry on', asy
   expect(host.prompts).toEqual([`The session now runs in ${APP}. Continue the task you were on.`])
 })
 
-test('a move whose /cd never hands back still submits the task once the directory changes', async ($, on) => {
-  const host = engine(on, () => new Promise(() => {}))
-  const clock = mock.clock(on)
-  await start($, on)
-  await $.tool.call({ tool: TOOL, path: LINK, task: 'Run the tests.' })
-  await settle(clock)
-  expect(host.prompts).toEqual([])
-  await $.classic.CwdChanged({ old_cwd: ROOT, new_cwd: APP })
-  await settle(clock)
-  expect(host.prompts).toEqual([`The session now runs in ${APP}. Run the tests.`])
-})
-
-test('a move seen both by the directory change and by /cd handing back submits the task once', async ($, on) => {
-  const host = engine(on, () => $.classic.CwdChanged({ old_cwd: ROOT, new_cwd: APP }))
-  const clock = mock.clock(on)
-  await start($, on)
-  await $.tool.call({ tool: TOOL, path: LINK, task: 'Run the tests.' })
-  await settle(clock)
-  await $.classic.CwdChanged({ old_cwd: APP, new_cwd: APP })
-  await settle(clock)
-  expect(host.prompts).toEqual([`The session now runs in ${APP}. Run the tests.`])
-})
-
 test('a move whose /cd reloads the module submits the task when the reloaded module starts', async ($, on) => {
   const host = engine(on, () => new Promise(() => {}))
   const clock = mock.clock(on)
   await start($, on)
   await $.tool.call({ tool: TOOL, path: LINK, task: 'Run the tests.' })
   await settle(clock)
+  expect(host.prompts).toEqual([])
   await $.session.start({ cwd: APP, surface: 'terminal', isInteractive: true })
-  await settle(clock)
-  await $.classic.CwdChanged({ old_cwd: ROOT, new_cwd: APP })
   await settle(clock)
   expect(host.prompts).toEqual([`The session now runs in ${APP}. Run the tests.`])
 })
 
-test('a directory change that is not a pending move submits nothing', async ($, on) => {
+test('a move seen both by the reloaded module and by /cd handing back submits the task once', async ($, on) => {
+  const host = engine(on, () => $.session.start({ cwd: APP, surface: 'terminal', isInteractive: true }))
+  const clock = mock.clock(on)
+  await start($, on)
+  await $.tool.call({ tool: TOOL, path: LINK, task: 'Run the tests.' })
+  await settle(clock)
+  await $.session.start({ cwd: APP, surface: 'terminal', isInteractive: true })
+  await settle(clock)
+  expect(host.prompts).toEqual([`The session now runs in ${APP}. Run the tests.`])
+})
+
+test('a session start in another folder than the pending move submits nothing', async ($, on) => {
   const host = engine(on, () => new Promise(() => {}))
   const clock = mock.clock(on)
   await start($, on)
-  await $.classic.CwdChanged({ old_cwd: ROOT, new_cwd: APP })
   await $.tool.call({ tool: TOOL, path: LINK, task: 'Run the tests.' })
   await settle(clock)
-  await $.classic.CwdChanged({ old_cwd: ROOT, new_cwd: `${ROOT}/other` })
+  await $.session.start({ cwd: `${ROOT}/other`, surface: 'terminal', isInteractive: true })
   await settle(clock)
   expect(host.prompts).toEqual([])
 })

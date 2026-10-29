@@ -133,35 +133,40 @@ test('a message typed mid-turn and a turn a background task wakes keep the list'
   expect(await spinner($)).toContain('Fix blank lines')
 })
 
-async function abovePrompt($: Engine): Promise<string[]> {
+async function abovePrompt($: Engine, isWorking = false): Promise<string[]> {
   const ui = await $.ui.mount({
     plugin: 'toolkit',
     surface: 'terminal',
     component: 'AbovePrompt',
-    props: { hasSurvey: false, isWorking: false, maxRows: 20, bodyColumns: 100, scroll: { offset: 0, bodyRows: 20 }, view: {} },
+    props: { hasSurvey: false, isWorking, maxRows: 20, bodyColumns: 100, scroll: { offset: 0, bodyRows: 20 }, view: {} },
   })
   const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text.trim()).filter(words => words !== '')
   await ui.unmount()
   return texts
 }
 
-const MONITOR = { id: 'b1', type: 'monitor', status: 'running', description: 'watch CI' }
-
-test('once Claude stops, an unfinished list is not drawn above the prompt', async ($, on) => {
+test('once Claude stops with steps open, the list stays above the prompt until the next turn', async ($, on) => {
   engine(on)
-  on('classic.Stop', () => ({}))
   await turn($, 't1', () => $.tool.call({ tool: TOOL, items: PLAN }))
-  await $.classic.Stop({ stop_hook_active: false, background_tasks: [] })
-  expect(await abovePrompt($)).toEqual(['engine: AbovePrompt'])
-})
-
-test('while a monitor runs after Claude stops, the list stays above the prompt until the next turn', async ($, on) => {
-  engine(on)
-  on('classic.Stop', () => ({}))
-  await turn($, 't1', () => $.tool.call({ tool: TOOL, items: PLAN }))
-  await $.classic.Stop({ stop_hook_active: false, background_tasks: [MONITOR] })
   expect(await abovePrompt($)).toEqual(['◼', 'Read the parser', '◻', 'Fix blank lines', '◻', 'Run the tests', 'engine: AbovePrompt'])
   await $.turn.start({ text: '', turnId: 't2' })
+  expect(await abovePrompt($, true)).toEqual(['engine: AbovePrompt'])
+})
+
+test('a list the last turn left alone stays under the spinner only, not above the prompt', async ($, on) => {
+  let prompts = 1
+  engine(on, () => prompts)
+  await turn($, 't1', () => $.tool.call({ tool: TOOL, items: PLAN }))
+  prompts = 2
+  await turn($, 't2', async () => expect(await spinner($)).toContain('Read the parser'))
+  expect(await abovePrompt($)).toEqual(['engine: AbovePrompt'])
+  await turn($, 't3', () => $.tool.call({ tool: TOOL, advance: true }))
+  expect(await abovePrompt($)).toContain('Fix blank lines')
+})
+
+test('a finished list is not drawn above the prompt', async ($, on) => {
+  engine(on)
+  await turn($, 't1', () => $.tool.call({ tool: TOOL, items: PLAN.map(step => ({ ...step, status: 'completed' })) }))
   expect(await abovePrompt($)).toEqual(['engine: AbovePrompt'])
 })
 

@@ -73,7 +73,7 @@ export const register: Register = on => {
     const dir = target.realPath
     const plan = typeof task === 'string' && task !== '' ? task : 'Continue the task you were on.'
     // The move can reload this module and drop the `.then` below, so the task waits in state, where
-    // the directory change hook and a reloaded module's start find it too. The first one submits it.
+    // a reloaded module's start finds it too. The first one submits it.
     await $.state.set(PENDING, { dir, task: plan })
     // A command run straight from a tool hook is refused, so it waits for the timer.
     $.clock.after(0, () => {
@@ -87,11 +87,6 @@ export const register: Register = on => {
         })
     })
     return { result: `The move to ${dir} runs when your turn ends, so end your turn now.` }
-  })
-
-  on('classic.CwdChanged', async ($, e, next) => {
-    await finishLater($, e.new_cwd)
-    return next(e)
   })
 
   // A one-line row in place of the call with its long task. ctrl+o still shows the whole call.

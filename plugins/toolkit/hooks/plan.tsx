@@ -8,7 +8,6 @@ export const PLAN_TOOL = `mcp__toolkit__${NAME}`
 
 const PLAN = { plugin: 'toolkit', key: 'plan' } as const
 const IS_OPEN = { plugin: 'toolkit', key: 'planIsOpen' } as const
-const IS_WAITING = { plugin: 'toolkit', key: 'planIsWaiting' } as const
 const STEPS_MAX = 12
 const STATUSES: PlanStatus[] = ['pending', 'in_progress', 'completed']
 // A long list shows five steps and a "… +N more" row, as Claude Code cuts its own lists short.
@@ -204,20 +203,12 @@ export const register: Register = on => {
     )
   })
 
-  // A turn that ends with a monitor or other background work still running is not done:
-  // that work wakes the next turn, so until then the list stays above the prompt.
-  on('classic.Stop', async ($, e, next) => {
-    await update($, IS_WAITING, () => (e.background_tasks?.length ?? 0) > 0)
-    return next(e)
-  })
-  on('turn.start', { text: /[\s\S]*/ }, async ($, e, next) => {
-    if (e.agentId === undefined) await update($, IS_WAITING, () => false)
-    return next(e)
-  })
+  // A turn that changed the list and ends with steps still open is not done: the list stays above the
+  // prompt until the next turn. One the turn left alone, set aside or not, stays under the spinner only.
   on('ui.render', { surface: 'terminal', component: 'AbovePrompt' }, async ($, e, next) => {
-    if (e.props.hasSurvey || e.props.isWorking || (await read($, IS_WAITING)) !== true) return next(e)
+    if (e.props.hasSurvey || e.props.isWorking) return next(e)
     const plan = await read($, PLAN)
-    if (!plan || (await $.session.turns()) < plan.prompts) return next(e)
+    if (!plan || (await $.session.turns()) !== plan.prompts) return next(e)
     const isOpen = (await read($, IS_OPEN)) === true
     const below = await next(e)
     const elements = $.ui.resolve(e)

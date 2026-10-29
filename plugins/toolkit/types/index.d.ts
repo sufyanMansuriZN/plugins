@@ -113,12 +113,10 @@ declare module 'claude-code' {
       wrapUpLast: { anchor: string | null; call: WrapUpCall } | null
       /** The tool_use_id of the one next step box the session draws: the newest call with a question; null once a typed prompt sets an unanswered one aside. */
       wrapUpCurrent: string | null
-      /** The task list drawn above the prompt, and how many prompts the transcript held when it was made; null when there is none. */
+      /** The task list drawn above the prompt, and how many prompts the transcript held when it last changed; null when there is none. */
       plan: { steps: PlanStep[]; prompts: number } | null
       /** Whether a long task list above the prompt shows every step; folded to five until "… +N more" is pressed. */
       planIsOpen: boolean
-      /** Whether the last turn ended with background work (a monitor, a shell) still running, which keeps the task list above the prompt until the next turn. */
-      planIsWaiting: boolean
       /** The sessions this one started, oldest first. */
       linked: LinkedSession[]
       /** Whether a start_session call is still starting its session, by the call's tool_use_id (a proposal's task id for a card's start). */

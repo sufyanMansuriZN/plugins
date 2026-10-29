@@ -20,6 +20,7 @@ import {
   parseLink,
   planHandOff,
   planStart,
+  replyAnchor,
   reportText,
   shortId,
   startCommand,
@@ -37,6 +38,7 @@ const LINKED = { plugin: 'toolkit', key: 'linked' } as const
 const PROPOSALS = { plugin: 'toolkit', key: 'proposals' } as const
 const LAUNCHING = { plugin: 'toolkit', key: 'launching' } as const
 const CARDS_AT = { plugin: 'toolkit', key: 'cardsAt' } as const
+const SESSIONS_AT = { plugin: 'toolkit', key: 'sessionsAt' } as const
 
 const POLL_MS = 4000
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000
@@ -411,19 +413,23 @@ function sessionLine($: EngineInterface, elements: Elements['terminal'], session
   const { Box, Text } = elements
   const stop = () => void $.process.run(['claude', 'stop', session.id]).then(() => tick($))
   const copy = () => void $.ui.copy({ text: `claude attach ${session.id}`, surface: 'terminal' })
+  // Keyed by the session's id, as the running sessions card draws several lines.
   return (
-    <Box flexDirection="row" flexWrap="wrap">
+    <Box key={session.id} flexDirection="row" flexWrap="wrap">
       <Text>{`${session.name} · ${session.state === 'gone' ? 'removed' : session.state}${session.branch ? ` · ${session.branch}` : ''}  `}</Text>
-      {link(elements, 'attach', `claude attach ${session.id}`, copy)}
-      {session.state === 'working' ? [<Text dimColor>{'  ·  '}</Text>, link(elements, 'stop', 'stop', stop, true)] : []}
+      {link(elements, `attach:${session.id}`, `claude attach ${session.id}`, copy)}
+      {session.state === 'working' ? [<Text dimColor>{'  ·  '}</Text>, link(elements, `stop:${session.id}`, 'stop', stop, true)] : []}
       {session.isMuted
         ? [<Text dimColor>{'  ·  no reports'}</Text>]
         : isAlive(session.state)
-          ? [<Text dimColor>{'  ·  '}</Text>, link(elements, 'mute', 'stop reports', () => void mute($, session.id), true)]
+          ? [<Text dimColor>{'  ·  '}</Text>, link(elements, `mute:${session.id}`, 'stop reports', () => void mute($, session.id), true)]
           : []}
     </Box>
   )
 }
+
+/** Whether a session's row moved into the running sessions card, so its call's row draws nothing. */
+const isInCard = async ($: EngineInterface, session: LinkedSession) => ((await read($, SESSIONS_AT))?.ids ?? []).includes(session.id)
 
 /** An own_initiative card: Start and Dismiss while open, then the session it started, or how it ended. */
 async function drawCard($: EngineInterface, elements: Elements['terminal'], taskId: string) {
@@ -432,7 +438,7 @@ async function drawCard($: EngineInterface, elements: Elements['terminal'], task
   if (!proposal) return <Box />
   // Only a started card reads the linked sessions, which the poll rewrites every few seconds.
   const session = proposal.status === 'started' ? ((await read($, LINKED)) ?? []).find(s => s.callId === taskId) : undefined
-  if (session) return frame(elements, 'New session', proposal.title, sessionLine($, elements, session))
+  if (session) return (await isInCard($, session)) ? <Box /> : frame(elements, 'New session', proposal.title, sessionLine($, elements, session))
   const start = () =>
     void (async () => {
       if (!proposal.brief) return
@@ -486,6 +492,23 @@ async function moveCards($: EngineInterface, since: number, answer: string) {
   for (const taskId of taskIds) await update($, { ...PROPOSALS, id: taskId }, was => (was ? { ...was, movedTo: uuid } : null))
 }
 
+/**
+ * Moves the rows of the sessions still running into one card under the turn's last reply text, so
+ * the card stays at the end of the transcript. With none running, each row goes back to its call.
+ */
+async function moveSessions($: EngineInterface, since: number, answer: string) {
+  const ids = ((await read($, LINKED)) ?? []).filter(s => isAlive(s.state)).map(s => s.id)
+  if (ids.length === 0) return $.state.set(SESSIONS_AT, null)
+  const anchor = await readTranscript($, jsonl => replyAnchor(jsonl, since, answer))
+  if (anchor === null || anchor === 'behind') return $.ui.log(`toolkit: the running sessions card stays where it was: ${anchor === null ? 'no reply text in the transcript' : 'the transcript did not catch up'}`, { to: 'debug' })
+  await $.state.set(SESSIONS_AT, { anchor: anchor.uuid, ids })
+}
+
+function drawSessions($: EngineInterface, elements: Elements['terminal'], sessions: LinkedSession[]) {
+  const { Box } = elements
+  return frame(elements, 'Running sessions', '', <Box flexDirection="column">{sessions.map(session => sessionLine($, elements, session))}</Box>)
+}
+
 export const register: Register = on => {
   // Desktop starts its own sessions, and a -p run has no one to answer a card.
   on('session.start', { surface: 'terminal', isInteractive: true }, async ($, e, next) => {
@@ -529,17 +552,23 @@ export const register: Register = on => {
     const result = await next(e)
     if (e.agentId === undefined) void reportBack($, e.reason, e.answer).catch(err => $.ui.log(`toolkit: could not send the report: ${String(err)}`, { to: 'debug' }))
     // An error or refusal may end on a row the transcript never draws, so its cards stay on their calls' rows.
-    if (e.agentId === undefined && proposedThisTurn > 0 && (e.reason === 'answer' || e.reason === 'aborted')) {
-      void moveCards($, startedAt, e.answer).catch(err => $.ui.log(`toolkit: could not move the suggested sessions under the reply: ${String(err)}`, { to: 'debug' }))
+    if (e.agentId === undefined && (e.reason === 'answer' || e.reason === 'aborted')) {
+      const hasProposed = proposedThisTurn > 0
+      void (async () => {
+        if (hasProposed) await moveCards($, startedAt, e.answer).catch(err => $.ui.log(`toolkit: could not move the suggested sessions under the reply: ${String(err)}`, { to: 'debug' }))
+        await moveSessions($, startedAt, e.answer).catch(err => $.ui.log(`toolkit: could not move the running sessions card under the reply: ${String(err)}`, { to: 'debug' }))
+      })()
     }
     return result
   })
 
-  // A turn's suggested sessions, under its last reply text, so they come after the whole reply.
+  // A turn's suggested sessions, then the running sessions card, under its last reply text, so they come after the whole reply.
   on('ui.render', { surface: 'terminal', component: 'AssistantMessage' }, async ($, e, next) => {
     if (e.props.isSummary) return next(e)
-    const taskIds = await read($, { ...CARDS_AT, id: e.requestId })
-    if (!taskIds?.length) return next(e)
+    const taskIds = (await read($, { ...CARDS_AT, id: e.requestId })) ?? []
+    const at = await read($, SESSIONS_AT)
+    const running = at?.anchor === e.requestId ? ((await read($, LINKED)) ?? []).filter(s => at.ids.includes(s.id)) : []
+    if (taskIds.length === 0 && running.length === 0) return next(e)
     const reply = await next(e)
     const elements = $.ui.resolve(e)
     const { Box } = elements
@@ -548,6 +577,7 @@ export const register: Register = on => {
       <Box flexDirection="column">
         {reply}
         {cards}
+        {running.length > 0 ? drawSessions($, elements, running) : []}
       </Box>
     )
   })
@@ -658,7 +688,7 @@ export const register: Register = on => {
     const title = proposal?.title ?? (typeof input.title === 'string' ? input.title : 'session')
 
     const heading = e.props.tool === HAND_OFF_TOOL ? 'Handed off' : 'New session'
-    if (session) return frame(elements, heading, title, sessionLine($, elements, session))
+    if (session) return (await isInCard($, session)) ? <Box /> : frame(elements, heading, title, sessionLine($, elements, session))
     if (proposal?.initiation === 'offer') {
       const said = { open: 'New session or do it here?', new_session: 'You chose: New session', here: 'You chose: Do it here', started: `Started as ${proposal.session}`, dismissed: 'Closed' }
       return frame(elements, 'New task', title, <Text dimColor>{said[proposal.status]}</Text>)

@@ -127,6 +127,8 @@ declare module 'claude-code' {
       proposals: StateFamily<Proposal | null>
       /** The own_initiative cards drawn under a reply block, by its message uuid. */
       cardsAt: StateFamily<string[] | null>
+      /** The reply block the running sessions card is drawn under, by its message uuid, and the ids of the sessions it shows; null when none runs. */
+      sessionsAt: { anchor: string; ids: string[] } | null
     }
   }
 }

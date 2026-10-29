@@ -257,7 +257,7 @@ test('stop reports leaves the session working and cuts its link, from the row or
     requestId: CALL,
     props: { tool_use_id: CALL, tool: START, input, isRunning: false, isErrored: false, isInterrupted: false, output: 'ok' },
   })
-  await ui.press({ key: 'mute' })
+  await ui.press({ key: 'mute:abcdef12' })
   await settle()
   await ui.unmount()
   expect(host.files.get(link)).toBe('')
@@ -268,6 +268,44 @@ test('stop reports leaves the session working and cuts its link, from the row or
   expect((await $.tool.call({ tool: 'mcp__toolkit__stop_reports', name: 'nope' })).deny).toContain('No session "nope"')
   const byName = await $.tool.call({ tool: 'mcp__toolkit__stop_reports', name: 'check-the-fix' })
   expect(byName.result).toContain('sends no more reports')
+})
+
+test('a running session moves into one card under each turn\'s last reply text, and back to its row once none runs', async ($, on) => {
+  const LATER = 'Both are fixed.'
+  const shown = async (requestId: string, text: string) => {
+    const ui = await replyBlock($, requestId, text)
+    const found = await words(ui)
+    await ui.unmount()
+    return found
+  }
+  let transcript = TRANSCRIPT
+  const host = engine(on, () => transcript)
+  const input = { ...PROPOSE, initiation: 'user_asked', use_worktree: false }
+  await $.turn.start({ text: 'Check it in a session.', turnId: 't1' })
+  expect((await $.tool.call({ tool: START, tool_use_id: CALL, ...input })).result).toContain('abcdef12')
+  await $.turn.complete({ reason: 'answer', answer: REPLY, durationMs: 60_000, isAborted: false, turnId: 't1' })
+  await settle()
+  expect(host.logs).toEqual([])
+  expect(await rowWords($, START, input, CALL)).toEqual([])
+  const card = await shown('a3', REPLY)
+  expect(card).toContain('Running sessions')
+  expect(card).toContain('claude attach abcdef12')
+
+  // A later turn moves the card under its own reply, so it stays at the end.
+  transcript = `${TRANSCRIPT}\n${row({ type: 'user', uuid: 'u2', timestamp: at(4), message: { content: 'And the other one?' } })}\n${row({ type: 'assistant', uuid: 'a4', timestamp: at(5), message: { content: [{ type: 'text', text: LATER }] } })}`
+  await $.turn.start({ text: 'And the other one?', turnId: 't2' })
+  await $.turn.complete({ reason: 'answer', answer: LATER, durationMs: 1000, isAborted: false, turnId: 't2' })
+  await settle()
+  expect(await shown('a3', REPLY)).toEqual(['engine: AssistantMessage'])
+  expect(await shown('a4', LATER)).toContain('claude attach abcdef12')
+
+  // Once no session runs, the card goes and the session's row is back on its call: `claude agents` no longer lists it.
+  await $.turn.start({ text: 'Is it still there?', turnId: 't3' })
+  expect((await $.tool.call({ tool: 'mcp__toolkit__list_sessions', linked: true })).result).toContain('gone')
+  await $.turn.complete({ reason: 'answer', answer: LATER, durationMs: 1000, isAborted: false, turnId: 't3' })
+  await settle()
+  expect(await shown('a4', LATER)).toEqual(['engine: AssistantMessage'])
+  expect(await rowWords($, START, input, CALL)).toContain('claude attach abcdef12')
 })
 
 test('a switch starts the session with no link back and opens it in this terminal when the turn ends', async ($, on) => {

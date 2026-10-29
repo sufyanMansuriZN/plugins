@@ -110,6 +110,7 @@ Gives Claude the Claude desktop app's way to hand work to a separate session: it
 
   In the ctrl+O view, a moved card shows under the reply, and the call's full row shows too.
 - **The row.** While `claude --bg` starts the session, the call's row says `starting…`. Then it shows the session's name, its state (`starting`, `working`, `idle`, `done`, `stopped`, `failed` or `removed`) and its branch. Under it are **claude attach &lt;id&gt;**, which copies that command, **stop** while it works, and **stop reports** while it runs.
+- **The running sessions card.** When a turn ends, the rows of the sessions that still run (`starting`, `working` or `idle`) move into one **Running sessions** card under that turn's last reply text. Each later turn moves the card under its own reply, so the card stays at the end of the transcript, before the next step box. A session that ends stays in the card with its new state until the next turn ends. Then its row goes back to its call. When no session runs, there is no card. The card stays where it was when the turn ended in an error, or when the toolkit cannot find the reply text in the transcript. While a turn runs, the card stays under the previous reply, and a session started in that turn shows on its call's row.
 - **The session reports back itself.** Each time a session Claude started ends a turn, it sends this session a message, as any other session's message arrives (`Message from @<name>`). The message holds the first 400 characters of its report: its next step box recap, then its last message. Claude checks the result before it tells you the work is done.
   - How it finds this session: right after `claude --bg` prints the new session's short id, the toolkit writes `~/.claude/toolkit/links/<short id>.json` with this session's id. The new session's toolkit reads it when a turn ends. The short id is the first 8 characters of the session id.
   - Reports go only to a session that is still open. Before it sends one, the session looks for this session's id in `claude agents --json`. If this session is closed, the report is dropped. If you open it again, reports come back.
@@ -136,7 +137,7 @@ Left out, because nothing behind them exists in the terminal yet:
 - Clickable session links.
 - `list_start_targets`.
 
-The linked sessions and the cards live in the session's plugin state, so a restart of Claude Code forgets them. The sessions themselves keep running.
+The running sessions card keeps its reply and its sessions in the state key `sessionsAt`. The linked sessions and the cards live in the session's plugin state, so a restart of Claude Code forgets them. The sessions themselves keep running.
 
 It runs in an interactive terminal session only. The Claude desktop app has its own sessions, and a `claude -p` run has no one to answer a card.
 

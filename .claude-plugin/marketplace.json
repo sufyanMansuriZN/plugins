@@ -7,7 +7,7 @@
     {
       "name": "session-bar",
       "source": "./plugins/session-bar",
-      "description": "Repo, branch and usage windows on the status line; model and context above the prompt, following the transcript in view"
+      "description": "Repo, branch, model, context and usage windows on the status line; a subagent's model and context above the prompt while its transcript is open"
     },
     {
       "name": "plain-focus",

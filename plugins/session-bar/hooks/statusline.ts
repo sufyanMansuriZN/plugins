@@ -1,5 +1,5 @@
 import type { Git } from '../types'
-import { type BarInput, type Ink, type Run, type Segment, BADGE, GAP, SEP, segments, toWindows, width } from './bar'
+import { type BarInput, type Ctx, type Ink, type Run, type Segment, BADGE, GAP, SEP, modelLabel, segments, toWindows, width } from './bar'
 import type { Limit } from './usage'
 
 // Claude Code draws the status line two cells in and keeps two free at its end; a longer row is cut with …
@@ -9,6 +9,8 @@ type Rate = { used_percentage?: unknown; resets_at?: unknown }
 // the part of Claude Code's statusLine JSON the row reads
 export type StatusJson = {
   workspace?: { project_dir?: unknown }
+  model?: { id?: unknown }
+  context_window?: { total_input_tokens?: unknown; context_window_size?: unknown }
   rate_limits?: { five_hour?: Rate; seven_day?: Rate }
   prompt_cache?: { warm?: unknown; expires_at?: unknown } | null
 }
@@ -28,23 +30,35 @@ const replyLimits = (json: StatusJson): Limit[] =>
 const cacheEnd = (json: StatusJson): number | null =>
   json.prompt_cache?.warm === true ? fromSeconds(json.prompt_cache.expires_at) : null
 
+// the main conversation's context; 0 tokens means no reply yet, which shows nothing
+const mainCtx = (json: StatusJson): Ctx | null => {
+  const { total_input_tokens: tokens, context_window_size: window } = json.context_window ?? {}
+  return finite(tokens) && tokens > 0 && finite(window) && window > 0 ? { kind: 'window', tokens, window } : null
+}
+
 // what the script reads beside the JSON: git in the session's root, and session-bar's shared reading
 export type Local = { where: string | null; git: Git | null; shared: readonly Limit[]; now: number }
 
-// The status line shows what holds in every view: the repo, its branch, the usage windows and the cache.
-// The model and the context follow the transcript in view, which the statusLine JSON never names, so the band draws them.
-export const statusInput = (json: StatusJson, { where, git, shared, now }: Local): BarInput => ({
-  where, git, agent: null, model: null, ctx: null, now,
-  windows: toWindows([...replyLimits(json), ...shared.filter(l => l.kind === 'model')]),
-  cache: cacheEnd(json),
-})
+// The statusLine JSON always describes the main conversation, so its model and context are the main ones,
+// whatever transcript is in view; with a subagent's open, the band draws that subagent's.
+export const statusInput = (json: StatusJson, { where, git, shared, now }: Local): BarInput => {
+  const ctx = mainCtx(json)
+  const id = json.model?.id
+  return {
+    where, git, agent: null, now, ctx,
+    model: typeof id === 'string' && id ? modelLabel(id, ctx?.kind === 'window' ? ctx.window : undefined) : null,
+    windows: toWindows([...replyLimits(json), ...shared.filter(l => l.kind === 'model')]),
+    cache: cacheEnd(json),
+  }
+}
 
 // the band's terminal look in SGR: a badge is bold black on its fixed color, the branch has robbyrussell's
-// named colors, a dim run is dim; plain text gets no escape, so it keeps the color Claude Code gives the line
+// named colors. Claude Code already draws the line's text grey, and dim on that grey fades too far to read,
+// so a dim run gets no escape, the same as plain text.
 const INK: Record<Ink, string> = { paren: '1;34', branch: '31' }
 const rgb = (hex: string) => [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16)).join(';')
 const sgr = (r: Run): string | null =>
-  r.badge ? `1;38;2;0;0;0;48;2;${rgb(BADGE[r.tone])}` : r.ink ? INK[r.ink] : r.tone === 'dim' ? '2' : null
+  r.badge ? `1;38;2;0;0;0;48;2;${rgb(BADGE[r.tone])}` : r.ink ? INK[r.ink] : null
 const paint = (runs: Run[]) => runs.map(r => {
   const code = sgr(r)
   return code ? `\x1b[${code}m${r.text}\x1b[0m` : r.text

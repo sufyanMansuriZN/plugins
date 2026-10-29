@@ -1,1 +1,1 @@
-{ "name": "session-bar", "version": "4.0.0", "description": "Repo, branch and usage windows on the status line; model and context above the prompt, following the transcript in view", "types": "./types/index.d.ts" }
+{ "name": "session-bar", "version": "4.0.0", "description": "Repo, branch, model, context and usage windows on the status line; a subagent's model and context above the prompt while its transcript is open", "types": "./types/index.d.ts" }

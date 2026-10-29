@@ -1,25 +1,25 @@
 # session-bar
 
-Repo, branch and usage windows on the status line; model and context above the prompt, following the transcript in view.
+Repo, branch, model, context and usage windows on the status line; a subagent's model and context above the prompt while its transcript is open.
 
 session-bar draws in two places in the CLI:
 
-- **The status line**, below the prompt, shows what is the same in every view: the repo, the branch, the usage windows and the prompt cache.
-- **The band above the prompt** shows what follows the transcript in view: the model and the context.
+- **The status line**, below the prompt, shows the main conversation: the repo, the branch, the model, the prompt cache, the context and the usage windows.
+- **The band above the prompt** draws only while a subagent's transcript is open. It shows that subagent's type, model and context.
 
 ```
-Opus 5.5 1M                                                                    ctx ╾╂──── 60K
 ❯
-  plugins (main)   5h ━━━╾╂─ 66%  behind  46m · 7d ━━╉─── 43% 3d21h · Fable ━╉──── 19%  behind  5d1h · cache 52m
+  plugins (main) · Opus 5.5 1M   cache 52m · ctx ╾╂──── 60K · 5h ━━━╾╂─ 66%  behind  46m · 7d ━━╉─── 43% 3d21h · Fable ━╉──── 19%  behind  5d1h
 ```
 
-When you open a subagent's transcript from the tasks list, the band shows that subagent instead of the main conversation. The status line stays the same:
+When you open a subagent's transcript from the tasks list, the band shows that subagent above the prompt. The status line stays the same:
 
 ```
 Explore · Haiku 4.5                                                                ctx 42K
+❯
 ```
 
-The two are split this way because Claude Code's status line input always describes the main conversation. With a subagent's transcript open, a status line would name the main model and context. The band knows which transcript is in view.
+The band is there because Claude Code's status line input always describes the main conversation. With a subagent's transcript open, the status line still names the main model and context. The band knows which transcript is in view.
 
 In the Claude desktop app, the band draws nothing and does no work, as the app shows the model, the context and the usage itself. It knows the app by `CLAUDE_CODE_ENTRYPOINT=claude-desktop`. The desktop app runs no status line.
 
@@ -39,38 +39,42 @@ In the Claude desktop app, the band draws nothing and does no work, as the app s
      "statusLine": {
        "type": "command",
        "command": "bun <repo>/plugins/session-bar/statusline.ts",
-       "refreshInterval": 30
+       "refreshInterval": 2
      }
    }
    ```
 
 4. Start a new session.
 
-The status line is a setting of your own: installing the plugin does not add it. Without steps 2 and 3, you get the band only, with no repo, branch or usage windows.
+The status line is a setting of your own: installing the plugin does not add it. Without steps 2 and 3, you get only the band for subagents. The main conversation then shows nothing.
 
 ### Update from 3.x
 
-3.x drew everything in the band. 4.0.0 moves the repo, the branch and the usage windows to the status line. Do steps 2 to 4 above, or you lose them. If you already have a `statusLine` setting, the new one replaces it.
+3.x drew everything in the band. 4.0.0 moves the main conversation to the status line. Do steps 2 to 4 above, or you lose it. If you already have a `statusLine` setting, the new one replaces it.
 
 ## The status line
 
-Each part is left out when it has no value. The left zone has the repo and the branch. The right zone has the usage windows and the cache, at the right end of the line.
+Each part is left out when it has no value. The left zone has the repo, the branch and the model. The right zone has the cache, the context and the usage windows, in that order, at the right end of the line.
 
 - **repo**: the name of the repo's folder. In a git worktree, it is the name of the main repo, not of the worktree folder. Outside a git repo, it is the name of the session's directory. The session's directory is where the session started, or where `/cd` moved it. A `cd` that the agent runs in its shell does not change it.
 - **branch**: the branch, or a 7-character sha when detached. It is in parentheses right after the repo name: `plugins (main)`. Without a repo name, it shows with no parentheses. Left out outside a git repo.
+- **model**: the main conversation's model, such as `Opus 5.5`, with its context window size (`1M`, `200K`).
+- **cache**: while the prompt cache is warm, the time until it goes cold: `cache 52m`. It comes first in the right zone.
+- **ctx**: a meter of the main conversation's context window and the tokens in it (`60K`). From the tick, the count has a vermillion background. It shows after the first reply. See [Context meter](#context-meter).
 - **5h** and **7d**: the usage windows, as this session's last reply reported them. They are for the whole account, but they change only when this session gets a reply. While this session is idle, use from your other sessions does not show. When a window resets while this session is idle, it is left out until the next reply.
 - **Fable**, and one window per model with its own weekly limit: from session-bar's own reading of the account's usage, which each running session takes every 5 minutes. Claude Code does not put these windows in the status line input. A reading older than 15 minutes is left out.
-- **cache**: while the prompt cache is warm, the time until it goes cold: `cache 52m`.
 
 Each usage window shows a meter, the percent used, a word for the pace when you are off pace, and the time to the reset (`2h10m`).
 
-Claude Code runs the script after each reply, when the model or the mode changes, every 30 seconds, and at each window's reset and the cache's expiry. Each run reads git again.
+Claude Code runs the script after each reply, when the model or the mode changes, every `refreshInterval` seconds, and at each window's reset and the cache's expiry. Each run reads git again. A resize of the terminal does not run it, so the line fits a new width only at the next run. With `refreshInterval` at 2, that is within 2 seconds. A run takes about 40 ms of CPU, so 2 seconds costs about 2% of one core per session.
 
 ## The band
 
-- **model**: the model's name, such as `Opus 5.5`. In the main conversation, the context window size follows it (`1M`, `200K`). For a subagent, it is the model that subagent's requests use. It shows from the subagent's first request.
-- **agent**: only while a subagent's transcript is open. Its type, such as `Explore`, in dim text.
-- **ctx**: in the main conversation, a meter of the context window and the tokens in the context (`60K`). From the tick, the count has a vermillion background. It shows after the first response. See [Context meter](#context-meter). For a subagent, the input tokens of its last request (`ctx 42K`), with no meter.
+The band draws a row only while a subagent's transcript is open. In the main view it draws nothing.
+
+- **agent**: the subagent's type, such as `Explore`, in dim text.
+- **model**: the model that the subagent's requests use. It shows from the subagent's first request.
+- **ctx**: the input tokens of the subagent's last request (`ctx 42K`), with no meter.
 
 While a survey shows above the prompt, the band's row is hidden.
 
@@ -102,7 +106,7 @@ When half of the window has gone, the tick is after cell 3:
 
 ### Context meter
 
-The ctx meter in the band has the same 5 cells. A full meter is the whole context window of the model, so on a 1M model each cell is 200K tokens.
+The ctx meter on the status line has the same 5 cells. A full meter is the whole context window of the model, so on a 1M model each cell is 200K tokens.
 
 The tick is fixed. It marks the context size to stay under:
 
@@ -172,22 +176,22 @@ When the status line is too narrow, the parts go in this order:
 4. The branch is cut more, then it goes. A cut branch stays in its parentheses: `plugins (f…)`. When the branch goes, the parentheses go too.
 5. The repo name is cut.
 
-A cut part ends with `…`. The usage windows and the cache are never cut. The script fits the line in the terminal's width less the 4 cells Claude Code keeps free, so Claude Code does not cut it.
+The ctx meter goes with the window meters at step 2: `ctx 60K`. A cut part ends with `…`. The model, the cache, the context and the usage windows are never cut. The script fits the line in the terminal's width less the 4 cells Claude Code keeps free, so Claude Code does not cut it.
 
-When the band is too narrow, the ctx meter goes: `ctx 60K`. The agent and the model are never cut.
+In the band, the agent and the model are never cut.
 
 ## How it works
 
 These rules are for whoever changes the plugin. The tests in `hooks/` hold the exact rows for each case.
 
-- **Two drawers, one layout.** The band and the status line both lay out their row with `segments()` in `hooks/bar.ts`. The band passes the agent, the model and the context. The status line passes the repo, git, the windows and the cache.
-- **The band.** One hooks module draws the row in the `AbovePrompt` band, on the terminal and desktop surfaces, fitted to the band's `bodyColumns`. A drawing writes no state. A `session.measure` bumps a `tick` state value, so new context figures show at once.
-- **The status line.** `statusline.ts`, run by bun, reads Claude Code's statusLine JSON on stdin and prints one line with SGR escapes: a badge is `1;38;2;0;0;0;48;2;R;G;B`, a dim run `2`, the branch `31`, the parentheses `1;34`, plain text none. It fits the line in `COLUMNS` less 4. Claude Code trims a line's leading spaces, so a right zone with no left zone starts the line. Input that is not JSON prints nothing.
+- **Two drawers, one layout.** The band and the status line both lay out their row with `segments()` in `hooks/bar.ts`. The band passes a subagent's type, model and tokens. The status line passes the repo, git, the main model and context (`model.id`, `context_window`), the windows and the cache. The cache comes first in the right zone.
+- **The band.** One hooks module draws the row in the `AbovePrompt` band, on the terminal and desktop surfaces, fitted to the band's `bodyColumns`, only when `e.props.view.agentId` is set. In the main view it passes the event on. A drawing writes no state.
+- **The status line.** `statusline.ts`, run by bun, reads Claude Code's statusLine JSON on stdin and prints one line with SGR escapes: a badge is `1;38;2;0;0;0;48;2;R;G;B`, the branch `31`, the parentheses `1;34`, and plain and dim text none. Claude Code draws the line's text grey already, and dim on that grey is too faint to read. It fits the line in `COLUMNS` less 4. Claude Code trims a line's leading spaces, so a right zone with no left zone starts the line. Input that is not JSON prints nothing.
 - **Desktop app.** When `CLAUDE_CODE_ENTRYPOINT` is `claude-desktop`, every hook passes the event on untouched: no timer, no fetch, no file, no row. Any other entrypoint, `-p` included, runs as below.
 - **Git.** The script runs `git --no-optional-locks -C <workspace.project_dir> status --porcelain=v2 --branch` and `git worktree list --porcelain`, each stopped after 2 seconds. A slow or failed run leaves out its part. A detached HEAD with no commit reads `HEAD`. The repo name is the last part of the path of the first tree that the worktree list names, else of `project_dir`.
 - **Usage.** The 5h and 7d windows come from the statusLine JSON's `rate_limits`. The model windows come from one call to the account's usage endpoint, made by the band's module with `$.http.fetch` and the handle from `$.session.authorize()`, so the plugin never sees the credential. It runs at session start, at each turn's end, and every 5 minutes. Each answer with windows is written as `{ at, limits }` to `session-bar/limits.json` under `$XDG_CACHE_HOME` when that is an absolute path, else under `~/.cache`. A failed call writes nothing. The script reads that file and keeps its model windows while `at` is at most 15 minutes old.
 - **Subagents.** The band reads `e.props.view`. The plugin learns each subagent's model and input tokens (uncached, cache read and cache written) from `turn.step` events that carry `agentId`. It writes state only when a reading changes. Main-loop steps write nothing. The type comes from `$.agent.list()`.
 - **Model label.** `claude-<name>-<major>-<minor>`, with an optional `-<8-digit date>` and `[1m]`, reads `<Name> <major>.<minor>`. An id of any other shape shows as given.
-- **Inputs are parsed where they enter.** A window with a percent that is not a finite number is left out. A reset that is not a number counts as no reset time. A cache shows only when `prompt_cache.warm` is `true` and `expires_at` is a number. A context with no finite `tokens`, or a `window` that is not above 0, is left out. A shared reading of any other shape gives no windows.
+- **Inputs are parsed where they enter.** A window with a percent that is not a finite number is left out. A reset that is not a number counts as no reset time. A cache shows only when `prompt_cache.warm` is `true` and `expires_at` is a number. A context whose `total_input_tokens` is not above 0 (no reply yet), or whose `context_window_size` is not above 0, is left out, and the model label then has no size. A shared reading of any other shape gives no windows.
 - **Pace.** `mark` = the share of the window gone × 100, and `delta` = percent − mark. 100% or more is used up. Within 5 points is on pace. Ahead by more than 20 is far ahead. The tick stands at cell boundary round(mark / 20). The meter has halves = round(percent / 10), capped at 10.
 - **Colors.** Orange `#E69F00`, vermillion `#D55E00`, sky blue `#56B4E9`, with bold `#000000` text, fixed in every theme.

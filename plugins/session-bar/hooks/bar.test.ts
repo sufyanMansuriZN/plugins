@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { type BarInput, type Segment, type Window, GAP, SEP, folderName, modelLabel, parseContext, parseGit, segments, stepTokens, toWindows } from './bar'
+import { type BarInput, type Segment, type Window, GAP, SEP, folderName, modelLabel, parseGit, segments, stepTokens, toWindows } from './bar'
 
 const NOW = 1_792_162_404_000
 const MIN = 60_000
@@ -187,9 +187,9 @@ describe('segments', () => {
     expect(right(five(88, NOW - 1))).toBe(CTX_ROW)
   })
 
-  test('a warm prompt cache comes last, with its time to cold; a cold or unknown one is left out', () => {
-    expect(right({ cache: NOW + 52 * MIN })).toBe(`${GAUGES} · cache 52m`)
-    expect(right({ cache: NOW + 30_000 })).toBe(`${GAUGES} · cache <1m`)
+  test('a warm prompt cache comes first, with its time to cold; a cold or unknown one is left out', () => {
+    expect(right({ cache: NOW + 52 * MIN })).toBe(`cache 52m · ${GAUGES}`)
+    expect(right({ cache: NOW + 30_000 })).toBe(`cache <1m · ${GAUGES}`)
     expect(right({ cache: NOW })).toBe(GAUGES)
     expect(right({ cache: null })).toBe(GAUGES)
     expect([tone({ cache: NOW + 52 * MIN }, 'cache'), tone({ cache: NOW + 52 * MIN }, '52m')]).toEqual(['dim', 'plain'])
@@ -197,8 +197,8 @@ describe('segments', () => {
 
   test('a narrow row keeps the cache countdown at every step', () => {
     const cache = NOW + 52 * MIN
-    expect(zones({ cache }, fitted(LEFT, `${WORDS} · cache 52m`))).toEqual([LEFT, `${WORDS} · cache 52m`])
-    expect(zones({ cache }, fitted(LEFT, `${BARE} · cache 52m`))).toEqual([LEFT, `${BARE} · cache 52m`])
+    expect(zones({ cache }, fitted(LEFT, `cache 52m · ${WORDS}`))).toEqual([LEFT, `cache 52m · ${WORDS}`])
+    expect(zones({ cache }, fitted(LEFT, `cache 52m · ${BARE}`))).toEqual([LEFT, `cache 52m · ${BARE}`])
   })
 
   test('the context meter fills over the whole window, with its tick at 250K on a 1M window', () => {
@@ -342,13 +342,6 @@ describe('boundary parsing', () => {
 
   test('a limit whose percent is not a number is left out', () => {
     expect(toWindows([{ kind: 'five_hour', percent: NaN, resetsAt: null }])).toEqual([])
-  })
-
-  test('the context needs its tokens and a window above 0', () => {
-    expect(parseContext({ tokens: 60_000, window: 1_000_000, percent: 6 })).toEqual(CTX)
-    expect(parseContext({ window: 1_000_000 })).toBe(null)
-    expect(parseContext({ tokens: NaN, window: 1_000_000 })).toBe(null)
-    expect(parseContext({ tokens: 60_000, window: 0 })).toBe(null)
   })
 
   test('step tokens are the input sides summed', () => {

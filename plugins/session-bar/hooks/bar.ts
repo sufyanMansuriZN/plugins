@@ -1,4 +1,4 @@
-import type { SessionContextUsage, TurnUsage } from 'claude-code'
+import type { TurnUsage } from 'claude-code'
 
 import type { Git } from '../types'
 import type { Limit } from './usage'
@@ -53,14 +53,6 @@ export const toWindows = (limits: readonly Limit[]): Window[] =>
     .map(l =>
       l.kind === 'five_hour' ? { label: '5h', percent: l.percent, resetsAt: l.resetsAt, length: 5 * HOUR }
       : { label: l.kind === 'seven_day' ? '7d' : (l.name ?? 'Model'), percent: l.percent, resetsAt: l.resetsAt, length: WEEK })
-
-export const parseContext = (context: SessionContextUsage): Ctx | null =>
-  finite(context.tokens) && finite(context.window) && context.window > 0
-    ? { kind: 'window', tokens: context.tokens, window: context.window }
-    : null
-
-export const parseWindowSize = (context: SessionContextUsage): number | undefined =>
-  finite(context.window) && context.window > 0 ? context.window : undefined
 
 export const stepTokens = (usage: TurnUsage): number | null => {
   const parts = [usage.input_tokens, usage.cache_read_input_tokens, usage.cache_creation_input_tokens]
@@ -258,12 +250,13 @@ const shed = (names: Name[], key: Key, room: number): Name[] => {
 
 const cacheSegment = (endsAt: number, now: number): Segment => [{ text: 'cache ', tone: 'dim' }, { text: countdown(endsAt - now), tone: 'plain' }]
 
+// the cache countdown first: it runs out soonest, and a cold cache costs the next reply most
 const gaugesAt = (input: BarInput, detail: Detail): Segment[] => [
+  ...(input.cache && input.cache > input.now ? [cacheSegment(input.cache, input.now)] : []),
   ...(input.ctx ? [ctxSegment(input.ctx, detail)] : []),
   ...input.windows
     .filter(w => w.resetsAt === null || w.resetsAt > input.now)
     .map(w => windowSegment(w, input.now, detail)),
-  ...(input.cache && input.cache > input.now ? [cacheSegment(input.cache, input.now)] : []),
 ]
 
 export const segments = (input: BarInput, columns: number): Zones => {

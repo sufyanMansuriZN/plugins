@@ -1,12 +1,11 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register, SessionUsage } from 'claude-code'
+import type { EngineInterface, Register } from 'claude-code'
 
 import type { AgentReading } from '../types'
-import { type BarInput, type Run, type Segment, BADGE, GAP, SEP, modelLabel, parseContext, parseWindowSize, segments, stepTokens } from './bar'
+import { type BarInput, type Run, type Segment, BADGE, GAP, SEP, modelLabel, segments, stepTokens } from './bar'
 import { REFRESH_EVERY, fetchLimits, sharedPath } from './usage'
 
 const agents = atom({ plugin: 'session-bar', key: 'agents' } as const, {} as Record<string, AgentReading>)
-const tick = atom({ plugin: 'session-bar', key: 'tick' } as const, 0)
 
 // the Desktop app shows the repo, model, context and usage itself, so there the bar does nothing
 let isDesktop: boolean | undefined
@@ -52,15 +51,8 @@ const record = async ($: EngineInterface, id: string, change: (was: AgentReading
   await update($, agents, all => ({ ...all, [id]: reading }))
 }
 
-type View = Pick<BarInput, 'agent' | 'model' | 'ctx'>
-
-const mainView = async ($: EngineInterface, usage: SessionUsage): Promise<View> => {
-  const id = await $.session.model()
-  return { agent: null, model: id ? modelLabel(id, parseWindowSize(usage.context)) : null, ctx: parseContext(usage.context) }
-}
-
 // the main loop's model and context say nothing about a subagent, so before its first step both are left out
-const agentView = async ($: EngineInterface, agentId: string): Promise<View> => {
+const agentView = async ($: EngineInterface, agentId: string): Promise<Pick<BarInput, 'agent' | 'model' | 'ctx'>> => {
   const [all, list] = await Promise.all([read($, agents), $.agent.list()])
   const info = list.find(a => a.id === agentId)
   const reading = all[agentId]
@@ -71,8 +63,8 @@ const agentView = async ($: EngineInterface, agentId: string): Promise<View> => 
   }
 }
 
-// The band draws only what follows the transcript in view: the agent, the model and the context.
-// The status line script draws the rest, which is the same in every view.
+// The status line script draws the main conversation. The band draws a subagent's type, model and context
+// while its transcript is in view, and shares the usage reading the script has no credential to fetch.
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     if (await inDesktop($)) return next(e)
@@ -90,13 +82,6 @@ export const register: Register = on => {
     return done
   })
 
-  // a render reading $.session.usage() is not subscribed to it; the tick redraws the band with the new figures
-  on('session.measure', async ($, e, next) => {
-    if (await inDesktop($)) return next(e)
-    await update($, tick, n => n + 1)
-    return next(e)
-  })
-
   // $.agent.list() names no model, so each subagent's is kept from its own requests
   on('turn.step', async function* ($, e, next) {
     const id = e.agentId
@@ -108,12 +93,12 @@ export const register: Register = on => {
     return result
   })
 
+  // the status line draws the main conversation, so the band draws only with a subagent's transcript in view
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    if (e.props.hasSurvey || (await inDesktop($))) return next(e)
-    const [now, usage] = await Promise.all([$.clock.now(), $.session.usage(), read($, tick)])
     const agentId = e.props.view?.agentId
-    const shown = agentId ? await agentView($, agentId) : await mainView($, usage)
-    const { left, right } = segments({ where: null, git: null, windows: [], now, ...shown }, e.props.bodyColumns)
+    if (e.props.hasSurvey || !agentId || (await inDesktop($))) return next(e)
+    const shown = await agentView($, agentId)
+    const { left, right } = segments({ where: null, git: null, windows: [], now: await $.clock.now(), ...shown }, e.props.bodyColumns)
     const { Box, Text } = $.ui.resolve(e)
     const zone = (segs: Segment[]) => segs
       .flatMap((seg, i): Run[] => (i ? [{ text: SEP, tone: 'dim' }, ...seg] : seg))

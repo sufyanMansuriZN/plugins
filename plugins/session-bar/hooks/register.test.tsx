@@ -18,9 +18,6 @@ const READING = { at: NOW, limits: [
   { kind: 'model', name: 'Fable', percent: 19, resetsAt: NOW + 7200 * MIN },
 ] }
 const SHARED = '/home/me/.cache/session-bar/limits.json'
-// 60K of a 1M window: half a cell used, and the tick for 250K after cell 1
-const CTX = 'ctx ╾╂──── 60K'
-const context = (tokens: number, window: number): SessionUsage => ({ ...USAGE, context: { tokens, window, percent: Math.round((tokens / window) * 100) } })
 const SURFACES = ['terminal', 'desktop'] as const
 type Surface = (typeof SURFACES)[number]
 const cells = (s: string) => [...s].length
@@ -78,61 +75,34 @@ const zonesOn = async ($: Engine, surface: Surface, agentId?: string, bodyColumn
   return { left: left?.text, right: right?.text, gap: right?.props.marginLeft }
 }
 
-test('main view: only the main model on the left and the context on the right; the repo, branch and usage windows are the status line\'s', async ($, on) => {
+const NONE = { left: undefined, right: undefined, gap: undefined }
+
+test('the main view draws no row: the status line shows the main conversation', async ($, on) => {
   await engine($, on)
-  for (const surface of SURFACES) {
-    const { left, right } = await zonesOn($, surface)
-    expect([left, right], surface).toEqual(['Opus 5.5 1M', CTX])
-  }
+  for (const surface of SURFACES) expect(await zonesOn($, surface), surface).toEqual(NONE)
 })
 
-test('the Desktop app draws no row, and fetches and writes nothing', async ($, on) => {
+test('the Desktop app draws no row, even for a subagent, and fetches and writes nothing', async ($, on) => {
   const { writes } = await engine($, on, { env: { HOME: '/home/me', CLAUDE_CODE_ENTRYPOINT: 'claude-desktop' } })
-  for (const surface of SURFACES) expect(await zonesOn($, surface), surface).toEqual({ left: undefined, right: undefined, gap: undefined })
+  await step($, 'a1', 'claude-haiku-4-5-20251001')
+  for (const surface of SURFACES) expect(await zonesOn($, surface, 'a1'), surface).toEqual(NONE)
   expect(writes).toEqual([])
 })
 
-test('the CLI entrypoint draws the row', async ($, on) => {
+test('the CLI entrypoint draws a subagent\'s row', async ($, on) => {
   await engine($, on, { env: { HOME: '/home/me', CLAUDE_CODE_ENTRYPOINT: 'cli' } })
-  expect((await zonesOn($, 'terminal')).left).toBe('Opus 5.5 1M')
+  await step($, 'a1', 'claude-haiku-4-5-20251001')
+  expect((await zonesOn($, 'terminal', 'a1')).left).toBe('Explore · Haiku 4.5')
 })
 
-test('a 200K window: the context meter fills over 200K, its tick for 160K after cell 4', async ($, on) => {
-  await engine($, on, { usage: context(120_000, 200_000) })
-  for (const surface of SURFACES) {
-    const { left, right } = await zonesOn($, surface)
-    expect([left, right], surface).toEqual(['Opus 5.5 200K', 'ctx ━━━─╂─ 120K'])
-  }
-})
-
-for (const [tokens, window, shown, badge] of [
-  [249_000, 1_000_000, 'ctx ━╉──── 249K', null], [250_000, 1_000_000, 'ctx ━╋╾───  250K ', ' 250K '],
-  [300_000, 1_000_000, 'ctx ━╋╾───  300K ', ' 300K '],
-  [159_000, 200_000, 'ctx ━━━━╉─ 159K', null], [160_000, 200_000, 'ctx ━━━━╉─  160K ', ' 160K '],
-  [170_000, 200_000, 'ctx ━━━━╋╾  170K ', ' 170K '],
-] as const) {
-  test(`${tokens / 1000}K of ${window / 1000}K: ${badge ? 'a vermillion badge from the tick' : 'plain below the tick'}`, async ($, on) => {
-    await engine($, on, { usage: context(tokens, window) })
-    for (const surface of SURFACES) {
-      const ui = await mountBand($, surface)
-      const right = (await ui.find({ type: 'Box', key: 'right' }))?.text
-      const ctx = await ui.find({ type: 'Text', text: new RegExp(`^ ?${tokens / 1000}K ?$`) })
-      await ui.unmount()
-      expect(right, surface).toBe(shown)
-      expect([ctx?.text, ctx?.props.backgroundColor, ctx?.props.color, ctx?.props.bold], surface)
-        .toEqual(badge ? [badge, '#D55E00', '#000000', true] : [`${tokens / 1000}K`, undefined, undefined, undefined])
-    }
-  })
-}
-
-test('a subagent in view after a Haiku step: its type and model on the left, its tokens on the right, no main model', async ($, on) => {
+test('a subagent in view after a Haiku step: its type and model on the left, its tokens on the right; back in the main view, no row', async ($, on) => {
   await engine($, on)
   await step($, 'a1', 'claude-haiku-4-5-20251001')
   for (const surface of SURFACES) {
     const { left, right } = await zonesOn($, surface, 'a1')
     expect([left, right], surface).toEqual(['Explore · Haiku 4.5', 'ctx 42K'])
   }
-  expect((await zonesOn($, 'terminal')).left).toBe('Opus 5.5 1M')
+  expect(await zonesOn($, 'terminal')).toEqual(NONE)
 })
 
 test('a subagent with no step yet: its type, no model and no context', async ($, on) => {
@@ -145,24 +115,24 @@ test('a subagent with no step yet: its type, no model and no context', async ($,
   }
 })
 
-test('a row at exactly its width keeps every part, and a narrower band drops the context meter first', async ($, on) => {
+test("a subagent's row at exactly its width keeps every part, and its zones and gap add up to the band", async ($, on) => {
   await engine($, on)
+  await step($, 'a1', 'claude-haiku-4-5-20251001')
   for (const surface of SURFACES) {
-    const wide = await zonesOn($, surface)
+    const wide = await zonesOn($, surface, 'a1')
     const columns = cells(wide.left!) + 3 + cells(wide.right!)
-    const exact = await zonesOn($, surface, undefined, columns)
+    const exact = await zonesOn($, surface, 'a1', columns)
     expect(exact, surface).toEqual(wide)
     expect(cells(exact.left!) + Number(exact.gap) + cells(exact.right!), surface).toBe(columns)
-    expect((await zonesOn($, surface, undefined, columns - 1)).right, surface).toBe('ctx 60K')
   }
 })
 
-test('the tick on the unused track is dim; no text has a color of its own', async ($, on) => {
+test("a subagent's type is dim; no text has a color of its own", async ($, on) => {
   await engine($, on)
+  await step($, 'a1', 'claude-haiku-4-5-20251001')
   for (const surface of SURFACES) {
-    const ui = await mountBand($, surface)
-    const tick = (await ui.find({ type: 'Text', text: '╂────' }))?.props
-    expect([tick?.color, tick?.backgroundColor, tick?.dimColor], `${surface} tick`).toEqual([undefined, undefined, true])
+    const ui = await mountBand($, surface, 'a1')
+    expect((await ui.find({ type: 'Text', text: 'Explore' }))?.props.dimColor, surface).toBe(true)
     const inColor = (await ui.findAll({ type: 'Text' })).filter(t => t.props.color !== undefined).map(t => t.text)
     expect(inColor, surface).toEqual([])
     await ui.unmount()
@@ -201,19 +171,21 @@ test('rows another hook draws in the band sit above the bar, so the bar stays on
     return <Text>3 tasks (1 done, 2 open)</Text>
   })
   await engine($, on)
-  const ui = await mountBand($, 'terminal')
+  await step($, 'a1', 'claude-haiku-4-5-20251001')
+  const ui = await mountBand($, 'terminal', 'a1')
   const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
   await ui.unmount()
   expect(texts[0]).toBe('3 tasks (1 done, 2 open)')
-  expect(texts.slice(1).join('')).toMatch(/^Opus/)
+  expect(texts.slice(1).join('')).toMatch(/^Explore/)
 })
 
 test('a survey has the band to itself', async ($, on) => {
   await engine($, on)
+  await step($, 'a1', 'claude-haiku-4-5-20251001')
   const ui = await $.ui.mount({
     plugin: 'session-bar', surface: 'terminal', component: 'AbovePrompt',
-    props: { hasSurvey: true, isWorking: false, maxRows: 3, bodyColumns: 200, scroll: { offset: 0, bodyRows: 3 }, view: {} },
+    props: { hasSurvey: true, isWorking: false, maxRows: 3, bodyColumns: 200, scroll: { offset: 0, bodyRows: 3 }, view: { agentId: 'a1' } },
   })
-  expect(await ui.find({ type: 'Text', text: /Opus/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /Haiku/ })).toBeUndefined()
   await ui.unmount()
 })

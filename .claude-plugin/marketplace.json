@@ -7,7 +7,7 @@
     {
       "name": "session-bar",
       "source": "./plugins/session-bar",
-      "description": "Session bar above the prompt: git, model, context and usage windows, following the transcript in view"
+      "description": "Repo, branch and usage windows on the status line; model and context above the prompt, following the transcript in view"
     },
     {
       "name": "plain-focus",

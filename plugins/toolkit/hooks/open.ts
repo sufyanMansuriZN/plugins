@@ -75,9 +75,10 @@ export function fileArgv(path: string, line: number | undefined, os: string, edi
   return [command, ...flags, path]
 }
 
-// A code span that may name a file: no spaces, a slash or an extension, an optional :line[:column].
-const SPAN = /(?<![`[])`([^`\s]+?)(?::(\d+)(?::\d+)?)?`(?!`)/g
-const FENCE = /^ {0,3}(`{3,}|~{3,})/
+// A code span that may name a file: no spaces, a slash or an extension, an optional :line, :line:column or :line-line.
+const SPAN = /(?<![`[])`([^`\s]+?)(?::(\d+)(?:[-:]\d+)?)?`(?!`)/g
+// Any indent: a fence inside a list item is indented past the three spaces of a top-level one.
+const FENCE = /^\s*(`{3,}|~{3,})/
 
 /** A code span in reply text that names a file, as written and as the path it names. */
 export type FileSpan = { written: string; path: string; line?: number }
@@ -119,18 +120,19 @@ export function parseHref(href: string): { path: string; line?: number } | undef
   return { path: decodeURI(match[1]), ...(match[2] ? { line: Number(match[2]) } : {}) }
 }
 
-// Whether a span names a file, by the session folder and the span, so a reply drawn again while it streams stats nothing twice.
+// Whether a span names a file, by reply, session folder and span, so a reply drawn again while it streams stats nothing twice.
+// A later reply looks again: a file the first one only named may exist by then.
 const named = new Map<string, string | null>()
 
-/** The spans in `texts` that name an existing file or folder, each with its link (written → href). */
-export async function fileLinks($: EngineInterface, texts: string[]): Promise<Map<string, string>> {
+/** The spans in `texts`, the reply `requestId`'s text, that name an existing file or folder, each with its link (written → href). */
+export async function fileLinks($: EngineInterface, texts: string[], requestId: string): Promise<Map<string, string>> {
   const spans = texts.flatMap(fileSpans)
   const found = new Map<string, string>()
   if (spans.length === 0) return found
   const cwd = await $.session.cwd()
   const home = (await $.env.get('HOME')) ?? ''
   for (const span of spans) {
-    const key = `${cwd}\0${span.written}`
+    const key = `${requestId}\0${cwd}\0${span.written}`
     if (!named.has(key)) {
       const abs = absolute(span.path, cwd, home)
       const stat = await $.fs.stat(abs).catch(() => undefined)

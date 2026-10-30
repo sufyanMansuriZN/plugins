@@ -1,26 +1,29 @@
 import { read, update } from 'claude-code'
-import type { Elements, Register } from 'claude-code'
+import type { Elements, EngineInterface, Register, SessionMessage } from 'claude-code'
 
 import type { PlanStatus, PlanStep } from '../types'
+import { readTranscript } from './sessions'
+import { replyAnchor } from './sessions-model'
 
 const NAME = 'update_plan'
 export const PLAN_TOOL = `mcp__toolkit__${NAME}`
 
 const PLAN = { plugin: 'toolkit', key: 'plan' } as const
 const IS_OPEN = { plugin: 'toolkit', key: 'planIsOpen' } as const
+const AT = { plugin: 'toolkit', key: 'planAt' } as const
 const STEPS_MAX = 12
 const STATUSES: PlanStatus[] = ['pending', 'in_progress', 'completed']
 // A long list shows five steps and a "… +N more" row, as Claude Code cuts its own lists short.
 const STEP_ROWS = 6
 
-const DESCRIPTION = `Keep the task list the terminal shows above the prompt while you work. Every request that edits files or runs more than one command gets one (implement-and-test, investigate-then-fix, anything the user listed); only a single-command answer or pure conversation does not.
+const DESCRIPTION = `Keep the task list the terminal shows at the end of the transcript while you work. Every request that edits files or runs more than one command gets one (implement-and-test, investigate-then-fix, anything the user listed); only a single-command answer or pure conversation does not.
 
 Never spend a message on this tool alone: send it IN THE SAME MESSAGE as another tool call (in parallel), so it costs no extra round trip.
 - First call: with the VERY FIRST tool call of the turn, even one that only reads or lists files: {"items": [...]}, the whole plan in order, short imperative phrases (at most ~7 words, no numbering), the step you are starting "in_progress", the rest "pending". If you must look around first, make "Look at how X is set up" step one and refine the list once you know.
 - Next step: {"advance": true} alongside the call that begins it (completes the in_progress step, starts the next pending one); after the last step, advance alongside wrap_up, and let your reply say what now works: the list goes away once every step is done.
 - Out of order: {"done": [2], "start": 4} (1-based).
 - Plan changed, including right after the user interrupts or sends a new instruction mid-task: {"items": [...]} again, the new whole list, so the list never shows an abandoned plan.
-Keep exactly one step in_progress while working and none when everything is done. Do not also write the plan as a numbered list in your message: the list above the prompt is the plan.`
+Keep exactly one step in_progress while working and none when everything is done. Do not also write the plan as a numbered list in your message: the list on screen is the plan.`
 
 const INPUT_SCHEMA = {
   type: 'object',
@@ -88,6 +91,21 @@ function applyMoves(plan: PlanStep[] | null, advance: boolean, done: unknown, st
     // Starting another step puts the one in progress back, unless it was just finished.
     return index + 1 === start ? 'in_progress' : step.status === 'in_progress' ? 'pending' : step.status
   })
+}
+
+/** The list the transcript's calls leave, and whether its last prompt's turn changed it: what a new process of the session starts from. */
+export function replayPlan(messages: readonly SessionMessage[]): { steps: PlanStep[]; isLastTurn: boolean } | null {
+  let plan: { steps: PlanStep[]; prompts: number } | null = null
+  let prompts = 0
+  for (const message of messages) {
+    if (message.role === 'user' && !message.toolResults?.length) prompts++
+    for (const use of message.toolUses) {
+      if (use.tool !== PLAN_TOOL || use.isError) continue
+      const next = applyPlan(plan?.steps ?? null, use.input)
+      if (!('deny' in next)) plan = isDone(next) ? null : { steps: next, prompts }
+    }
+  }
+  return plan && { steps: plan.steps, isLastTurn: plan.prompts === prompts }
 }
 
 /** What the model reads back: enough to pick up the plan after a compaction. */
@@ -168,13 +186,34 @@ export function drawPlan(elements: Elements['terminal'], plan: PlanStep[], toggl
   )
 }
 
+// The subagent whose transcript the person has in view, as the band above the prompt last saw it.
+let viewedAgent: string | undefined
+
+/** Puts the list under the reply row `find` picks in the transcript; a miss leaves it under the next turn's spinner only. */
+async function anchorAt($: EngineInterface, find: (jsonl: string) => { uuid: string } | 'behind' | null) {
+  const anchor = await readTranscript($, find)
+  if (anchor !== null && anchor !== 'behind') await $.state.set(AT, anchor.uuid)
+}
+
 export const register: Register = on => {
-  // Desktop pins its own list under the reply, and a -p run has no band to draw in.
+  // Desktop pins its own list under the reply, and a -p run has no transcript to draw in.
   on('session.start', { surface: 'terminal', isInteractive: true }, async ($, e, next) => {
     await $.tool.register({ name: NAME, description: DESCRIPTION, inputSchema: INPUT_SCHEMA, isDeferred: false })
+    // State lives only as long as the process, so a resumed, forked or restarted session reads its list back from its calls.
+    // The new process counts its turns afresh: a list the last turn changed shows under the last reply until the next one.
+    // In the background, so a failure here never keeps the tools after this one from starting.
+    void (async () => {
+      if ((await read($, PLAN)) != null) return
+      const plan = replayPlan(await $.session.messages())
+      if (!plan) return
+      await $.state.set(PLAN, { steps: plan.steps, prompts: plan.isLastTurn ? await $.session.turns() : -1 })
+      if (plan.isLastTurn) await anchorAt($, jsonl => replyAnchor(jsonl, 0, ''))
+    })().catch(err => $.ui.log(`toolkit: could not bring back the task list: ${String(err)}`, { to: 'debug' }))
     return next(e)
   })
   on('tool.call', { tool: PLAN_TOOL }, async ($, e) => {
+    // A subagent sees the tool too, but the list and its state are the main conversation's.
+    if (e.agentId !== undefined) return { result: "The task list shows the main conversation's plan only, so a subagent's call changes nothing. Say what you did in your final report." }
     let result: PlanStep[] | { deny: string } = { deny: 'The plan could not be saved.' }
     const prompts = await $.session.turns()
     // A list with every step done goes away at once.
@@ -185,12 +224,19 @@ export const register: Register = on => {
     return 'deny' in result ? result : { result: summary(result) }
   })
 
+  // Only the band above the prompt is told whose transcript is in view; the spinner reads it from here.
+  on('ui.render', { surface: 'terminal', component: 'AbovePrompt' }, async (_$, e, next) => {
+    viewedAgent = e.props.view?.agentId
+    return next(e)
+  })
+
   // Where Claude Code draws its own task list: under the spinner, so it shows only while the turn runs.
   // An unfinished list comes back with the next turn's spinner; a new list replaces it.
   // A rewind sends no event: it only takes prompts out of the transcript, the one the list was made under too.
+  // A subagent's transcript in view gets its own spinner, without the main conversation's list.
   on('ui.render', { surface: 'terminal', component: 'Spinner' }, async ($, e, next) => {
     const plan = await read($, PLAN)
-    if (!plan || (await $.session.turns()) < plan.prompts) return next(e)
+    if (!plan || viewedAgent !== undefined || (await $.session.turns()) < plan.prompts) return next(e)
     const isOpen = (await read($, IS_OPEN)) === true
     const spinner = await next(e)
     const elements = $.ui.resolve(e)
@@ -203,25 +249,43 @@ export const register: Register = on => {
     )
   })
 
-  // A turn that changed the list and ends with steps still open is not done: the list stays above the
-  // prompt until the next turn. One the turn left alone, set aside or not, stays under the spinner only.
-  on('ui.render', { surface: 'terminal', component: 'AbovePrompt' }, async ($, e, next) => {
-    if (e.props.hasSurvey || e.props.isWorking) return next(e)
+  // A turn that changed the list and ends with steps still open is not done: the list goes under the turn's
+  // last reply text, at the end of the transcript, until the next turn starts. One the turn left alone, set
+  // aside or not, stays under the spinner only.
+  on('turn.start', { text: /[\s\S]*/ }, async ($, e, next) => {
+    if (e.agentId === undefined) await $.state.set(AT, null)
+    return next(e)
+  })
+  on('turn.complete', { reason: /[\s\S]*/ }, async ($, e, next) => {
+    const since = Date.now() - e.durationMs
+    const result = await next(e)
+    if (e.agentId !== undefined) return result
     const plan = await read($, PLAN)
-    if (!plan || (await $.session.turns()) !== plan.prompts) return next(e)
+    if (!plan || plan.prompts !== (await $.session.turns())) return result
+    // An error leaves no answer to wait for, so the turn's last text stands.
+    const answer = e.reason === 'answer' || e.reason === 'aborted' ? e.answer : ''
+    void anchorAt($, jsonl => replyAnchor(jsonl, since, answer)).catch(err => $.ui.log(`toolkit: could not move the task list under the reply: ${String(err)}`, { to: 'debug' }))
+    return result
+  })
+  on('ui.render', { surface: 'terminal', component: 'AssistantMessage' }, async ($, e, next) => {
+    if (e.props.isSummary || (await read($, AT)) !== e.requestId) return next(e)
+    const plan = await read($, PLAN)
+    if (!plan) return next(e)
     const isOpen = (await read($, IS_OPEN)) === true
-    const below = await next(e)
+    const reply = await next(e)
     const elements = $.ui.resolve(e)
     const { Box } = elements
     return (
       <Box flexDirection="column">
-        <Box paddingLeft={2}>{drawSteps(elements, plan.steps, STEP_ROWS, { isOpen, onPress: () => update($, IS_OPEN, was => !was) })}</Box>
-        {below}
+        {reply}
+        <Box paddingLeft={2} marginTop={1}>
+          {drawSteps(elements, plan.steps, STEP_ROWS, { isOpen, onPress: () => update($, IS_OPEN, was => !was) })}
+        </Box>
       </Box>
     )
   })
 
-  // The list above the prompt shows each change, so the calls stay out of the transcript.
+  // The list shows each change, so the calls stay out of the transcript.
   on('ui.render', { surface: 'terminal', component: 'ToolUse', props: { tool: PLAN_TOOL } }, async ($, e, next) => {
     if (e.props.isExpanded || e.props.isErrored) return next(e)
     const { Box } = $.ui.resolve(e)

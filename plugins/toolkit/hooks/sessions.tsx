@@ -45,6 +45,9 @@ const CARDS_AT = { plugin: 'toolkit', key: 'cardsAt' } as const
 const SESSIONS_AT = { plugin: 'toolkit', key: 'sessionsAt' } as const
 
 const POLL_MS = 4000
+// Each look runs `claude agents`, about 0.2 s of CPU. While every session is idle, nothing changes until
+// someone talks to one, so the poll looks only every eighth time.
+const IDLE_EVERY = 8
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000
 
 const START_DESCRIPTION = `Start a separate Claude Code session for a task while you stay with the user (when: see "Starting other sessions"). It runs as a background session (\`claude --bg\`) the user can open with \`claude attach\`, talk to and stop. \`initiation\` says who wants it: "user_asked" starts it now and returns its name and id; "offer" is for a task the user named in their latest message (new work here, or "suggest / split off / make a task or session for X"): called with a title alone, it asks the user "New session" or "Do it here" and WAITS for their answer, so it must be the only call in that message (no update_plan, no other tool); the result then tells you to carry on here, or to send the brief with proposal_id so the session starts; "own_initiative" is for work you propose yourself that the user has not told you to do — something you noticed, or the follow-up your own answer or work turned up (when your reply calls work a follow-up or a separate PR, propose it here rather than only saying so, unless it acts on what this session just found and so stays here), never a part of what the user asked this turn, never what "Starting other sessions" keeps here or gives to a subagent; the user sees a card and nothing runs until they start it, by pressing Start on it or by telling you (then call this again with just proposal_id).
@@ -176,6 +179,8 @@ const inTurn = <T,>(work: () => Promise<T>): Promise<T> => {
   return run
 }
 let isTicking = false
+let isAllIdle = false
+let quietTicks = 0
 
 async function caller($: EngineInterface): Promise<Caller> {
   const [cwd, sessionId, model] = await Promise.all([$.session.cwd(), $.session.id(), $.session.model()])
@@ -300,7 +305,9 @@ async function look($: EngineInterface) {
   }
   // Merged by id, so a session started while this look ran is kept.
   const next = await update($, LINKED, was => (was ?? []).map(s => ({ ...s, ...changes.get(s.id) })))
-  if (!(next ?? []).some(s => isAlive(s.state))) stopWatching()
+  const alive = (next ?? []).filter(s => isAlive(s.state))
+  isAllIdle = alive.length > 0 && alive.every(s => s.state === 'idle')
+  if (alive.length === 0) stopWatching()
 }
 
 /** In a session start_session started: its report, sent to the session that started it. */
@@ -349,11 +356,14 @@ async function mute($: EngineInterface, id: string) {
   await update($, LINKED, was => (was ?? []).map(s => (s.id === id ? { ...s, isMuted: true } : s)))
 }
 
+// Called when the linked sessions may have changed, so it looks every time until a look finds them all idle.
 function watch($: EngineInterface) {
+  isAllIdle = false
+  quietTicks = 0
   if (stopPolling !== null) return
   const timer = $.clock.every(POLL_MS, () => {
     // A look that outlasts the period is not stacked behind another.
-    if (isTicking) return
+    if (isTicking || (isAllIdle && ++quietTicks % IDLE_EVERY !== 0)) return
     isTicking = true
     void tick($)
       .catch(err => $.ui.log(`toolkit: could not read the linked sessions: ${String(err)}`, { to: 'debug' }))
@@ -386,7 +396,11 @@ async function accept($: EngineInterface, plan: { taskId: string; prompt: string
   const proposal = await read($, { ...PROPOSALS, id: plan.taskId })
   if (!proposal) return { deny: `No proposal ${plan.taskId} in this session.` }
   if (Date.now() - proposal.createdAt > WEEK_MS) return { deny: `${plan.taskId} expired after a week. Propose it again if it is still worth doing.` }
-  if (proposal.status === 'started') return { deny: `${plan.taskId} already started as session "${proposal.session}".` }
+  // The card's Start tells Claude in the user's words, and Claude may then start it again: that is no error.
+  if (proposal.status === 'started') {
+    const session = ((await read($, LINKED)) ?? []).find(s => s.callId === plan.taskId)
+    return { result: `${plan.taskId} is already started as session "${proposal.session}"${session ? ` (claude attach ${session.id})` : ''}, so there is nothing to start.` }
+  }
   if (proposal.status === 'dismissed') return { deny: `${plan.taskId} was withdrawn.` }
   if (proposal.status === 'here') return { deny: `The user chose Do it here for ${plan.taskId}: do it in this session.` }
   if (proposal.initiation === 'offer' && proposal.status === 'open') return { deny: `The user has not answered the card for ${plan.taskId}.` }
@@ -450,10 +464,18 @@ async function openHere($: EngineInterface, session: LinkedSession) {
   if ((await relaunchSoon($, ready.file, ['attach', session.id])) === 'after turn') $.ui.toast(`${session.name} opens here when this turn ends`)
 }
 
+/** Stops `session`, then looks again so its row says so; toasts why not. */
+function stopSession($: EngineInterface, session: LinkedSession) {
+  void $.process
+    .run(['claude', 'stop', session.id], { timeoutMs: 20_000 })
+    .then(run => (run.exitCode === 0 ? tick($) : $.ui.toast(`toolkit: could not stop ${session.name}: ${run.stderr.trim().split('\n')[0] || `exit ${run.exitCode}`}`)))
+    .catch((err: unknown) => $.ui.toast(`toolkit: could not stop ${session.name}: ${String(err)}`))
+}
+
 async function sessionLine($: EngineInterface, elements: Elements['terminal'], session: LinkedSession) {
   const { Box, Text } = elements
   const term = await terminalOnce($)
-  const stop = () => void $.process.run(['claude', 'stop', session.id]).then(() => tick($))
+  const stop = () => stopSession($, session)
   const copy = () => void $.ui.copy({ text: `claude attach ${session.id}`, surface: 'terminal' })
   const opens = isAlive(session.state)
     ? [
@@ -555,11 +577,45 @@ async function moveSessions($: EngineInterface, since: number, answer: string) {
   await $.state.set(SESSIONS_AT, { anchor: anchor.uuid, ids })
 }
 
+/**
+ * The running sessions card: one row per session in aligned columns (name, state, branch), with only the
+ * everyday actions. **open** opens it in the first place this terminal offers, or copies `claude attach <id>`
+ * where there is none; **stop** shows while it works. The call's own row keeps every action.
+ */
 async function drawSessions($: EngineInterface, elements: Elements['terminal'], sessions: LinkedSession[]) {
-  const { Box } = elements
-  const lines = await Promise.all(sessions.map(session => sessionLine($, elements, session)))
+  const { Box, Text } = elements
+  const term = await terminalOnce($)
+  const place = placesOf(term)[0]
+  const width = (texts: string[]) => Math.max(...texts.map(text => text.length)) + 2
+  const nameWidth = width(sessions.map(s => s.name))
+  const stateWidth = width(sessions.map(s => stateWord(s.state)))
+  const branchWidth = sessions.some(s => s.branch) ? width(sessions.map(s => s.branch ?? '')) : 0
+  const lines = sessions.map(session => {
+    const open = place
+      ? link(elements, `open:${session.id}`, 'open', () => void openBeside($, term, session, place))
+      : link(elements, `attach:${session.id}`, 'copy attach', () => void $.ui.copy({ text: `claude attach ${session.id}`, surface: 'terminal' }).then(() => $.ui.toast(`Copied claude attach ${session.id}`)))
+    return (
+      <Box key={session.id} flexDirection="row">
+        <Box width={nameWidth} minWidth={nameWidth}>
+          <Text>{session.name}</Text>
+        </Box>
+        <Box width={stateWidth} minWidth={stateWidth}>
+          <Text dimColor>{stateWord(session.state)}</Text>
+        </Box>
+        {branchWidth ? (
+          <Box width={branchWidth} minWidth={branchWidth}>
+            <Text dimColor>{session.branch ?? ''}</Text>
+          </Box>
+        ) : null}
+        {isAlive(session.state) ? open : null}
+        {session.state === 'working' ? [<Text dimColor>{'  ·  '}</Text>, link(elements, `stop:${session.id}`, 'stop', () => stopSession($, session), true)] : []}
+      </Box>
+    )
+  })
   return frame(elements, 'Running sessions', '', <Box flexDirection="column">{lines}</Box>)
 }
+
+const stateWord = (state: LinkedSession['state']) => (state === 'gone' ? 'removed' : state)
 
 export const register: Register = on => {
   // Desktop starts its own sessions, and a -p run has no one to answer a card.

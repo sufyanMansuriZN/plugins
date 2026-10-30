@@ -68,7 +68,6 @@ test('bad input is denied with a reason Claude can act on', async ($, on) => {
     { recap: RECAP, ask: ASK },
     { recap: RECAP, ask: ASK, actions: [] },
     { recap: RECAP, ask: ASK, actions: [{ label: 'A' }, { label: 'B' }, { label: 'C' }] },
-    { recap: RECAP, ask: ASK, actions: [{ label: 'A label that is far too long to be a button' }] },
     { recap: RECAP, ask: ASK, actions: [{ label: '/clear' }] },
     { recap: RECAP, ask: ASK, actions: [{ action: 'archive' }] },
   ]
@@ -84,6 +83,23 @@ test('a long ask is drawn, not refused', async ($, on) => {
   const call = await $.tool.call({ tool: TOOL, recap: RECAP, ask, actions: [{ label: 'Yes' }] })
   expect(call.deny).toBeUndefined()
   expect(call.result).toContain(ask)
+})
+
+test('a label over the 24 characters the description asks for, and an action of null, are drawn, not refused', async ($, on) => {
+  engine(on)
+  const ui = await askOnRow($, on, { recap: RECAP, ask: ASK, actions: [{ label: "I'll review the ADR first" }, { action: null, label: 'Not yet' }] })
+  expect(await shown(ui)).toEqual(['Text: Next step', `Text: ${RECAP}`, `Text: ${ASK}`, "Button: I'll review the ADR first", 'Button: Not yet'])
+  await ui.unmount()
+})
+
+test('a subagent call draws nothing and leaves the main box alone', async ($, on) => {
+  engine(on)
+  const ui = await askOnRow($, on, { recap: RECAP, ask: ASK, actions: [{ label: 'Yes, commit' }] })
+  const sub = await $.tool.call({ tool: TOOL, tool_use_id: 'sub-1', agentId: 'a1', recap: 'Found the parser.', ask: 'Go on?', actions: [{ label: 'Yes' }] })
+  expect(sub.deny).toBeUndefined()
+  expect(sub.result).toContain('main conversation')
+  expect(await shown(ui)).toEqual(['Text: Next step', `Text: ${RECAP}`, `Text: ${ASK}`, 'Button: Yes, commit'])
+  await ui.unmount()
 })
 
 test('a button with hidden text behind its label is refused', async ($, on) => {

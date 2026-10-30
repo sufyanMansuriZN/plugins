@@ -15,13 +15,14 @@ It needs the toolkit's \`claude\` shell function. Without it, the call adds the 
 
 const PENDING = { plugin: 'toolkit', key: 'restartPending' } as const
 
-const TURN_RUNNING = { plugin: 'toolkit', key: 'isTurnRunning' } as const
+const RUNNING_TURN = { plugin: 'toolkit', key: 'runningTurn' } as const
 
 const BEGIN = '# >>> toolkit restart >>>'
 const END = '# <<< toolkit restart <<<'
 
 // Runs claude with a file to write the next run's arguments to; claude never gets the terminal back from a child it starts.
 // A restart keeps only the options listed here: the others pick a session or carry a prompt, which the restart sets itself.
+// A subcommand such as `attach <id>` gets none of them: placed before it, they make claude read it as a prompt.
 const FUNCTION = [
   BEGIN,
   'claude() {',
@@ -39,7 +40,7 @@ const FUNCTION = [
   '    CLAUDE_RESTART_FILE="$f" command claude "${args[@]}"; s=$?',
   '    [ -s "$f" ] || return "$s"',
   '    mapfile -t args < "$f"',
-  '    args=("${keep[@]}" "${args[@]}")',
+  '    if [[ ${args[0]-} == -* ]]; then args=("${keep[@]}" "${args[@]}"); fi',
   '  done',
   '}',
   END,
@@ -82,7 +83,7 @@ export async function relaunch($: EngineInterface, file: string, args: string[])
 /** Relaunches with `args` now between turns, or when the running turn ends; says which. */
 export async function relaunchSoon($: EngineInterface, file: string, args: string[]): Promise<'now' | 'after turn'> {
   await relaunch($, file, args)
-  if ((await $.state.get(TURN_RUNNING)).value) return 'after turn'
+  if ((await $.state.get(RUNNING_TURN)).value) return 'after turn'
   await exit($)
   return 'now'
 }
@@ -129,19 +130,22 @@ export const register: Register = on => {
     return { result: 'Claude Code exits when your turn ends and starts again with this conversation, so end your turn now.' }
   })
 
+  // A subagent's turn starts and ends inside the main one, so only the main loop's turns count. An abort names
+  // only its turn, so the main turn is kept by its id.
   on('turn.start', { text: /[\s\S]*/ }, async ($, e, next) => {
-    await $.state.set(TURN_RUNNING, true)
+    if (e.agentId === undefined) await $.state.set(RUNNING_TURN, e.turnId)
     return next(e)
   })
 
   on('turn.abort', async ($, e, next) => {
-    await $.state.set(TURN_RUNNING, false)
+    if ((await $.state.get(RUNNING_TURN)).value === e.turnId) await $.state.set(RUNNING_TURN, null)
     return next(e)
   })
 
   on('turn.complete', { reason: /[\s\S]*/ }, async ($, e, next) => {
     const result = await next(e)
-    await $.state.set(TURN_RUNNING, false)
+    if (e.agentId !== undefined) return result
+    await $.state.set(RUNNING_TURN, null)
     await exit($)
     return result
   })

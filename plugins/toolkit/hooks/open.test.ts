@@ -40,17 +40,23 @@ test('folders, pictures and pages open in the desktop app, and so does code with
 
 test('code spans that look like paths are found, outside fences only', () => {
   const text = [
-    'See `plugins/toolkit/hooks/reply.tsx:187` and `README.md`, `~/.bashrc`, `/etc/hosts:3:9`.',
+    'See `plugins/toolkit/hooks/reply.tsx:187` and `README.md`, `~/.bashrc`, `/etc/hosts:3:9`, `src/a.ts:10-20`.',
     'Not `claude attach`, `--wait`, `..`, `https://x.y/z` or ``a.b``.',
     '```ts',
     'const a = `x/y.ts`',
     '```',
+    '1. Run:',
+    '',
+    '    ```sh',
+    '    cat `in/list.md`',
+    '    ```',
   ].join('\n')
   expect(fileSpans(text)).toEqual([
     { written: '`plugins/toolkit/hooks/reply.tsx:187`', path: 'plugins/toolkit/hooks/reply.tsx', line: 187 },
     { written: '`README.md`', path: 'README.md' },
     { written: '`~/.bashrc`', path: '~/.bashrc' },
     { written: '`/etc/hosts:3:9`', path: '/etc/hosts', line: 3 },
+    { written: '`src/a.ts:10-20`', path: 'src/a.ts', line: 10 },
   ])
 })
 

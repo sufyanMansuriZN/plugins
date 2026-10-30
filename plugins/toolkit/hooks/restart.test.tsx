@@ -71,6 +71,19 @@ test('under the shell function a call writes the resume arguments and stops Clau
   expect(host.runs).toEqual([KILL])
 })
 
+test('a subagent that ends its turn inside the main turn does not stop Claude Code, the main turn ending does', async ($, on) => {
+  const host = engine(on)
+  const clock = mock.clock(on)
+  await start($, on, { CLAUDE_RESTART_FILE: FILE })
+  expect((await $.tool.call({ tool: TOOL })).deny).toBeUndefined()
+  await $.turn.complete({ reason: 'answer', answer: 'Found it.', durationMs: 1, isAborted: false, turnId: 't1', agentId: 'a1' })
+  await settle(clock)
+  expect(host.runs).toEqual([])
+  await endTurn($)
+  await settle(clock)
+  expect(host.runs).toEqual([KILL])
+})
+
 test('a call without a prompt resumes with no first prompt', async ($, on) => {
   const host = engine(on)
   await start($, on, { CLAUDE_RESTART_FILE: FILE })
@@ -93,6 +106,8 @@ test('without the shell function a call adds it to .bashrc once, keeps what was 
   expect(rc.startsWith('alias ll="ls -l"\n')).toBe(true)
   expect(rc.split('# >>> toolkit restart >>>').length).toBe(2)
   expect(rc).toContain('CLAUDE_RESTART_FILE="$f" command claude "${args[@]}"')
+  // The kept options go before a restart's own options only: before a subcommand they would turn it into a prompt.
+  expect(rc).toContain('if [[ ${args[0]-} == -* ]]; then args=("${keep[@]}" "${args[@]}"); fi')
 })
 
 test('a block from an older toolkit is replaced and what is around it stays', async ($, on) => {

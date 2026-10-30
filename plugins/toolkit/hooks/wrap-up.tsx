@@ -14,7 +14,6 @@ const LAST = { plugin: 'toolkit', key: 'wrapUpLast' } as const
 const CURRENT = { plugin: 'toolkit', key: 'wrapUpCurrent' } as const
 const ANSWER = { plugin: 'toolkit', key: 'wrapUpAnswer' } as const
 
-const LABEL_MAX = 24
 
 type AppAction = 'commit' | 'create_pr' | 'merge' | 'fix_ci' | 'address_comments' | 'resolve_conflicts' | 'verify'
 
@@ -67,7 +66,6 @@ const INPUT_SCHEMA = {
           },
           label: {
             type: 'string',
-            maxLength: LABEL_MAX,
             description:
               'For a reply: the button text and the whole answer a press sends, 1 to 3 words (4 only when three cannot say it), at most 24 characters: "Yes, fix 1", "Fix 2 instead", "Leave uncommitted". It must answer ask on its own. No leading / or !. Ignored with action.',
           },
@@ -93,9 +91,8 @@ function parseAnswer(item: unknown, index: number): { label: string } | string {
   const { action, label, message } = item as { action?: unknown; label?: unknown; message?: unknown }
   // A press sends only what the button shows, so text the user cannot see is refused, not dropped.
   if (message !== undefined) return `actions[${index}] has a message: a press sends only the label, so put the whole answer in the label.`
-  if (action !== undefined) return isAppAction(action) ? { label: APP_ACTIONS[action] } : `actions[${index}].action must be one of ${Object.keys(APP_ACTIONS).join(', ')}.`
+  if (action != null) return isAppAction(action) ? { label: APP_ACTIONS[action] } : `actions[${index}].action must be one of ${Object.keys(APP_ACTIONS).join(', ')}.`
   if (typeof label !== 'string' || label.trim() === '') return `actions[${index}] needs a label.`
-  if (label.length > LABEL_MAX) return `actions[${index}].label must be at most ${LABEL_MAX} characters.`
   if (isCommand(label)) return `actions[${index}] must not start with / or !.`
   return { label }
 }
@@ -215,6 +212,8 @@ export const register: Register = on => {
     return next(e)
   })
   on('tool.call', { tool: WRAP_UP_TOOL }, async ($, e) => {
+    // A subagent sees the tool too, but the box and its state are the main conversation's.
+    if (e.agentId !== undefined) return { result: 'The next step box belongs to the main conversation, so nothing is shown for a subagent. Put the recap in your final report instead.' }
     const wrapUp = parseWrapUp(e)
     if ('deny' in wrapUp) return wrapUp
     const { question } = wrapUp

@@ -1,6 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
-import type { On } from 'claude-code'
+import type { On, SessionMessage } from 'claude-code'
 
 const TOOL = 'mcp__toolkit__update_plan'
 const PLAN = [
@@ -133,41 +133,86 @@ test('a message typed mid-turn and a turn a background task wakes keep the list'
   expect(await spinner($)).toContain('Fix blank lines')
 })
 
-async function abovePrompt($: Engine, isWorking = false): Promise<string[]> {
+// The band above the prompt, with the main conversation's transcript in view unless `view` names an agent.
+async function abovePrompt($: Engine, view: { agentId?: string } = {}): Promise<string[]> {
   const ui = await $.ui.mount({
     plugin: 'toolkit',
     surface: 'terminal',
     component: 'AbovePrompt',
-    props: { hasSurvey: false, isWorking, maxRows: 20, bodyColumns: 100, scroll: { offset: 0, bodyRows: 20 }, view: {} },
+    props: { hasSurvey: false, isWorking: false, maxRows: 20, bodyColumns: 100, scroll: { offset: 0, bodyRows: 20 }, view },
   })
   const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text.trim()).filter(words => words !== '')
   await ui.unmount()
   return texts
 }
 
-test('once Claude stops with steps open, the list stays above the prompt until the next turn', async ($, on) => {
+// The session's transcript as the toolkit reads its end: one reply row per uuid, written during the turn.
+function withReplies(on: On, ...uuids: string[]) {
+  const rows = uuids.map(uuid => JSON.stringify({ type: 'assistant', uuid, timestamp: new Date(Date.now() + 60_000).toISOString(), message: { content: [{ type: 'text', text: `Reply ${uuid}.` }] } }))
+  mock.env(on, { HOME: '/home/me' })
+  on('session.id', () => ({ value: 'session-uuid' }))
+  on('process.run', (_$, e) => {
+    const stdout = e.argv[0] === 'find' ? '/home/me/.claude/projects/-w/session-uuid.jsonl\n' : e.argv[0] === 'tail' ? rows.join('\n') : ''
+    return { value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+  })
+  on('ui.log', () => ({ value: undefined }))
+}
+
+// The reply block `uuid` and what the toolkit draws under it.
+async function reply($: Engine, uuid: string): Promise<string[]> {
+  const ui = await $.ui.mount({ plugin: 'toolkit', surface: 'terminal', component: 'AssistantMessage', requestId: uuid, props: { text: `Reply ${uuid}.`, isFirstOfReply: true } })
+  const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text.trim()).filter(words => words !== '')
+  await ui.unmount()
+  return texts
+}
+
+const settle = async () => {
+  for (let i = 0; i < 300; i++) await Promise.resolve()
+}
+
+test('once Claude stops with steps open, the list shows under the turn\'s last reply, not above the prompt, until the next turn starts', async ($, on) => {
   engine(on)
+  withReplies(on, 'r1', 'r2')
   await turn($, 't1', () => $.tool.call({ tool: TOOL, items: PLAN }))
-  expect(await abovePrompt($)).toEqual(['◼', 'Read the parser', '◻', 'Fix blank lines', '◻', 'Run the tests', 'engine: AbovePrompt'])
+  await settle()
+  expect(await reply($, 'r2')).toEqual(['engine: AssistantMessage', '◼', 'Read the parser', '◻', 'Fix blank lines', '◻', 'Run the tests'])
+  expect(await reply($, 'r1')).toEqual(['engine: AssistantMessage'])
+  expect(await abovePrompt($)).toEqual(['engine: AbovePrompt'])
   await $.turn.start({ text: '', turnId: 't2' })
-  expect(await abovePrompt($, true)).toEqual(['engine: AbovePrompt'])
+  expect(await reply($, 'r2')).toEqual(['engine: AssistantMessage'])
+  expect(await spinner($)).toContain('Read the parser')
 })
 
-test('a list the last turn left alone stays under the spinner only, not above the prompt', async ($, on) => {
+test('a list the last turn left alone stays under the spinner only, not under the reply', async ($, on) => {
   let prompts = 1
   engine(on, () => prompts)
+  withReplies(on, 'r1')
   await turn($, 't1', () => $.tool.call({ tool: TOOL, items: PLAN }))
+  await settle()
   prompts = 2
   await turn($, 't2', async () => expect(await spinner($)).toContain('Read the parser'))
-  expect(await abovePrompt($)).toEqual(['engine: AbovePrompt'])
+  await settle()
+  expect(await reply($, 'r1')).toEqual(['engine: AssistantMessage'])
   await turn($, 't3', () => $.tool.call({ tool: TOOL, advance: true }))
-  expect(await abovePrompt($)).toContain('Fix blank lines')
+  await settle()
+  expect(await reply($, 'r1')).toContain('Fix blank lines')
 })
 
-test('a finished list is not drawn above the prompt', async ($, on) => {
+test('a finished list is not drawn under the reply', async ($, on) => {
   engine(on)
+  withReplies(on, 'r1')
   await turn($, 't1', () => $.tool.call({ tool: TOOL, items: PLAN.map(step => ({ ...step, status: 'completed' })) }))
-  expect(await abovePrompt($)).toEqual(['engine: AbovePrompt'])
+  await settle()
+  expect(await reply($, 'r1')).toEqual(['engine: AssistantMessage'])
+})
+
+test("with a subagent's transcript in view, the spinner shows no list", async ($, on) => {
+  engine(on)
+  await $.tool.call({ tool: TOOL, items: PLAN })
+  await abovePrompt($, { agentId: 'a1' })
+  expect(await spinner($)).toEqual(['engine: Spinner'])
+  await abovePrompt($)
+  expect(await spinner($)).toContain('Read the parser')
 })
 
 test('a list goes away under the spinner the moment every step is done', async ($, on) => {
@@ -196,6 +241,65 @@ test('a rewind past the prompt the list was made under takes the list away', asy
   expect(await spinner($)).toContain('Read the parser')
   prompts = 1
   expect(await spinner($)).toEqual(['engine: Spinner'])
+})
+
+// A session started on a transcript that holds these messages, as `claude --continue` starts one.
+function resume($: Engine, on: On, messages: SessionMessage[]) {
+  on('session.start', () => ({ cwd: '/w' }))
+  on('session.messages', () => ({ value: messages }))
+  return $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
+}
+
+const call = (id: string, input: Record<string, unknown>, isError?: true) => ({ tool_use_id: id, tool: TOOL, input, text: 'ok', ...(isError ? { isError } : {}) })
+
+test('a resumed session picks its list up from the calls, under the last reply and for advance', async ($, on) => {
+  // The new process counts its own turns, whatever the transcript holds.
+  engine(on, () => 0)
+  withReplies(on, 'r9')
+  await resume($, on, [
+    { role: 'user', text: 'Fix the parser', toolUses: [] },
+    { role: 'assistant', text: '', toolUses: [call('p1', { items: PLAN })] },
+    { role: 'user', text: '', toolUses: [], toolResults: [{ tool_use_id: 'p1', text: 'ok', result: 'ok', isError: false }] },
+    { role: 'assistant', text: '', toolUses: [call('p2', { advance: true }), call('p3', { start: 9 }, true)] },
+  ])
+  await settle()
+  expect(await reply($, 'r9')).toEqual(['engine: AssistantMessage', '✔', 'Read the parser', '◼', 'Fix blank lines', '◻', 'Run the tests'])
+  const next = await $.tool.call({ tool: TOOL, advance: true })
+  expect(next.result).toBe('Plan updated: 2 of 3 done. Now on step 3: Run the tests.')
+})
+
+test('a resumed session whose last turn left the list alone keeps it for advance, under the spinner only', async ($, on) => {
+  engine(on, () => 0)
+  withReplies(on, 'r9')
+  await resume($, on, [
+    { role: 'user', text: 'Fix the parser', toolUses: [] },
+    { role: 'assistant', text: '', toolUses: [call('p1', { items: PLAN })] },
+    { role: 'user', text: 'What does blank mean here?', toolUses: [] },
+    { role: 'assistant', text: 'An empty line.', toolUses: [] },
+  ])
+  await settle()
+  expect(await reply($, 'r9')).toEqual(['engine: AssistantMessage'])
+  expect((await $.tool.call({ tool: TOOL, advance: true })).result).toBe('Plan updated: 1 of 3 done. Now on step 2: Fix blank lines.')
+})
+
+test('a resumed session whose list was finished starts with none', async ($, on) => {
+  engine(on)
+  mock.env(on, {})
+  const done = PLAN.map(step => ({ ...step, status: 'completed' }))
+  await resume($, on, [
+    { role: 'user', text: 'Fix the parser', toolUses: [] },
+    { role: 'assistant', text: '', toolUses: [call('p1', { items: PLAN }), call('p2', { items: done })] },
+  ])
+  expect(await spinner($)).toEqual(['engine: Spinner'])
+})
+
+test("a subagent's call leaves the main conversation's list as it was", async ($, on) => {
+  engine(on)
+  await $.tool.call({ tool: TOOL, items: PLAN })
+  const sub = await $.tool.call({ tool: TOOL, agentId: 'a1', items: [{ content: 'Grep the repo', status: 'in_progress' }] })
+  expect(sub.deny).toBeUndefined()
+  expect(sub.result).toContain('main conversation')
+  expect(await spinner($)).toEqual(['engine: Spinner', '◼', 'Read the parser', '◻', 'Fix blank lines', '◻', 'Run the tests'])
 })
 
 test('the call and result rows are hidden, except under ctrl+o', async ($, on) => {

@@ -9,7 +9,7 @@ const HAND_OFF = 'mcp__toolkit__hand_off_to_session'
 // `claude agents --json` prints `agents`; files written land in `files`, and messages sent in `sent`.
 // A test can put a repository there: `git` maps a git command's arguments to its output; `git worktree add` lands in `worktrees`.
 function engine(on: On, transcript: string | (() => string) = '', agents = '[]', env: Record<string, string> = {}) {
-  const host = { registered: [] as string[], prompts: [] as string[], logs: [] as string[], files: new Map<string, string>(), sent: [] as string[], git: new Map<string, string>(), worktrees: [] as string[][], runs: [] as string[][] }
+  const host = { registered: [] as string[], prompts: [] as string[], logs: [] as string[], files: new Map<string, string>(), sent: [] as string[], git: new Map<string, string>(), worktrees: [] as string[][], runs: [] as string[][], all: '[]' }
   on('session.send', (_$, e) => {
     host.sent.push(e.text)
     return { isDelivered: true }
@@ -36,7 +36,7 @@ function engine(on: On, transcript: string | (() => string) = '', agents = '[]',
     if (e.argv[0] === 'tail') return done(0, typeof transcript === 'string' ? transcript : transcript())
     if (e.argv[0] === 'claude' && e.argv.includes('--bg')) return done(0, 'backgrounded · abcdef12 · check-the-fix\n')
     if (e.argv[0] === 'claude' && e.argv[1] === 'agents' && !e.argv.includes('--all')) return done(0, agents)
-    if (e.argv[0] === 'claude') return done(0, '[]')
+    if (e.argv[0] === 'claude') return done(0, e.argv.includes('--all') ? host.all : '[]')
     if (e.argv[0] === 'git' && e.argv[3] === 'worktree') {
       host.worktrees.push(e.argv.slice(3))
       return done(0)
@@ -139,6 +139,10 @@ test('a suggested session moves under the turn\'s last reply text when the turn 
   await settle()
   expect(host.logs).toEqual([])
   expect(host.prompts).toEqual(['I started the suggested session "Check the fix" (task_0123abcd).'])
+  // Claude may read that prompt as a request to start it: the call names the running session, with no error.
+  const again = await $.tool.call({ tool: START, proposal_id: 'task_0123abcd' })
+  expect(again.deny).toBeUndefined()
+  expect(again.result).toContain('claude attach abcdef12')
   await last.unmount()
   const started = await words(await replyBlock($, 'a3', REPLY))
   expect(started.some(w => w.startsWith('New session'))).toBe(true)
@@ -290,9 +294,10 @@ test('a running session moves into one card under each turn\'s last reply text, 
   await settle()
   expect(host.logs).toEqual([])
   expect(await rowWords($, START, input, CALL)).toEqual([])
+  // One row: name, state and only the everyday action. With no place to open in, that copies the attach command.
   const card = await shown('a3', REPLY)
+  expect(card.slice(-3)).toEqual(['check-the-fix', 'starting', 'copy attach'])
   expect(card).toContain('Running sessions')
-  expect(card).toContain('claude attach abcdef12')
 
   // A later turn moves the card under its own reply, so it stays at the end.
   transcript = `${TRANSCRIPT}\n${row({ type: 'user', uuid: 'u2', timestamp: at(4), message: { content: 'And the other one?' } })}\n${row({ type: 'assistant', uuid: 'a4', timestamp: at(5), message: { content: [{ type: 'text', text: LATER }] } })}`
@@ -300,7 +305,7 @@ test('a running session moves into one card under each turn\'s last reply text, 
   await $.turn.complete({ reason: 'answer', answer: LATER, durationMs: 1000, isAborted: false, turnId: 't2' })
   await settle()
   expect(await shown('a3', REPLY)).toEqual(['engine: AssistantMessage'])
-  expect(await shown('a4', LATER)).toContain('claude attach abcdef12')
+  expect(await shown('a4', LATER)).toContain('check-the-fix')
 
   // Once no session runs, the card goes and the session's row is back on its call: `claude agents` no longer lists it.
   await $.turn.start({ text: 'Is it still there?', turnId: 't3' })
@@ -336,6 +341,32 @@ test('the hint line under the prompt counts the running sessions after any tail 
   expect(await hint('cache 56m')).toBe('cache 56m')
 })
 
+test('while every running session is idle, the poll asks claude agents only every eighth time', async ($, on) => {
+  const host = engine(on, TRANSCRIPT)
+  const clock = mock.clock(on)
+  const looks = () => host.runs.filter(argv => argv[1] === 'agents' && argv.includes('--all')).length
+  const wait = async (polls: number) => {
+    for (let i = 0; i < polls; i++) {
+      await clock.advance(4000)
+      await settle()
+    }
+  }
+  const listed = (status: string) => JSON.stringify([{ id: 'abcdef12', sessionId: 'abcdef12-uuid', cwd: '/w', status }])
+  host.all = listed('busy')
+  await $.tool.call({ tool: START, tool_use_id: CALL, ...PROPOSE, initiation: 'user_asked', use_worktree: false })
+  await wait(3)
+  expect(looks()).toBe(3)
+  host.all = listed('idle')
+  await wait(1)
+  expect(looks()).toBe(4)
+  await wait(8)
+  expect(looks()).toBe(5)
+  // A new session is watched closely again.
+  await $.tool.call({ tool: START, tool_use_id: 'toolu_second', ...PROPOSE, title: 'Second check', initiation: 'user_asked', use_worktree: false })
+  await wait(2)
+  expect(looks()).toBe(7)
+})
+
 test('a switch starts the session with no link back and opens it in this terminal when the turn ends', async ($, on) => {
   const restartFile = '/run/user/1/claude-restart.42'
   const host = engine(on, '', '[]', { CLAUDE_RESTART_FILE: restartFile })
@@ -346,6 +377,24 @@ test('a switch starts the session with no link back and opens it in this termina
   expect(host.files.has('/home/me/.claude/toolkit/links/abcdef12.json')).toBe(false)
   expect(host.files.get(restartFile)).toBe('attach\nabcdef12')
   expect((await rowWords($, START, input, CALL)).some(w => w.includes('no reports'))).toBe(true)
+})
+
+test('the running sessions card opens a session in the first place the terminal offers, and offers stop only while it works', async ($, on) => {
+  const host = engine(on, TRANSCRIPT, '[]', { TERM_PROGRAM: 'ghostty', TERM_PROGRAM_VERSION: '1.4.0' })
+  host.all = JSON.stringify([{ id: 'abcdef12', sessionId: 'abcdef12-uuid', cwd: '/w', status: 'busy' }])
+  const clock = mock.clock(on)
+  await $.turn.start({ text: 'Check it in a session.', turnId: 't1' })
+  await $.tool.call({ tool: START, tool_use_id: CALL, ...PROPOSE, initiation: 'user_asked', use_worktree: false })
+  await clock.advance(4000)
+  await settle()
+  await $.turn.complete({ reason: 'answer', answer: REPLY, durationMs: 60_000, isAborted: false, turnId: 't1' })
+  await settle()
+  const ui = await replyBlock($, 'a3', REPLY)
+  expect((await words(ui)).slice(-4)).toEqual(['check-the-fix', 'working', 'open', 'stop'])
+  await ui.press({ key: 'open:abcdef12' })
+  await settle()
+  await ui.unmount()
+  expect(host.runs).toContainEqual(['ghostty', '+new-tab', '--working-directory=/w', '--title=check-the-fix', '-e', 'claude', 'attach', 'abcdef12'])
 })
 
 test("a row offers the places this terminal can open the session in, and opens it there", async ($, on) => {
@@ -412,7 +461,7 @@ test('after a restart the sessions this one started that still run come back in 
   await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
   const card = await words(await replyBlock($, 'a3', REPLY))
   expect(card).toContain('Running sessions')
-  expect(card).toContain('claude attach abcdef12')
+  expect(card).toContain('check-the-fix')
   expect(card.some(word => /gone0001|other002|muted003/.test(word))).toBe(false)
   expect((await $.tool.call({ tool: 'mcp__toolkit__list_sessions', linked: true })).result).toContain('check-the-fix (id abcdef12')
 })

@@ -101,8 +101,10 @@ declare module 'claude-code' {
       cdPending: { dir: string; task: string } | null
       /** The restart file a restart tool call wrote, until its turn ends and Claude Code is stopped. */
       restartPending: string | null
-      /** A turn runs: a relaunch asked for between turns need not wait for one to end. */
-      isTurnRunning: boolean | null
+      /** The reply row (its uuid) the open task list shows under, from the end of the turn that changed it to the next turn's start. */
+      planAt: string | null
+      /** The main loop's turn while it runs, by its id: a relaunch asked for between turns need not wait for one to end. */
+      runningTurn: string | null
       /** The label of the next step button pressed, by the call's tool_use_id; null until one is. */
       wrapUpAnswer: StateFamily<string | null>
       /** The running turn's last next step call with a question, until the turn ends and it moves under the reply. */

@@ -201,6 +201,23 @@ test('a code span that names a file becomes a link a click opens in the editor a
   expect(host.toasts).toEqual([])
 })
 
+test('a file a reply names before it exists becomes a link in a later reply', async ($, on) => {
+  await engine(on)
+  const files = new Set<string>()
+  mock.env(on, { HOME: '/home/me' })
+  on('session.cwd', () => ({ value: '/repo' }))
+  on('fs.stat', (_$, e) => (files.has(e.path) ? { value: { kind: 'file', realPath: e.path, size: 1, mtimeMs: 0, isLink: false } } : { deny: 'no such file' }))
+  const say = async (requestId: string, text: string) => {
+    const ui = await $.ui.mount({ plugin: 'toolkit', surface: 'terminal', component: 'AssistantMessage', requestId, props: { text, isFirstOfReply: true } })
+    const words = await shown(ui)
+    await ui.unmount()
+    return words
+  }
+  expect(await say('msg-1', 'I will write `src/new.ts`.')).toEqual([])
+  files.add('/repo/src/new.ts')
+  expect(await say('msg-2', 'Wrote `src/new.ts`.')).toEqual(['Markdown: Wrote [`src/new.ts`](file:///repo/src/new.ts).'])
+})
+
 test('a reply that names no file is left to the engine', async ($, on) => {
   await engine(on)
   on('session.cwd', () => ({ value: '/repo' }))

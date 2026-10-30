@@ -39,7 +39,7 @@ export const register: Register = on => {
     const dir = (e.props.text.includes('```mermaid') ? await read($, { plugin: 'toolkit', key: 'mermaidDir' } as const) : undefined) ?? ''
     const parts = blocks(e.props.text, { mermaid: dir !== '' })
     // Code spans that name a file become links a plain click opens.
-    const files = await fileLinks($, parts.flatMap(part => (part.kind === 'text' ? [part.text] : [])))
+    const files = await fileLinks($, parts.flatMap(part => (part.kind === 'text' ? [part.text] : [])), e.requestId)
     if (files.size === 0 && parts.every(part => part.kind === 'text')) return next(e)
 
     const { Box, Button, Image, Markdown, Text } = $.ui.resolve(e)
@@ -92,7 +92,7 @@ export const register: Register = on => {
           const { table } = part
           const tableNo = parts.slice(0, index).filter(earlier => earlier.kind === 'table').length + 1
           const which = tableCount === 1 ? 'table' : `table ${tableNo}`
-          const rows = `(${table.rows.length} rows)`
+          const rows = `(${table.rows.length} ${table.rows.length === 1 ? 'row' : 'rows'})`
 
           const copyPlain = async (text: string, as: string) => {
             const copied = await $.ui.copy({ text, surface: 'terminal' })
@@ -162,6 +162,8 @@ export const register: Register = on => {
               const outcome = await draw().catch((err: unknown): Diagram => ({ status: 'failed', reason: String(err) }))
               await $.state.set(diagramRef, outcome)
             })
+            // A job that rejects must not leave the queue rejected, or every later diagram is skipped.
+            queue = queue.catch(() => undefined)
           })
         }
 

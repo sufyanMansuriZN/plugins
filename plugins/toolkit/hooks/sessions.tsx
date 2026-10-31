@@ -166,8 +166,10 @@ async function git($: EngineInterface, cwd: string, args: string[]): Promise<str
   return run?.exitCode === 0 ? run.stdout.trim() : null
 }
 
-// Whether each queued prompt came from the user, by its text, until its turn starts.
-const queued = new Map<string, boolean>()
+// Who each queued prompt came from, by its text, until its turn starts. A background task this
+// session started reports back for the turn that started it, so its turn keeps that turn's caller.
+type From = 'user' | 'event' | 'same'
+const queued = new Map<string, From>()
 let isEventTurn = false
 let proposedThisTurn = 0
 let stopPolling: (() => void) | null = null
@@ -636,22 +638,34 @@ export const register: Register = on => {
 
   // Where a prompt came from is known when it is queued; its turn starts later, by its text.
   on('prompt.submit', { origin: { kind: 'composer' } }, async ($, e, next) => {
-    queued.set(e.text, true)
+    queued.set(e.text, 'user')
     return next(e)
   })
   on('prompt.submit', { origin: { kind: 'plugin' } }, async ($, e, next) => {
-    queued.set(e.text, e.origin.kind === 'plugin' && e.origin.asUser === true)
+    queued.set(e.text, e.origin.kind === 'plugin' && e.origin.asUser === true ? 'user' : 'event')
     return next(e)
   })
-  on('prompt.submit', { origin: { kind: /^(task-notification|scheduled-trigger|peer|peer-send-message|channel|projects-relay)$/ } }, async ($, e, next) => {
-    queued.set(e.text, false)
+  on('prompt.submit', { origin: { kind: 'task-notification' } }, async ($, e, next) => {
+    queued.set(e.text, 'same')
+    return next(e)
+  })
+  // A subagent's hand-back arrives as a peer message, from the agent's id; only this session's own agents report as a background task.
+  on('prompt.submit', { origin: { kind: 'peer' } }, async ($, e, next) => {
+    const from = /^<agent-message from="([^"]+)"/.exec(e.text)?.[1]
+    const isOwnAgent = from !== undefined && (await $.agent.list().catch(() => [])).some(agent => agent.id === from && agent.parentId === undefined)
+    queued.set(e.text, isOwnAgent ? 'same' : 'event')
+    return next(e)
+  })
+  on('prompt.submit', { origin: { kind: /^(scheduled-trigger|peer-send-message|channel|projects-relay)$/ } }, async ($, e, next) => {
+    queued.set(e.text, 'event')
     return next(e)
   })
   // A turn that another session's report or another automated event started may propose sessions but not start them.
   on('turn.start', { text: /[\s\S]*/ }, async ($, e, next) => {
     if (e.agentId === undefined) {
       proposedThisTurn = 0
-      isEventTurn = (queued.get(e.text) ?? [...queued].find(([text]) => e.text.includes(text))?.[1]) === false
+      const from = queued.get(e.text) ?? [...queued].find(([text]) => e.text.includes(text))?.[1]
+      if (from !== 'same') isEventTurn = from === 'event'
       queued.clear()
     }
     return next(e)

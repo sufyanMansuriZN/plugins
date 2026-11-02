@@ -2,55 +2,6 @@ import type { EngineInterface } from 'claude-code'
 
 import { openerOf } from './mermaid'
 
-/** What decides where a background session can open: the OS and the terminal Claude Code runs in. */
-export type Terminal = { os: string; tmux?: string; tmuxPane?: string; termProgram?: string; termVersion?: string }
-
-/** A place beside this session that the terminal lets another program open. */
-export type Place = 'pane' | 'tab' | 'popup' | 'window'
-
-/** The session a row opens: `claude attach` takes the short id. */
-export type Attachable = { id: string; name: string; cwd: string }
-
-export async function terminalOf($: EngineInterface): Promise<Terminal> {
-  const os = await $.process.run(['uname', '-s']).then(run => run.stdout.trim(), () => '')
-  return {
-    os,
-    tmux: await $.env.get('TMUX'),
-    tmuxPane: await $.env.get('TMUX_PANE'),
-    termProgram: await $.env.get('TERM_PROGRAM'),
-    termVersion: await $.env.get('TERM_PROGRAM_VERSION'),
-  }
-}
-
-const atLeast = (version: string | undefined, major: number, minor: number) => {
-  const [a = 0, b = 0] = (version ?? '').split('.').map(Number)
-  return a > major || (a === major && b >= minor)
-}
-
-/**
- * The places this terminal can open, best first. tmux opens a pane, a window (a tab) or a popup;
- * Ghostty on Linux only a window, and a tab from 1.4 (`+new-tab`). Elsewhere none: here and copy remain.
- */
-export function placesOf(terminal: Terminal): Place[] {
-  if (terminal.tmux) return ['pane', 'tab', 'popup']
-  if (terminal.termProgram === 'ghostty' && terminal.os === 'Linux') return atLeast(terminal.termVersion, 1, 4) ? ['tab', 'window'] : ['window']
-  return []
-}
-
-/** The command that opens `session` in `place`. */
-export function openArgv(terminal: Terminal, place: Place, session: Attachable): string[] {
-  const attach = ['claude', 'attach', session.id]
-  if (terminal.tmux) {
-    const pane = terminal.tmuxPane ? ['-t', terminal.tmuxPane] : []
-    if (place === 'pane') return ['tmux', 'split-window', '-h', ...pane, '-c', session.cwd, ...attach]
-    if (place === 'popup') return ['tmux', 'display-popup', ...pane, '-E', '-w', '90%', '-h', '90%', '-d', session.cwd, attach.join(' ')]
-    // new-window takes no pane: it opens in this session, which TMUX names.
-    return ['tmux', 'new-window', '-n', session.name, '-c', session.cwd, ...attach]
-  }
-  if (place === 'tab') return ['ghostty', '+new-tab', `--working-directory=${session.cwd}`, `--title=${session.name}`, '-e', ...attach]
-  return ['ghostty', '+new-window', `--working-directory=${session.cwd}`, '-e', ...attach]
-}
-
 // Files a person views rather than edits: they open in the desktop's own app for their type.
 const VIEWED = /\.(png|jpe?g|gif|webp|bmp|ico|tiff?|svg|pdf|html?|mp3|mp4|m4a|mov|webm|wav|ogg|zip|docx?|xlsx?|pptx?|odt|ods|odp)$/i
 // Editors that draw in a terminal: a click has no terminal to give them, so the file opens in the desktop's app.

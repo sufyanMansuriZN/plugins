@@ -27,67 +27,28 @@ export type PlanStep = { content: string; status: PlanStatus }
 
 export type PermissionMode = 'default' | 'plan' | 'acceptEdits' | 'auto' | 'bypassPermissions'
 
-export type Effort = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
-
-/** Where a new session works: a folder as it is, a new worktree of a folder's repository, or the cloud. */
-export type Place =
-  | { kind: 'folder'; cwd: string }
-  | { kind: 'worktree'; root: string; branch: string; source: string | null }
-  | { kind: 'cloud'; environment: string | null }
-
 /** Everything a new session starts from, checked; `text` is its whole first message. */
 export type Brief = {
-  title: string
   name: string
   context: 'fresh' | 'fork'
   text: string
-  place: Place
+  /** The folder `claude --bg` runs in; with `isWorktree`, Claude Code cuts its own worktree there (`-w`). */
+  cwd: string
+  isWorktree: boolean
   model: string | null
-  effort: Effort | null
   /** The mode Claude asked for; null starts the session in the user's own default mode. */
   permissionMode: PermissionMode | null
 }
 
-/**
- * A linked session: `starting` until its first reply, `working` while a turn runs, `idle` between
- * turns; ended as `claude agents --json` says (`done`, `stopped`, `failed`), or `gone` once not listed.
- */
-export type SessionState = 'starting' | 'working' | 'idle' | 'done' | 'stopped' | 'failed' | 'gone' | (string & {})
-
-/** A session this one started, as the linked sessions list keeps it. */
-export type LinkedSession = {
+/** A session start_session started, so its call's row can name it. */
+export type StartedSession = {
   name: string
-  title: string
   /** The short id `claude attach`, `logs` and `stop` take. */
   id: string
-  sessionId: string | null
-  cwd: string
-  branch: string | null
-  state: SessionState
-  startedAt: number
-  /** The start_session call that started it, so that call's row shows its state. */
+  /** Where it works: the folder, or the worktree Claude Code cut. */
+  where: string
   callId: string
-  /** The user stopped its reports to this session. */
-  isMuted?: boolean
 }
-
-/** A card start_session put up: an offer waiting for the user's answer, or a proposal. */
-export type Proposal = {
-  taskId: string
-  title: string
-  initiation: 'offer' | 'own_initiative'
-  /** A proposal's brief; an offer gets its brief only once the user picks New session. */
-  brief: Brief | null
-  status: 'open' | 'new_session' | 'here' | 'started' | 'dismissed'
-  /** The name of the session it started. */
-  session: string | null
-  createdAt: number
-  /** The reply row (message uuid) the card is drawn under once its turn ends; absent while it draws on its call's row. */
-  movedTo?: string
-}
-
-/** What a started session reads from its link file: the session id that started it, and its own name there. */
-export type Link = { parent: string; name: string }
 
 declare module 'claude-code' {
   interface PluginState {
@@ -103,8 +64,6 @@ declare module 'claude-code' {
       restartPending: string | null
       /** The reply row (its uuid) the open task list shows under, from the end of the turn that changed it to the next turn's start. */
       planAt: string | null
-      /** The main loop's turn while it runs, by its id: a relaunch asked for between turns need not wait for one to end. */
-      runningTurn: string | null
       /** The label of the next step button pressed, by the call's tool_use_id; null until one is. */
       wrapUpAnswer: StateFamily<string | null>
       /** The running turn's last next step call with a question, until the turn ends and it moves under the reply. */
@@ -122,15 +81,7 @@ declare module 'claude-code' {
       /** Whether a long task list above the prompt shows every step; folded to five until "… +N more" is pressed. */
       planIsOpen: boolean
       /** The sessions this one started, oldest first. */
-      linked: LinkedSession[]
-      /** Whether a start_session call is still starting its session, by the call's tool_use_id (a proposal's task id for a card's start). */
-      launching: StateFamily<boolean>
-      /** start_session's cards, by task id. */
-      proposals: StateFamily<Proposal | null>
-      /** The own_initiative cards drawn under a reply block, by its message uuid. */
-      cardsAt: StateFamily<string[] | null>
-      /** The reply block the running sessions card is drawn under, by its message uuid, and the ids of the sessions it shows; null when none runs. */
-      sessionsAt: { anchor: string; ids: string[] } | null
+      started: StartedSession[]
     }
   }
 }

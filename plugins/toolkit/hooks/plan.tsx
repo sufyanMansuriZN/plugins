@@ -2,8 +2,7 @@ import { read, update } from 'claude-code'
 import type { Elements, EngineInterface, Register, SessionMessage } from 'claude-code'
 
 import type { PlanStatus, PlanStep } from '../types'
-import { readTranscript } from './sessions'
-import { replyAnchor } from './sessions-model'
+import { readTranscript, replyAnchor } from './transcript'
 
 const NAME = 'update_plan'
 export const PLAN_TOOL = `mcp__toolkit__${NAME}`

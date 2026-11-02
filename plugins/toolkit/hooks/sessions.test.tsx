@@ -2,63 +2,25 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
-const HAND_OFF = 'mcp__toolkit__hand_off_to_session'
-
-// Beneath the plugin: the engine's rows, the tools registered, and a session outside any git repository
-// whose transcript ends with `transcript`; `claude --bg` starts a session with id abcdef12.
-// `claude agents --json` prints `agents`; files written land in `files`, and messages sent in `sent`.
-// A test can put a repository there: `git` maps a git command's arguments to its output; `git worktree add` lands in `worktrees`.
-function engine(on: On, transcript: string | (() => string) = '', agents = '[]', env: Record<string, string> = {}) {
-  const host = { registered: [] as string[], prompts: [] as string[], logs: [] as string[], files: new Map<string, string>(), sent: [] as string[], git: new Map<string, string>(), worktrees: [] as string[][], runs: [] as string[][], all: '[]', agents: [] as { id: string; description: string; type: string; status: 'completed' }[] }
-  on('session.send', (_$, e) => {
-    host.sent.push(e.text)
-    return { isDelivered: true }
-  })
-  on('ui.log', (_$, e) => {
-    host.logs.push(e.text)
-    return { value: undefined }
-  })
-  on('ui.toast', (_$, e) => {
-    host.logs.push(e.text)
-    return { value: undefined }
-  })
-  mock.env(on, { HOME: '/home/me', ...env })
+// Beneath the plugin: a session in /w outside any git repository; `claude --bg` starts a session with id abcdef12.
+function engine(on: On) {
+  const host = { registered: [] as string[], runs: [] as { argv: string[]; cwd?: string }[], agents: [] as { id: string; description: string; type: string; status: 'completed' }[] }
+  mock.env(on, { HOME: '/home/me' })
   on('agent.list', () => ({ value: host.agents }))
   on('session.cwd', () => ({ value: '/w' }))
   on('session.id', () => ({ value: 'parent-uuid' }))
   on('session.model', () => ({ value: 'claude-opus-5-5' }))
   on('process.run', (_$, e) => {
     const done = (exitCode: number, stdout = '', stderr = '') => ({ value: { exitCode, stdout, stderr, isStdoutTruncated: false, isStderrTruncated: false } })
-    host.runs.push([...e.argv])
+    host.runs.push({ argv: [...e.argv], cwd: e.init?.cwd })
+    if (e.argv[0] === 'claude') return done(0, 'backgrounded · abcdef12 · check-the-fix\n')
     if (e.argv[0] === 'uname') return done(0, 'Linux\n')
-    if (['ghostty', 'tmux', 'sh'].includes(e.argv[0] ?? '')) return done(0)
-    if (e.argv[0] === 'find') return done(0, `${e.argv[1]}/-w/${e.argv.at(-1)}\n`)
-    if (e.argv[0] === 'tail') return done(0, typeof transcript === 'string' ? transcript : transcript())
-    if (e.argv[0] === 'claude' && e.argv.includes('--bg')) return done(0, 'backgrounded · abcdef12 · check-the-fix\n')
-    if (e.argv[0] === 'claude' && e.argv[1] === 'agents' && !e.argv.includes('--all')) return done(0, agents)
-    if (e.argv[0] === 'claude') return done(0, e.argv.includes('--all') ? host.all : '[]')
-    if (e.argv[0] === 'git' && e.argv[3] === 'worktree') {
-      host.worktrees.push(e.argv.slice(3))
-      return done(0)
-    }
-    const git = host.git.get(e.argv.slice(3).join(' '))
-    if (git !== undefined) return done(0, `${git}\n`)
-    return done(host.git.size > 0 ? 1 : 128, '', 'not a git repository')
+    return done(128, '', 'not a git repository')
   })
-  on('fs.write', (_$, e) => {
-    host.files.set(e.path, e.text)
-    return { value: undefined }
-  })
-  on('fs.exists', (_$, e) => ({ value: host.files.has(e.path) }))
-  on('fs.read', (_$, e) => ({ value: host.files.get(e.path) ?? '' }))
-  // Every folder exists but the worktrees a test has not made.
-  on('fs.stat', (_$, e) => ({ value: e.path.includes('/.claude/worktrees/') ? undefined : { kind: 'dir', realPath: '/w', size: 0, mtimeMs: 0, isLink: false } }))
+  on('fs.stat', (_$, e) => (e.path === '/nope' ? { deny: 'no such file' } : { value: { kind: 'dir' as const, realPath: e.path, size: 0, mtimeMs: 0, isLink: false } }))
   on('turn.start', (_$, e) => ({ turnId: e.turnId }))
   on('turn.complete', (_$, e) => ({ text: 'answer' in e ? e.answer : '' }))
-  on('prompt.submit', (_$, e) => {
-    host.prompts.push(e.text)
-    return { text: e.text }
-  })
+  on('prompt.submit', (_$, e) => ({ text: e.text }))
   on('ui.render', ($, e) => {
     const { Text } = $.ui.resolve(e)
     return <Text>{`engine: ${e.component}`}</Text>
@@ -70,138 +32,52 @@ function engine(on: On, transcript: string | (() => string) = '', agents = '[]',
   return host
 }
 
-async function rowWords($: Engine, tool: string, input: unknown, id = tool): Promise<string[]> {
+const START = 'mcp__toolkit__start_session' as const
+const CALL = 'toolu_0123abcd'
+const ASKED = { name: 'check-the-fix', prompt: 'Run the saved event through the fix; done when each batch row is reported.' }
+
+async function rowWords($: Engine, input: unknown, id = CALL): Promise<string[]> {
   const ui = await $.ui.mount({
     plugin: 'toolkit',
     surface: 'terminal',
     component: 'ToolUse',
     requestId: id,
-    props: { tool_use_id: id, tool, input, isRunning: false, isErrored: false, isInterrupted: false, output: 'ok' },
+    props: { tool_use_id: id, tool: START, input, isRunning: false, isErrored: false, isInterrupted: false, output: 'ok' },
   })
   const all = await ui.findAll({})
   await ui.unmount()
   return all.flatMap(found => ((found.type === 'Text' || found.type === 'Button') && !['', '●', '⎿', '·'].includes(found.text.trim()) ? [found.text.trim()] : []))
 }
 
-const START = 'mcp__toolkit__start_session'
-const CALL = 'toolu_0123abcd'
-const PROPOSE = {
-  initiation: 'own_initiative',
-  title: 'Check the fix',
-  prompt: 'Run the saved event through the fix; done when each batch row is reported.',
-  background: 'The user asked whether VES-6372 fixes blank Batch IDs; the tank records were checked here already.',
-}
-const REPLY = 'Yes for the Batch IDs.'
-const at = (seconds: number) => new Date(Date.now() + seconds * 1000).toISOString()
-const row = (value: object) => JSON.stringify(value)
-const TRANSCRIPT = [
-  row({ type: 'user', uuid: 'u1', timestamp: at(0), message: { content: 'Check it yourself.' } }),
-  row({ type: 'assistant', uuid: 'a1', timestamp: at(1), message: { content: [{ type: 'text', text: 'Checking the shape.' }] } }),
-  row({ type: 'assistant', uuid: 'a2', timestamp: at(2), message: { content: [{ type: 'tool_use', id: CALL, name: START, input: PROPOSE }] } }),
-  row({ type: 'assistant', uuid: 'a3', timestamp: at(3), message: { content: [{ type: 'text', text: REPLY }] } }),
-].join('\n')
-
-async function words(ui: { findAll: Awaited<ReturnType<Engine['ui']['mount']>>['findAll'] }): Promise<string[]> {
-  const all = await ui.findAll({})
-  return all.flatMap(found => (found.type === 'Text' || found.type === 'Button') && !['', '●', '⎿', '·'].includes(found.text.trim()) ? [found.text.trim()] : [])
-}
-
-const replyBlock = ($: Engine, requestId: string, text: string) =>
-  $.ui.mount({ plugin: 'toolkit', surface: 'terminal', component: 'AssistantMessage', requestId, props: { text, isFirstOfReply: true } })
-
-// The turn proposes a session, ends, and its card is moved in the background.
-async function proposeAndEnd($: Engine, reason: 'answer' | 'error') {
-  await $.turn.start({ text: 'Check it yourself.', turnId: 't1' })
-  const call = await $.tool.call({ tool: START, tool_use_id: CALL, ...PROPOSE })
-  expect(call.result).toContain('do it here')
-  await $.turn.complete({ reason, answer: REPLY, durationMs: 60_000, isAborted: false, turnId: 't1' })
-  await settle()
-}
-
-// The move and a Start run in the background over several host calls: let them land.
-async function settle() {
-  for (let i = 0; i < 300; i++) await Promise.resolve()
-}
-
-test('a suggested session moves under the turn\'s last reply text when the turn ends, and stays there once started', async ($, on) => {
-  const host = engine(on, TRANSCRIPT)
-  await proposeAndEnd($, 'answer')
-  expect(host.logs).toEqual([])
-  expect(await rowWords($, START, PROPOSE, CALL)).toEqual([])
-  const earlier = await replyBlock($, 'a1', 'Checking the shape.')
-  expect(await words(earlier)).toEqual(['engine: AssistantMessage'])
-  const last = await replyBlock($, 'a3', REPLY)
-  const card = await words(last)
-  expect(card[0]).toBe('engine: AssistantMessage')
-  expect(card.some(w => w.startsWith('Suggested session') && w.includes('Check the fix'))).toBe(true)
-  expect(card.slice(-2)).toEqual(['Start', 'Dismiss'])
-  await last.press({ key: 'start:task_0123abcd' })
-  await settle()
-  expect(host.logs).toEqual([])
-  expect(host.prompts).toEqual(['I started the suggested session "Check the fix" (task_0123abcd).'])
-  // Claude may read that prompt as a request to start it: the call names the running session, with no error.
-  const again = await $.tool.call({ tool: START, proposal_id: 'task_0123abcd' })
-  expect(again.deny).toBeUndefined()
-  expect(again.result).toContain('claude attach abcdef12')
-  await last.unmount()
-  const started = await words(await replyBlock($, 'a3', REPLY))
-  expect(started.some(w => w.startsWith('New session'))).toBe(true)
-  expect(started).toContain('claude attach abcdef12')
-  // The call that starts it by name keeps its own row.
-  expect(await rowWords($, START, { proposal_id: 'task_0123abcd' })).toContain('New session')
-})
-
-test('a suggested session under a reply with a table still shows, as the table copy links do', async ($, on) => {
-  const table = '| Tank | Batch |\n| --- | --- |\n| DOT P | 15jos9y |'
-  engine(on, TRANSCRIPT.replace(REPLY, `${REPLY}\\n\\n${table.replaceAll('\n', '\\n')}`))
-  await proposeAndEnd($, 'answer')
-  const shown = await words(await replyBlock($, 'a3', `${REPLY}\n\n${table}`))
-  expect(shown).toContain('copy table')
-  expect(shown.slice(-2)).toEqual(['Start', 'Dismiss'])
-})
-
-test('a transcript that lags the end of the turn is read again until it holds the reply', async ($, on) => {
-  let reads = 0
-  const host = engine(on, () => (++reads === 1 ? TRANSCRIPT.split('\n').slice(0, 3).join('\n') : TRANSCRIPT))
-  const clock = mock.clock(on)
-  await proposeAndEnd($, 'answer')
-  expect(await rowWords($, START, PROPOSE, CALL)).toEqual(expect.arrayContaining(['Start', 'Dismiss']))
-  await clock.advance(300)
-  await settle()
-  expect(reads).toBe(2)
-  expect(host.logs).toEqual([])
-  expect(await rowWords($, START, PROPOSE, CALL)).toEqual([])
-  expect((await words(await replyBlock($, 'a3', REPLY))).slice(-2)).toEqual(['Start', 'Dismiss'])
-})
-
-test('a suggested session dismissed in its own turn stays on its call\'s row', async ($, on) => {
-  engine(on, TRANSCRIPT)
-  await $.turn.start({ text: 'Check it yourself.', turnId: 't1' })
-  await $.tool.call({ tool: START, tool_use_id: CALL, ...PROPOSE })
-  await $.tool.call({ tool: 'mcp__toolkit__dismiss_task', task_id: 'task_0123abcd' })
-  await $.turn.complete({ reason: 'answer', answer: REPLY, durationMs: 60_000, isAborted: false, turnId: 't1' })
-  await settle()
-  expect(await rowWords($, START, PROPOSE, CALL)).toContain('Dismissed')
-  expect(await words(await replyBlock($, 'a3', REPLY))).toEqual(['engine: AssistantMessage'])
-})
-
-test('a turn that ends in an error keeps its suggested session on the call\'s row', async ($, on) => {
-  engine(on, TRANSCRIPT)
-  await proposeAndEnd($, 'error')
-  expect(await rowWords($, START, PROPOSE, CALL)).toEqual(expect.arrayContaining(['Start', 'Dismiss']))
-  expect(await words(await replyBlock($, 'a3', REPLY))).toEqual(['engine: AssistantMessage'])
-})
-
-test('hand_off_to_session is offered in an interactive terminal session', async ($, on) => {
+test('only start_session is offered, in an interactive terminal session', async ($, on) => {
   const host = engine(on)
   on('session.start', () => ({ cwd: '/w' }))
   await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
-  expect(host.registered).toContain('hand_off_to_session')
+  expect(host.registered).toContain('start_session')
+  for (const gone of ['dismiss_task', 'hand_off_to_session', 'list_sessions', 'stop_reports']) expect(host.registered).not.toContain(gone)
+})
+
+test('a start runs claude --bg in the folder, tells Claude to subscribe with SendMessage, and its row copies the attach command', async ($, on) => {
+  const host = engine(on)
+  const call = await $.tool.call({ tool: START, tool_use_id: CALL, ...ASKED })
+  expect(call.result).toContain('Started session "check-the-fix" (id abcdef12)')
+  expect(call.result).toContain('"notify_when_idle": true')
+  expect(host.runs.at(-1)).toEqual({ argv: ['claude', '--bg', '-n', 'check-the-fix', '--settings', '{"worktree":{"bgIsolation":"none"}}', '--', ASKED.prompt], cwd: '/w' })
+  const words = await rowWords($, ASKED)
+  expect(words).toContain('New session')
+  expect(words).toContain('claude attach abcdef12')
+})
+
+test('a folder that does not exist starts nothing', async ($, on) => {
+  const host = engine(on)
+  const call = await $.tool.call({ tool: START, tool_use_id: CALL, ...ASKED, cwd: '/nope' })
+  expect(call.deny).toContain('/nope is not a folder')
+  expect(host.runs.some(run => run.argv[0] === 'claude')).toBe(false)
 })
 
 test('a turn a background task wakes may start a session as the turn that started the task could', async ($, on) => {
   engine(on)
-  const asked = { tool: START, tool_use_id: CALL, ...PROPOSE, initiation: 'user_asked', use_worktree: false }
+  const asked = { tool: START, tool_use_id: CALL, ...ASKED } as const
   const turn = async (text: string, origin: { kind: 'composer' | 'task-notification' | 'peer' }, turnId: string) => {
     await $.prompt.submit({ text, wait: false, origin } as Parameters<Engine['prompt']['submit']>[0])
     await $.turn.start({ text, turnId })
@@ -217,13 +93,13 @@ test('a turn a background task wakes may start a session as the turn that starte
   await turn('Another Claude session sent a message: done', { kind: 'peer' }, 't3')
   await $.prompt.submit({ text: 'check done', wait: false, origin: { kind: 'task-notification' } })
   await $.turn.start({ text: 'check done', turnId: 't4' })
-  expect((await $.tool.call({ ...asked, tool_use_id: 'toolu_second' })).deny).toContain('every start in this turn is refused')
+  expect((await $.tool.call({ ...asked, tool_use_id: 'toolu_second' })).deny).toContain('no session starts in it')
 })
 
 test('a hand-back from this session\'s own subagent may start a session, and a message naming another agent may not', async ($, on) => {
   const host = engine(on)
   host.agents.push({ id: 'a0ae4498', description: 'Opus review', type: 'general-purpose', status: 'completed' })
-  const asked = { tool: START, tool_use_id: CALL, ...PROPOSE, initiation: 'user_asked', use_worktree: false }
+  const asked = { tool: START, tool_use_id: CALL, ...ASKED } as const
   const handBack = (from: string) => `<agent-message from="${from}">\n[Subagent hand-back] Verdict: approve\n</agent-message>`
   const turn = async (text: string, kind: 'composer' | 'peer', turnId: string) => {
     await $.prompt.submit({ text, wait: false, origin: { kind } })
@@ -237,281 +113,5 @@ test('a hand-back from this session\'s own subagent may start a session, and a m
   await $.turn.complete({ reason: 'answer', answer: '', durationMs: 1, isAborted: false, turnId: 't2' })
 
   await turn(handBack('someone-else'), 'peer', 't3')
-  expect((await $.tool.call({ ...asked, tool_use_id: 'toolu_second' })).deny).toContain('every start in this turn is refused')
-})
-
-test('a hand-off without a plan is refused with the reason', async ($, on) => {
-  engine(on)
-  const call = await $.tool.call({ tool: HAND_OFF, title: 'Fix blank lines' })
-  expect(call.deny).toContain('remaining_plan is required')
-})
-
-test('a hand-off call draws as a session row headed Handed off', async ($, on) => {
-  engine(on)
-  const words = await rowWords($, HAND_OFF, { title: 'Fix blank lines', remaining_plan: 'Run the tests.' })
-  expect(words).toContain('Handed off')
-  expect(words.some(w => w.includes('Fix blank lines'))).toBe(true)
-  const start = await rowWords($, 'mcp__toolkit__start_session', { initiation: 'user_asked', title: 'Clean up' })
-  expect(start).toContain('New session')
-})
-
-const LINK = '/home/me/.claude/toolkit/links/parent-u.json'
-
-test('a started session reports to the session that started it only while that session is open', async ($, on) => {
-  const open = engine(on, '', JSON.stringify([{ kind: 'interactive', sessionId: 'starter-uuid', status: 'idle' }]))
-  open.files.set(LINK, JSON.stringify({ parent: 'starter-uuid', name: 'check-the-fix' }))
-  await $.turn.complete({ reason: 'answer', answer: 'Fixed.', durationMs: 1000, isAborted: false, turnId: 't1' })
-  await settle()
-  expect(open.sent).toHaveLength(1)
-  expect(open.sent[0]).toContain('Fixed.')
-})
-
-test('a started session sends nothing once the session that started it is closed', async ($, on) => {
-  const closed = engine(on, '', '[]')
-  closed.files.set(LINK, JSON.stringify({ parent: 'starter-uuid', name: 'check-the-fix' }))
-  await $.turn.complete({ reason: 'answer', answer: 'Fixed.', durationMs: 1000, isAborted: false, turnId: 't1' })
-  await settle()
-  expect(closed.sent).toEqual([])
-})
-
-test('a branch that already exists gets a short suffix on the branch and its folder', async ($, on) => {
-  const host = engine(on)
-  host.git.set('rev-parse --path-format=absolute --git-common-dir', '/repo/.git')
-  host.git.set('symbolic-ref --short refs/remotes/origin/HEAD', 'origin/main')
-  host.git.set('rev-parse --verify --quiet refs/heads/main', 'abc123')
-  host.git.set('rev-parse --verify --quiet refs/heads/feat/check-the-fix', 'abc123')
-  const started = await $.tool.call({ tool: START, tool_use_id: CALL, ...PROPOSE, initiation: 'user_asked', use_worktree: true })
-  expect(host.worktrees).toHaveLength(1)
-  const [, , , branch, path, source] = host.worktrees[0]
-  expect(branch).toMatch(/^feat\/check-the-fix-[0-9a-f]{6}$/)
-  expect(path).toBe(`/repo/.claude/worktrees/${branch.replace('/', '-')}`)
-  expect(source).toBe('main')
-  expect(started.result).toContain(`on branch ${branch}`)
-})
-
-test('stop reports leaves the session working and cuts its link, from the row or by name', async ($, on) => {
-  const host = engine(on)
-  const input = { ...PROPOSE, initiation: 'user_asked', use_worktree: false }
-  const started = await $.tool.call({ tool: START, tool_use_id: CALL, ...input })
-  expect(started.result).toContain('abcdef12')
-  const link = '/home/me/.claude/toolkit/links/abcdef12.json'
-  expect(host.files.get(link)).toContain('parent-uuid')
-  expect(await rowWords($, START, input, CALL)).toContain('stop reports')
-
-  const ui = await $.ui.mount({
-    plugin: 'toolkit',
-    surface: 'terminal',
-    component: 'ToolUse',
-    requestId: CALL,
-    props: { tool_use_id: CALL, tool: START, input, isRunning: false, isErrored: false, isInterrupted: false, output: 'ok' },
-  })
-  await ui.press({ key: 'mute:abcdef12' })
-  await settle()
-  await ui.unmount()
-  expect(host.files.get(link)).toBe('')
-  const after = await rowWords($, START, input, CALL)
-  expect(after).not.toContain('stop reports')
-  expect(after.some(w => w.includes('no reports'))).toBe(true)
-
-  expect((await $.tool.call({ tool: 'mcp__toolkit__stop_reports', name: 'nope' })).deny).toContain('No session "nope"')
-  const byName = await $.tool.call({ tool: 'mcp__toolkit__stop_reports', name: 'check-the-fix' })
-  expect(byName.result).toContain('sends no more reports')
-})
-
-test('a running session moves into one card under each turn\'s last reply text, and back to its row once none runs', async ($, on) => {
-  const LATER = 'Both are fixed.'
-  const shown = async (requestId: string, text: string) => {
-    const ui = await replyBlock($, requestId, text)
-    const found = await words(ui)
-    await ui.unmount()
-    return found
-  }
-  let transcript = TRANSCRIPT
-  const host = engine(on, () => transcript)
-  const input = { ...PROPOSE, initiation: 'user_asked', use_worktree: false }
-  await $.turn.start({ text: 'Check it in a session.', turnId: 't1' })
-  expect((await $.tool.call({ tool: START, tool_use_id: CALL, ...input })).result).toContain('abcdef12')
-  await $.turn.complete({ reason: 'answer', answer: REPLY, durationMs: 60_000, isAborted: false, turnId: 't1' })
-  await settle()
-  expect(host.logs).toEqual([])
-  expect(await rowWords($, START, input, CALL)).toEqual([])
-  // One row: name, state and only the everyday action. With no place to open in, that copies the attach command.
-  const card = await shown('a3', REPLY)
-  expect(card.slice(-3)).toEqual(['check-the-fix', 'starting', 'copy attach'])
-  expect(card).toContain('Running sessions')
-
-  // A later turn moves the card under its own reply, so it stays at the end.
-  transcript = `${TRANSCRIPT}\n${row({ type: 'user', uuid: 'u2', timestamp: at(4), message: { content: 'And the other one?' } })}\n${row({ type: 'assistant', uuid: 'a4', timestamp: at(5), message: { content: [{ type: 'text', text: LATER }] } })}`
-  await $.turn.start({ text: 'And the other one?', turnId: 't2' })
-  await $.turn.complete({ reason: 'answer', answer: LATER, durationMs: 1000, isAborted: false, turnId: 't2' })
-  await settle()
-  expect(await shown('a3', REPLY)).toEqual(['engine: AssistantMessage'])
-  expect(await shown('a4', LATER)).toContain('check-the-fix')
-
-  // Once no session runs, the card goes and the session's row is back on its call: `claude agents` no longer lists it.
-  await $.turn.start({ text: 'Is it still there?', turnId: 't3' })
-  expect((await $.tool.call({ tool: 'mcp__toolkit__list_sessions', linked: true })).result).toContain('gone')
-  await $.turn.complete({ reason: 'answer', answer: LATER, durationMs: 1000, isAborted: false, turnId: 't3' })
-  await settle()
-  expect(await shown('a4', LATER)).toEqual(['engine: AssistantMessage'])
-  expect(await rowWords($, START, input, CALL)).toContain('claude attach abcdef12')
-})
-
-test('the hint line under the prompt counts the running sessions after any tail already there, and drops it once none runs', async ($, on) => {
-  const tails: (string | undefined)[] = []
-  on('ui.render', { component: 'PromptHint' }, ($, e) => {
-    tails.push(e.props.tail)
-    const { Text } = $.ui.resolve(e)
-    return <Text>{e.props.hint}</Text>
-  })
-  engine(on, TRANSCRIPT)
-  const hint = async (tail?: string) => {
-    const ui = await $.ui.mount({ plugin: 'toolkit', surface: 'terminal', component: 'PromptHint', props: { hint: '? for shortcuts', isDraft: false, isWorking: false, ...(tail === undefined ? {} : { tail }) } })
-    await ui.unmount()
-    return tails.at(-1)
-  }
-  expect(await hint()).toBe(undefined)
-
-  await $.turn.start({ text: 'Check it in a session.', turnId: 't1' })
-  await $.tool.call({ tool: START, tool_use_id: CALL, ...PROPOSE, initiation: 'user_asked', use_worktree: false })
-  expect(await hint()).toBe('1 session working')
-  expect(await hint('cache 56m')).toBe('cache 56m · 1 session working')
-
-  // `claude agents` no longer lists it.
-  await $.tool.call({ tool: 'mcp__toolkit__list_sessions', linked: true })
-  expect(await hint('cache 56m')).toBe('cache 56m')
-})
-
-test('while every running session is idle, the poll asks claude agents only every eighth time', async ($, on) => {
-  const host = engine(on, TRANSCRIPT)
-  const clock = mock.clock(on)
-  const looks = () => host.runs.filter(argv => argv[1] === 'agents' && argv.includes('--all')).length
-  const wait = async (polls: number) => {
-    for (let i = 0; i < polls; i++) {
-      await clock.advance(4000)
-      await settle()
-    }
-  }
-  const listed = (status: string) => JSON.stringify([{ id: 'abcdef12', sessionId: 'abcdef12-uuid', cwd: '/w', status }])
-  host.all = listed('busy')
-  await $.tool.call({ tool: START, tool_use_id: CALL, ...PROPOSE, initiation: 'user_asked', use_worktree: false })
-  await wait(3)
-  expect(looks()).toBe(3)
-  host.all = listed('idle')
-  await wait(1)
-  expect(looks()).toBe(4)
-  await wait(8)
-  expect(looks()).toBe(5)
-  // A new session is watched closely again.
-  await $.tool.call({ tool: START, tool_use_id: 'toolu_second', ...PROPOSE, title: 'Second check', initiation: 'user_asked', use_worktree: false })
-  await wait(2)
-  expect(looks()).toBe(7)
-})
-
-test('a switch starts the session with no link back and opens it in this terminal when the turn ends', async ($, on) => {
-  const restartFile = '/run/user/1/claude-restart.42'
-  const host = engine(on, '', '[]', { CLAUDE_RESTART_FILE: restartFile })
-  host.files.set('/home/me/.bashrc', '')
-  const input = { ...PROPOSE, initiation: 'user_asked', use_worktree: false, switch: true }
-  const call = await $.tool.call({ tool: START, tool_use_id: CALL, ...input })
-  expect(call.result).toContain('sends no reports here')
-  expect(host.files.has('/home/me/.claude/toolkit/links/abcdef12.json')).toBe(false)
-  expect(host.files.get(restartFile)).toBe('attach\nabcdef12')
-  expect((await rowWords($, START, input, CALL)).some(w => w.includes('no reports'))).toBe(true)
-})
-
-test('the running sessions card opens a session in the first place the terminal offers, and offers stop only while it works', async ($, on) => {
-  const host = engine(on, TRANSCRIPT, '[]', { TERM_PROGRAM: 'ghostty', TERM_PROGRAM_VERSION: '1.4.0' })
-  host.all = JSON.stringify([{ id: 'abcdef12', sessionId: 'abcdef12-uuid', cwd: '/w', status: 'busy' }])
-  const clock = mock.clock(on)
-  await $.turn.start({ text: 'Check it in a session.', turnId: 't1' })
-  await $.tool.call({ tool: START, tool_use_id: CALL, ...PROPOSE, initiation: 'user_asked', use_worktree: false })
-  await clock.advance(4000)
-  await settle()
-  await $.turn.complete({ reason: 'answer', answer: REPLY, durationMs: 60_000, isAborted: false, turnId: 't1' })
-  await settle()
-  const ui = await replyBlock($, 'a3', REPLY)
-  expect((await words(ui)).slice(-4)).toEqual(['check-the-fix', 'working', 'open', 'stop'])
-  await ui.press({ key: 'open:abcdef12' })
-  await settle()
-  await ui.unmount()
-  expect(host.runs).toContainEqual(['ghostty', '+new-tab', '--working-directory=/w', '--title=check-the-fix', '-e', 'claude', 'attach', 'abcdef12'])
-})
-
-test("a row offers the places this terminal can open the session in, and opens it there", async ($, on) => {
-  const restartFile = '/run/user/1/claude-restart.42'
-  const host = engine(on, '', '[]', { TERM_PROGRAM: 'ghostty', TERM_PROGRAM_VERSION: '1.3.1', CLAUDE_RESTART_FILE: restartFile })
-  host.files.set('/home/me/.bashrc', '')
-  const clock = mock.clock(on)
-  const input = { ...PROPOSE, initiation: 'user_asked', use_worktree: false }
-  await $.tool.call({ tool: START, tool_use_id: CALL, ...input })
-  const words = await rowWords($, START, input, CALL)
-  expect(words).toContain('window')
-  expect(words).toContain('here')
-  expect(words).not.toContain('tab')
-
-  const ui = await $.ui.mount({
-    plugin: 'toolkit',
-    surface: 'terminal',
-    component: 'ToolUse',
-    requestId: CALL,
-    props: { tool_use_id: CALL, tool: START, input, isRunning: false, isErrored: false, isInterrupted: false, output: 'ok' },
-  })
-  await ui.press({ key: 'window:abcdef12' })
-  await settle()
-  expect(host.runs).toContainEqual(['ghostty', '+new-window', '--working-directory=/w', '-e', 'claude', 'attach', 'abcdef12'])
-
-  // Between turns, here exits at once and the shell function attaches.
-  await ui.press({ key: 'here:abcdef12' })
-  await settle()
-  await clock.advance(1)
-  await settle()
-  await ui.unmount()
-  expect(host.files.get(restartFile)).toBe('attach\nabcdef12')
-  expect(host.runs).toContainEqual(['sh', '-c', 'kill -TERM "$PPID"'])
-})
-
-test('a terminal with no place to open offers here and the command to copy', async ($, on) => {
-  engine(on, '', '[]', { TERM_PROGRAM: 'vscode' })
-  const input = { ...PROPOSE, initiation: 'user_asked', use_worktree: false }
-  await $.tool.call({ tool: START, tool_use_id: CALL, ...input })
-  const words = await rowWords($, START, input, CALL)
-  expect(words).toContain('here')
-  expect(words).toContain('claude attach abcdef12')
-  expect(words.some(word => ['window', 'tab', 'pane', 'popup'].includes(word))).toBe(false)
-})
-
-test('after a restart the sessions this one started that still run come back in one card under the last reply', async ($, on) => {
-  const dir = '/home/me/.claude/toolkit/links'
-  on('fs.list', () => ({ value: ['abcdef12', 'gone0001', 'other002', 'muted003'].map(name => ({ name: `${name}.json`, kind: 'file' as const, size: 1, mtimeMs: 0 })) }))
-  const agents = JSON.stringify([
-    { id: 'abcdef12', sessionId: 'abcdef12-uuid', cwd: '/w', status: 'idle', state: 'working' },
-    { id: 'other002', sessionId: 'other002-uuid', cwd: '/w', status: 'busy', state: 'working' },
-    { id: 'muted003', sessionId: 'muted003-uuid', cwd: '/w', status: 'busy', state: 'working' },
-  ])
-  const host = engine(on, TRANSCRIPT, agents)
-  host.files.set(dir, '')
-  host.files.set(`${dir}/abcdef12.json`, JSON.stringify({ parent: 'parent-uuid', name: 'check-the-fix' }))
-  // Stopped since: no longer listed.
-  host.files.set(`${dir}/gone0001.json`, JSON.stringify({ parent: 'parent-uuid', name: 'old-one' }))
-  // Another session's.
-  host.files.set(`${dir}/other002.json`, JSON.stringify({ parent: 'someone-else', name: 'not-mine' }))
-  // Its reports were stopped, so its link is empty.
-  host.files.set(`${dir}/muted003.json`, '')
-  on('session.start', () => ({ cwd: '/w' }))
-  await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
-  const card = await words(await replyBlock($, 'a3', REPLY))
-  expect(card).toContain('Running sessions')
-  expect(card).toContain('check-the-fix')
-  expect(card.some(word => /gone0001|other002|muted003/.test(word))).toBe(false)
-  expect((await $.tool.call({ tool: 'mcp__toolkit__list_sessions', linked: true })).result).toContain('check-the-fix (id abcdef12')
-})
-
-test('a switch that could not come back to this terminal starts nothing', async ($, on) => {
-  const host = engine(on)
-  const call = await $.tool.call({ tool: START, tool_use_id: CALL, ...PROPOSE, initiation: 'user_asked', use_worktree: false, switch: true })
-  expect(call.deny).toContain('Nothing was started')
-  expect(call.deny).toContain('source ~/.bashrc')
-  expect([...host.files.keys()].some(path => path.includes('/links/'))).toBe(false)
-  expect((await $.tool.call({ tool: START, ...PROPOSE, initiation: 'own_initiative', switch: true })).deny).toContain('switch goes only with "user_asked"')
+  expect((await $.tool.call({ ...asked, tool_use_id: 'toolu_second' })).deny).toContain('no session starts in it')
 })

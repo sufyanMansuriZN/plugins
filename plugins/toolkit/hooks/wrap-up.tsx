@@ -2,8 +2,7 @@ import { read, update } from 'claude-code'
 import type { Elements, EngineInterface, Register } from 'claude-code'
 
 import type { WrapUp, WrapUpCall, WrapUpQuestion } from '../types'
-import { readTranscript } from './sessions'
-import { replyAnchor } from './sessions-model'
+import { readTranscript, replyAnchor } from './transcript'
 
 const NAME = 'wrap_up'
 export const WRAP_UP_TOOL = `mcp__toolkit__${NAME}`

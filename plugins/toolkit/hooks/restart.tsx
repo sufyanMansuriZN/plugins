@@ -15,8 +15,6 @@ It needs the toolkit's \`claude\` shell function. Without it, the call adds the 
 
 const PENDING = { plugin: 'toolkit', key: 'restartPending' } as const
 
-const RUNNING_TURN = { plugin: 'toolkit', key: 'runningTurn' } as const
-
 const BEGIN = '# >>> toolkit restart >>>'
 const END = '# <<< toolkit restart <<<'
 
@@ -74,18 +72,10 @@ export async function relaunchFile($: EngineInterface): Promise<{ file: string }
 }
 
 /** Claude Code exits when this turn ends, and the shell function runs `claude <args>` in its place. */
-export async function relaunch($: EngineInterface, file: string, args: string[]) {
+async function relaunch($: EngineInterface, file: string, args: string[]) {
   // One argument per line, read back with mapfile.
   await $.fs.write(file, args.join('\n'))
   await $.state.set(PENDING, file)
-}
-
-/** Relaunches with `args` now between turns, or when the running turn ends; says which. */
-export async function relaunchSoon($: EngineInterface, file: string, args: string[]): Promise<'now' | 'after turn'> {
-  await relaunch($, file, args)
-  if ((await $.state.get(RUNNING_TURN)).value) return 'after turn'
-  await exit($)
-  return 'now'
 }
 
 // SIGTERM ends Claude Code as /exit does (transcript saved, terminal restored) but leaves no /exit row.
@@ -130,22 +120,10 @@ export const register: Register = on => {
     return { result: 'Claude Code exits when your turn ends and starts again with this conversation, so end your turn now.' }
   })
 
-  // A subagent's turn starts and ends inside the main one, so only the main loop's turns count. An abort names
-  // only its turn, so the main turn is kept by its id.
-  on('turn.start', { text: /[\s\S]*/ }, async ($, e, next) => {
-    if (e.agentId === undefined) await $.state.set(RUNNING_TURN, e.turnId)
-    return next(e)
-  })
-
-  on('turn.abort', async ($, e, next) => {
-    if ((await $.state.get(RUNNING_TURN)).value === e.turnId) await $.state.set(RUNNING_TURN, null)
-    return next(e)
-  })
-
+  // A subagent's turn ends inside the main one, so only the main loop's turn ending exits.
   on('turn.complete', { reason: /[\s\S]*/ }, async ($, e, next) => {
     const result = await next(e)
     if (e.agentId !== undefined) return result
-    await $.state.set(RUNNING_TURN, null)
     await exit($)
     return result
   })

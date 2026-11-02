@@ -1,27 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { absolute, fileArgv, fileHref, fileSpans, linkSpans, openArgv, parseHref, placesOf } from './open'
-
-const SESSION = { id: 'abcdef12', name: 'check-the-fix', cwd: '/w/tree' }
-
-test('each terminal offers only the places another program can open there', () => {
-  expect(placesOf({ os: 'Linux', termProgram: 'ghostty', termVersion: '1.3.1' })).toEqual(['window'])
-  expect(placesOf({ os: 'Linux', termProgram: 'ghostty', termVersion: '1.4.0' })).toEqual(['tab', 'window'])
-  // Ghostty on macOS starts no window from the command line.
-  expect(placesOf({ os: 'Darwin', termProgram: 'ghostty', termVersion: '1.4.0' })).toEqual([])
-  expect(placesOf({ os: 'Linux', tmux: '/tmp/tmux-1/default,1,0', termProgram: 'tmux' })).toEqual(['pane', 'tab', 'popup'])
-  expect(placesOf({ os: 'Linux', termProgram: 'gnome-terminal' })).toEqual([])
-})
-
-test('a place opens claude attach in the session folder', () => {
-  const ghostty = { os: 'Linux', termProgram: 'ghostty', termVersion: '1.4.0' }
-  expect(openArgv(ghostty, 'window', SESSION)).toEqual(['ghostty', '+new-window', '--working-directory=/w/tree', '-e', 'claude', 'attach', 'abcdef12'])
-  expect(openArgv(ghostty, 'tab', SESSION)).toEqual(['ghostty', '+new-tab', '--working-directory=/w/tree', '--title=check-the-fix', '-e', 'claude', 'attach', 'abcdef12'])
-  const tmux = { os: 'Linux', tmux: 'x', tmuxPane: '%3' }
-  expect(openArgv(tmux, 'pane', SESSION)).toEqual(['tmux', 'split-window', '-h', '-t', '%3', '-c', '/w/tree', 'claude', 'attach', 'abcdef12'])
-  expect(openArgv(tmux, 'tab', SESSION)).toEqual(['tmux', 'new-window', '-n', 'check-the-fix', '-c', '/w/tree', 'claude', 'attach', 'abcdef12'])
-  expect(openArgv(tmux, 'popup', SESSION)).toEqual(['tmux', 'display-popup', '-t', '%3', '-E', '-w', '90%', '-h', '90%', '-d', '/w/tree', 'claude attach abcdef12'])
-})
+import { absolute, fileArgv, fileHref, fileSpans, linkSpans, parseHref } from './open'
 
 test('code opens in the graphical editor at its line, without waiting for it to close', () => {
   expect(fileArgv('/r/a.ts', 12, 'Linux', 'zed --wait', false)).toEqual(['zed', '/r/a.ts:12'])

@@ -1,165 +1,31 @@
 import { read, update } from 'claude-code'
 import type { Elements, EngineInterface, Register } from 'claude-code'
 
-import type { Brief, LinkedSession, Proposal } from '../types'
-import {
-  BACKGROUND_MIN,
-  BRANCH_TYPES,
-  cardAnchor,
-  EFFORTS,
-  MODES,
-  NAME_MAX,
-  PROPOSALS_PER_TURN,
-  backgroundedId,
-  isAlive,
-  latestReport,
-  linkPath,
-  linkedLines,
-  makeBrief,
-  parseAgents,
-  parseLink,
-  planHandOff,
-  recoveredSessions,
-  planStart,
-  replyAnchor,
-  reportText,
-  sessionsTail,
-  shortId,
-  startCommand,
-} from './sessions-model'
+import type { StartedSession } from '../types'
+import { MODES, NAME_MAX, backgroundedId, planStart, startCommand } from './sessions-model'
 import type { Caller } from './sessions-model'
-import { openArgv, placesOf, terminalOf } from './open'
-import type { Place, Terminal } from './open'
-import { relaunch, relaunchFile, relaunchSoon } from './restart'
 
 export const START_TOOL = 'mcp__toolkit__start_session'
-export const DISMISS_TOOL = 'mcp__toolkit__dismiss_task'
-export const HAND_OFF_TOOL = 'mcp__toolkit__hand_off_to_session'
-export const LIST_TOOL = 'mcp__toolkit__list_sessions'
-export const MUTE_TOOL = 'mcp__toolkit__stop_reports'
 
-const LINKED = { plugin: 'toolkit', key: 'linked' } as const
-const PROPOSALS = { plugin: 'toolkit', key: 'proposals' } as const
-const LAUNCHING = { plugin: 'toolkit', key: 'launching' } as const
-const CARDS_AT = { plugin: 'toolkit', key: 'cardsAt' } as const
-const SESSIONS_AT = { plugin: 'toolkit', key: 'sessionsAt' } as const
+const STARTED = { plugin: 'toolkit', key: 'started' } as const
 
-const POLL_MS = 4000
-// Each look runs `claude agents`, about 0.2 s of CPU. While every session is idle, nothing changes until
-// someone talks to one, so the poll looks only every eighth time.
-const IDLE_EVERY = 8
-const WEEK_MS = 7 * 24 * 60 * 60 * 1000
-
-const START_DESCRIPTION = `Start a separate Claude Code session for a task while you stay with the user (when: see "Starting other sessions"). It runs as a background session (\`claude --bg\`) the user can open with \`claude attach\`, talk to and stop. \`initiation\` says who wants it: "user_asked" starts it now and returns its name and id; "offer" is for a task the user named in their latest message (new work here, or "suggest / split off / make a task or session for X"): called with a title alone, it asks the user "New session" or "Do it here" and WAITS for their answer, so it must be the only call in that message (no update_plan, no other tool); the result then tells you to carry on here, or to send the brief with proposal_id so the session starts; "own_initiative" is for work you propose yourself that the user has not told you to do — something you noticed, or the follow-up your own answer or work turned up (when your reply calls work a follow-up or a separate PR, propose it here rather than only saying so, unless it acts on what this session just found and so stays here), never a part of what the user asked this turn, never what "Starting other sessions" keeps here or gives to a subagent; the user sees a card and nothing runs until they start it, by pressing Start on it or by telling you (then call this again with just proposal_id).
-"user_asked" and "own_initiative" both need a \`prompt\` — the brief: the task, the files or area, what done looks like — and the call is refused without it; \`background\` does not stand in for it. Only an "offer" is a title alone.
-context: "fork" = this whole conversation + your \`prompt\`. "fresh" (default) = your \`prompt\` + \`background\` only, so \`background\` is required too, at least 80 characters.
-Checkout here ("fresh" only): use_worktree false = shares this checkout and can edit it (in a worktree session its branch and PR too: never for work that ends in a branch or PR of its own or belongs in another repository); true = its own worktree (the default when this session is in one), on the branch \`branch_name\` names.
-Elsewhere (user_asked only, when the user named the place): \`cwd\` for another folder, or \`target\` "cloud" (+ \`environment\`, "fresh" only).`
+const START_DESCRIPTION = `Start a separate Claude Code session for a task while you stay with the user (when: see "Starting other sessions"). It runs as a background session (\`claude --bg\`) the user can open with \`claude attach <id>\`, talk to and stop, and that you reach with SendMessage by its name.
+context: "fork" = this whole conversation + your \`prompt\`; "fresh" (default) = your \`prompt\` alone, so it holds everything a reader who has not seen this conversation needs.
+Folder: \`use_worktree\` true = its own git worktree, which Claude Code cuts from the remote default branch on branch \`worktree-<name>\` (the default for "fresh" when this session is in a worktree); false = shares this folder and can edit it. \`cwd\` = another folder, as it is.`
 
 const START_SCHEMA = {
   type: 'object',
   properties: {
-    initiation: {
-      type: 'string',
-      enum: ['user_asked', 'own_initiative', 'offer'],
-      description:
-        '"user_asked": the user asked in words for separate, parallel or background work, or told you to start this piece — it starts now (not for a piece "Starting other sessions" gives to a subagent). "offer": a task the user named in their latest message (new work for this session, or one they asked you to suggest, split off or make a session for) — the user is asked first and the call waits for their answer; send only title with it (the brief follows, with proposal_id, if they choose New session). "own_initiative": work you propose yourself that the user has not told you to do — something you noticed, or the follow-up your own answer or work turned up; it waits as a proposal card until the user starts it; never for a task the user\'s message tells you to do, nor for the one piece of work "Starting other sessions" keeps here, nor for what it gives to a subagent. Required unless proposal_id is set.',
-    },
-    title: { type: 'string', description: 'Under 60 chars; names the task. Shown on the row or card. Required unless proposal_id is set.' },
-    prompt: {
-      type: 'string',
-      description:
-        'The brief: the task, the files or area, what done looks like. Required for "user_asked" and "own_initiative" — the call is refused without it, and `background` does not stand in for it; an "offer" leaves it out and you send it with proposal_id once they choose New session. Here and in `background`, put file paths and code identifiers in backticks.',
-    },
-    background: {
-      type: 'string',
-      description: `Required with "fresh", besides \`prompt\`: at least ${BACKGROUND_MIN} characters of overall goal, decisions and constraints so far, how this piece fits — for someone who has not seen this conversation. Ignored for "fork".`,
-    },
-    context: {
-      type: 'string',
-      enum: ['fresh', 'fork'],
-      description:
-        '"fresh" (default) or "fork" — see the tool description. A "fork" from a worktree session gets a fresh worktree cut from your branch tip (commit first; uncommitted edits stay here); from a plain checkout it shares the folder.',
-    },
-    name: { type: 'string', description: `Optional short handle for the session ([a-z0-9-], ≤${NAME_MAX}), e.g. "cli-cleanup". Linked sessions and plan steps refer to it by this name; derived from the title when omitted.` },
-    use_worktree: {
-      type: 'boolean',
-      description:
-        '"fresh" only (rejected with "fork"). false = shares this session\'s checkout and can edit it (in a worktree session: its worktree, branch and PR, so never for work that ends in a branch or PR of its own or belongs in another repository). At another place named by `cwd`, false = that folder as it is. true = its own git worktree. Omitted: the same folder when this session works in a plain folder; otherwise its own worktree; with `cwd`, that folder as it is.',
-    },
-    branch_name: { type: 'string', description: `The new worktree's full branch name, used as given: the name the user gave, or their branch convention (CLAUDE.md or memory), else \`<type>/<slug>\` with a conventional-commit type (${BRANCH_TYPES.join(', ')}). Omitted, it is derived from the title. A short suffix is added only when the branch or its folder already exists. Only with a worktree.` },
-    source_branch: {
-      type: 'string',
-      description: "The existing local branch the new worktree is cut from. Default: the repository's default branch, or the folder's current commit if that is unknown. Only for a session that gets its own worktree; not with target \"cloud\".",
-    },
-    cwd: { type: 'string', description: 'The folder the session works in, when it is not this project: an absolute (or ~/) path on this computer. A "fork" there keeps this conversation.' },
-    model: {
-      type: 'string',
-      description: '"fresh" only, optional: a cheaper model for mechanical or read-only pieces (e.g. sonnet or haiku). Same family or cheaper than yours; anything higher is ignored. Omit to inherit yours.',
-    },
-    effort: { type: 'string', enum: EFFORTS, description: '"fresh" only, optional: reasoning effort at or below yours. Omit to inherit.' },
-    permission_mode: {
-      type: 'string',
-      enum: MODES,
-      description: "Optional, local starts only: the permission mode it starts in, only when the user asked for one. Omitted, it starts in the user's own default mode.",
-    },
-    target: {
-      type: 'string',
-      enum: ['local', 'cloud'],
-      description: '"fresh" only. "local" (default) = this computer. "cloud" = a cloud session (keeps going when this computer sleeps; it never reports back here). Only when the user asks for the cloud.',
-    },
-    environment: { type: 'string', description: 'With target "cloud": the id of one of the user\'s cloud environments; omitted = the default one.' },
-    proposal_id: {
-      type: 'string',
-      description:
-        'Start a proposal the user told you to start, exactly as proposed: its task_id and nothing else. For an offer the user answered with New session: its task_id with prompt, background and context. To change a proposal, dismiss_task it and start a new session.',
-    },
-    switch: {
-      type: 'boolean',
-      description:
-        '"user_asked" only, not with target "cloud". true when the user wants to go on in the new session and leave this one ("start a new session and close this one", "carry on in a fresh session"). The new session sends no reports here and works in this folder (this worktree, its branch and uncommitted edits) unless you pass use_worktree true or cwd; when your turn ends, this session closes and this terminal opens the new one.',
-    },
+    prompt: { type: 'string', description: 'The brief: the task, the files or area, what done looks like. For "fresh", also the goal, decisions and constraints so far. Put file paths and code identifiers in backticks.' },
+    name: { type: 'string', description: `Short handle ([a-z0-9-], ≤${NAME_MAX}), e.g. "cli-cleanup": its name in \`claude agents\` and for SendMessage. A suffix is added when a session started here has it.` },
+    context: { type: 'string', enum: ['fresh', 'fork'], description: '"fresh" (default) or "fork". A fork works in this folder.' },
+    use_worktree: { type: 'boolean', description: '"fresh" only. true = its own worktree; false = shares this folder.' },
+    cwd: { type: 'string', description: 'Another folder on this computer the session works in, as it is: an absolute path.' },
+    model: { type: 'string', description: 'Optional: a cheaper model for mechanical or read-only pieces (e.g. sonnet or haiku). Omit to inherit yours.' },
+    permission_mode: { type: 'string', enum: MODES, description: "Only when the user asked for a mode. Omitted, it starts in the user's own default mode." },
   },
+  required: ['prompt', 'name'],
 }
-
-const DISMISS_DESCRIPTION = `Withdraw a proposal you made with start_session (initiation "own_initiative" or "offer") that the user has not started.
-
-Call this when it went stale: the work was done here after all (by you or the user), it turned out unnecessary, or you proposed a better-scoped replacement (propose the new one first, then dismiss the old task_id). A card the user answered has already left, "Do it here" included, so it needs no call.`
-
-const DISMISS_SCHEMA = {
-  type: 'object',
-  properties: {
-    task_id: { type: 'string', description: 'The task_id the start_session proposal returned.' },
-    reason: { type: 'string', description: 'Optional one-line reason the suggestion is no longer needed, e.g. "fixed in this session" or "superseded by task_ab12cd34".' },
-  },
-  required: ['task_id'],
-}
-
-const HAND_OFF_DESCRIPTION = `Move the task you are in the middle of into its own session (a fork of this conversation plus your remaining plan) so you can answer the user now. Use it when a new user message about something else arrives mid-task — not for small corrections or when the user said to keep the work here. In a worktree the fork gets a fresh worktree, normally cut from your branch tip: commit first (uncommitted edits stay here). Bold title line and one sentence right before the call; after it, stop that task here and answer the new message — no recap.`
-
-const HAND_OFF_SCHEMA = {
-  type: 'object',
-  properties: {
-    title: { type: 'string', description: 'Under 40 chars; names the task being moved.' },
-    remaining_plan: { type: 'string', description: 'What is left to do: steps, files, what done looks like.' },
-    cwd: {
-      type: 'string',
-      description: "Optional: the folder the task works in when it is another repository than this session's folder, as an absolute (or ~/) path. The fork works there as the folder is. Omitted: this session's folder (or a fresh worktree, in a worktree session).",
-    },
-  },
-  required: ['title', 'remaining_plan'],
-}
-
-const LIST_DESCRIPTION =`List Claude Code sessions. {"linked": true} lists the sessions this one started with start_session (name, id, state, branch or folder) — use it, never a search, to find a session you started. Without it, every running background and interactive session on this computer.`
-
-const LIST_SCHEMA = { type: 'object', properties: { linked: { type: 'boolean', description: 'true: only the sessions this one started.' } } }
-
-const MUTE_DESCRIPTION = `Stop a session you started with start_session from sending its reports here. It keeps working, and the user can still open it with \`claude attach\`. Use it when the user no longer wants that session's reports in this session.`
-
-const MUTE_SCHEMA = { type: 'object', properties: { name: { type: 'string', description: 'The session\'s name or id, as list_sessions {"linked": true} gives it.' } }, required: ['name'] }
-
-const taskIdOf = (toolUseId: string) => `task_${toolUseId.replace(/[^A-Za-z0-9]/g, '').slice(-8).toLowerCase()}`
-const randomSuffix = () => Array.from(crypto.getRandomValues(new Uint8Array(3)), byte => byte.toString(16).padStart(2, '0')).join('')
 
 async function git($: EngineInterface, cwd: string, args: string[]): Promise<string | null> {
   const run = await $.process.run(['git', '-C', cwd, ...args], { timeoutMs: 30_000 }).catch(() => null)
@@ -171,468 +37,22 @@ async function git($: EngineInterface, cwd: string, args: string[]): Promise<str
 type From = 'user' | 'event' | 'same'
 const queued = new Map<string, From>()
 let isEventTurn = false
-let proposedThisTurn = 0
-let stopPolling: (() => void) | null = null
-// Looks run one at a time, so no two overwrite each other's states.
-let serial: Promise<unknown> = Promise.resolve()
-const inTurn = <T,>(work: () => Promise<T>): Promise<T> => {
-  const run = serial.then(work, work)
-  serial = run.catch(() => undefined)
-  return run
-}
-let isTicking = false
-let isAllIdle = false
-let quietTicks = 0
 
 async function caller($: EngineInterface): Promise<Caller> {
-  const [cwd, sessionId, model] = await Promise.all([$.session.cwd(), $.session.id(), $.session.model()])
+  const cwd = await $.session.cwd()
   const [gitDir, commonDir] = await Promise.all([git($, cwd, ['rev-parse', '--absolute-git-dir']), git($, cwd, ['rev-parse', '--path-format=absolute', '--git-common-dir'])])
-  const linked = (await read($, LINKED)) ?? []
   return {
     cwd,
-    sessionId,
-    model,
     isWorktree: gitDir !== null && commonDir !== null && gitDir !== commonDir,
     isEventTurn,
-    names: linked.map(s => s.name),
+    names: ((await read($, STARTED)) ?? []).map(s => s.name),
   }
 }
-
-/** Makes the folder a new session works in: the folder itself, or a worktree cut for it. */
-async function prepare($: EngineInterface, brief: Brief): Promise<{ cwd: string; branch: string | null } | { error: string }> {
-  const { place } = brief
-  if (place.kind === 'cloud') return { cwd: await $.session.cwd(), branch: null }
-  if (place.kind === 'folder') {
-    const home = (await $.env.get('HOME')) ?? ''
-    const cwd = place.cwd.replace(/^~(?=\/|$)/, home)
-    const stat = await $.fs.stat(cwd, { resolve: true }).catch(() => undefined)
-    return stat?.kind === 'dir' ? { cwd: stat.realPath ?? cwd, branch: null } : { error: `${place.cwd} is not a folder on this computer.` }
-  }
-  const commonDir = await git($, place.root, ['rev-parse', '--path-format=absolute', '--git-common-dir'])
-  if (commonDir === null) return { error: `${place.root} is not in a git repository, so it cannot get a worktree. Pass use_worktree false.` }
-  const repo = commonDir.replace(/\/\.git\/?$/, '')
-  let source = place.source
-  if (source === null) {
-    const remoteHead = await git($, place.root, ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'])
-    const local = remoteHead?.replace(/^origin\//, '') ?? null
-    source = local !== null && (await git($, place.root, ['rev-parse', '--verify', '--quiet', `refs/heads/${local}`])) !== null ? local : (remoteHead ?? 'HEAD')
-  }
-  let branch = place.branch
-  let path = `${repo}/.claude/worktrees/${branch.replaceAll('/', '-')}`
-  const isTaken = (await git($, place.root, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`])) !== null || (await $.fs.stat(path).catch(() => undefined)) !== undefined
-  if (isTaken) {
-    const suffix = randomSuffix()
-    branch = `${branch}-${suffix}`
-    path = `${path}-${suffix}`
-  }
-  const run = await $.process.run(['git', '-C', place.root, 'worktree', 'add', '-b', branch, path, source], { timeoutMs: 60_000 })
-  if (run.exitCode !== 0) return { error: `git worktree add failed: ${run.stderr.trim()}` }
-  return { cwd: path, branch }
-}
-
-type Launched = { text: string; id: string } | { error: string }
-
-/** Starts the session and links it here (or, for a switch, only lists it), or says why it could not start. */
-async function launch($: EngineInterface, brief: Brief, callId: string, isSwitch = false): Promise<Launched> {
-  // The call's row says "starting…" until the session is linked or the start fails.
-  const launching = { ...LAUNCHING, id: callId }
-  await $.state.set(launching, true)
-  try {
-    return await launchNow($, brief, callId, isSwitch)
-  } finally {
-    await $.state.set(launching, false)
-  }
-}
-
-async function launchNow($: EngineInterface, brief: Brief, callId: string, isSwitch: boolean): Promise<Launched> {
-  const ready = await prepare($, brief)
-  if ('error' in ready) return ready
-  const sessionId = await $.session.id()
-  const run = await $.process.run(startCommand(brief, sessionId), { cwd: ready.cwd, timeoutMs: 90_000 }).catch((err: unknown) => ({ exitCode: -1, stdout: '', stderr: String(err) }))
-  if (brief.place.kind === 'cloud') {
-    if (run.exitCode !== 0) return { error: `The cloud session did not start: ${(run.stderr || run.stdout).trim().slice(0, 500)}` }
-    return { text: `Started a cloud session for "${brief.title}". A cloud session never reports back here. What it printed:\n${run.stdout.trim().slice(0, 800)}`, id: '' }
-  }
-  const id = backgroundedId(run.stdout)
-  if (run.exitCode !== 0 || id === null) return { error: `The session did not start: ${(run.stderr || run.stdout).trim().slice(0, 500) || `exit code ${run.exitCode}`}` }
-  // The new session's toolkit reads this to send its reports here; its first turn takes longer than the write.
-  const home = (await $.env.get('HOME')) ?? ''
-  if (!isSwitch) await $.fs.write(linkPath(home, id), JSON.stringify({ parent: sessionId, name: brief.name }))
-  const session: LinkedSession = { name: brief.name, title: brief.title, id, sessionId: null, cwd: ready.cwd, branch: ready.branch, state: 'starting', startedAt: Date.now(), callId, isMuted: isSwitch }
-  await update($, LINKED, was => [...(was ?? []), session])
-  watch($)
-  const where = ready.branch ? `its own worktree ${ready.cwd} on branch ${ready.branch}` : ready.cwd
-  if (isSwitch) return { id, text: `Started session "${brief.name}" (id ${id}) in ${where}. It sends no reports here. When your turn ends, this session closes and this terminal opens that one, so end your turn now with one line that says you are switching to it.` }
-  return {
-    id,
-    text: `Started session "${brief.name}" (id ${id}) in ${where}, in ${brief.permissionMode ?? "the user's default"} mode. It is a real session: the user can open it with \`claude attach ${id}\`. Each time it ends a turn, it sends you its report as a message from that session; never poll it. Follow-ups go to it with SendMessage (to "${brief.name}").\nLinked sessions now:\n${linkedLines((await read($, LINKED)) ?? [])}`,
-  }
-}
-
-// The end of a session's transcript: $.fs.read refuses files over 4 MiB, and a fork's starts as long as its parent's.
-// It stays under the directory the session started in, which a cd or /cd does not move, so it is found by its id.
-async function transcriptTail($: EngineInterface, home: string, sessionId: string): Promise<string> {
-  const found = await $.process.run(['find', `${home}/.claude/projects`, '-maxdepth', '2', '-name', `${sessionId}.jsonl`], { timeoutMs: 10_000 }).catch(() => null)
-  const path = found?.exitCode === 0 ? found.stdout.split('\n')[0] : ''
-  if (!path) return ''
-  const run = await $.process.run(['tail', '-c', '1000000', path], { timeoutMs: 10_000 }).catch(() => null)
-  return run?.exitCode === 0 ? run.stdout : ''
-}
-
-const tick = ($: EngineInterface) => inTurn(() => look($))
-
-/**
- * One look at the linked sessions, for their rows. Reports come from the sessions themselves; a
- * session whose process ends gets a toast too, as one that crashed or was stopped sends none.
- */
-async function look($: EngineInterface) {
-  const linked = (await read($, LINKED)) ?? []
-  if (linked.length === 0) return
-  const listing = await $.process.run(['claude', 'agents', '--json', '--all'], { timeoutMs: 20_000 }).catch(() => null)
-  if (listing === null || listing.exitCode !== 0) return
-  const rows = parseAgents(listing.stdout)
-  const home = (await $.env.get('HOME')) ?? ''
-  const changes = new Map<string, Pick<LinkedSession, 'state' | 'sessionId'>>()
-  for (const session of linked) {
-    const row = rows.get(session.id)
-    let state = row?.state ?? 'gone'
-    const sessionId = row?.sessionId ?? session.sessionId
-    // Listed as idle a moment before its first turn starts.
-    if (state === 'idle' && session.state === 'starting') {
-      const jsonl = sessionId === null ? '' : await transcriptTail($, home, sessionId)
-      if (latestReport(jsonl, session.startedAt) === null) state = 'starting'
-    }
-    if (isAlive(session.state) && !isAlive(state)) $.ui.toast(`toolkit: session ${session.name} (${session.id}) ${state === 'gone' ? 'was removed' : `ended: ${state}`}`)
-    changes.set(session.id, { state, sessionId })
-  }
-  // Merged by id, so a session started while this look ran is kept.
-  const next = await update($, LINKED, was => (was ?? []).map(s => ({ ...s, ...changes.get(s.id) })))
-  const alive = (next ?? []).filter(s => isAlive(s.state))
-  isAllIdle = alive.length > 0 && alive.every(s => s.state === 'idle')
-  if (alive.length === 0) stopWatching()
-}
-
-/** In a session start_session started: its report, sent to the session that started it. */
-async function reportBack($: EngineInterface, reason: string, answer: string) {
-  const [home, sessionId] = await Promise.all([$.env.get('HOME').then(home => home ?? ''), $.session.id()])
-  const id = shortId(sessionId)
-  const path = linkPath(home, id)
-  if (!(await $.fs.exists(path))) return
-  const link = parseLink(await $.fs.read(path))
-  if (link === null) return
-  // Reports go only to a session that is still open; one the user closed is left closed.
-  const listing = await $.process.run(['claude', 'agents', '--json'], { timeoutMs: 20_000 }).catch(() => null)
-  if (listing?.exitCode === 0 && !listing.stdout.includes(`"${link.parent}"`)) return
-  const latest = latestReport(await transcriptTail($, home, sessionId))
-  // The transcript adds the recap and the text before a box; one not yet holding this turn's answer is a turn behind.
-  const final = answer.trim() === '.' ? '' : answer.trim()
-  const report = latest !== null && latest.report.includes(final.slice(0, 40)) ? latest.report : final
-  const sent = await $.session.send({ to: { sessionId: link.parent }, text: reportText(link.name, id, reason, report) })
-  if (!sent.isDelivered) $.ui.log(`toolkit: the report to the session that started this one was not delivered: ${sent.reason}`, { to: 'debug' })
-}
-
-/** Lists again the sessions this one started that still run, in one card under the last reply. */
-async function recover($: EngineInterface) {
-  const [home, sessionId] = await Promise.all([$.env.get('HOME').then(home => home ?? ''), $.session.id()])
-  const dir = linkPath(home, '').replace(/\/\.json$/, '')
-  if (!(await $.fs.exists(dir))) return
-  const links = new Map<string, string>()
-  for (const entry of await $.fs.list(dir)) {
-    if (entry.kind === 'file' && entry.name.endsWith('.json')) links.set(entry.name.slice(0, -5), await $.fs.read(`${dir}/${entry.name}`))
-  }
-  if (![...links.values()].some(text => text.includes(`"${sessionId}"`))) return
-  const listing = await $.process.run(['claude', 'agents', '--json'], { timeoutMs: 20_000 })
-  if (listing.exitCode !== 0) return
-  const sessions = recoveredSessions(sessionId, links, parseAgents(listing.stdout))
-  if (sessions.length === 0) return
-  await $.state.set(LINKED, sessions)
-  const anchor = replyAnchor(await transcriptTail($, home, sessionId), 0, '')
-  if (anchor !== null && anchor !== 'behind') await $.state.set(SESSIONS_AT, { anchor: anchor.uuid, ids: sessions.map(s => s.id) })
-}
-
-/** Stops a linked session's reports to this one; it keeps working. */
-async function mute($: EngineInterface, id: string) {
-  const home = (await $.env.get('HOME')) ?? ''
-  // An empty link reads as no link, so the session sends nothing.
-  await $.fs.write(linkPath(home, id), '')
-  await update($, LINKED, was => (was ?? []).map(s => (s.id === id ? { ...s, isMuted: true } : s)))
-}
-
-// Called when the linked sessions may have changed, so it looks every time until a look finds them all idle.
-function watch($: EngineInterface) {
-  isAllIdle = false
-  quietTicks = 0
-  if (stopPolling !== null) return
-  const timer = $.clock.every(POLL_MS, () => {
-    // A look that outlasts the period is not stacked behind another.
-    if (isTicking || (isAllIdle && ++quietTicks % IDLE_EVERY !== 0)) return
-    isTicking = true
-    void tick($)
-      .catch(err => $.ui.log(`toolkit: could not read the linked sessions: ${String(err)}`, { to: 'debug' }))
-      .finally(() => (isTicking = false))
-  })
-  stopPolling = () => timer.cancel()
-}
-
-function stopWatching() {
-  stopPolling?.()
-  stopPolling = null
-}
-
-/** Starts a proposal the user accepted, from its card or through Claude. */
-async function startProposal($: EngineInterface, proposal: Proposal, brief: Brief): Promise<{ text: string } | { error: string }> {
-  if (Date.now() - proposal.createdAt > WEEK_MS) return { error: `${proposal.taskId} expired after a week. Propose it again if it is still worth doing.` }
-  const ref = { ...PROPOSALS, id: proposal.taskId }
-  let isFirst = false
-  await update($, ref, was => {
-    isFirst = was?.status === 'open' || was?.status === 'new_session'
-    return isFirst && was ? { ...was, status: 'started' as const, session: brief.name } : (was ?? null)
-  })
-  if (!isFirst) return { error: `${proposal.taskId} was already started or withdrawn.` }
-  const started = await launch($, brief, proposal.taskId)
-  if ('error' in started) await update($, ref, was => (was ? { ...was, status: proposal.status, session: null } : null))
-  return started
-}
-
-async function accept($: EngineInterface, plan: { taskId: string; prompt: string | null; background: string | null; context: 'fresh' | 'fork' }, input: Record<string, unknown>) {
-  const proposal = await read($, { ...PROPOSALS, id: plan.taskId })
-  if (!proposal) return { deny: `No proposal ${plan.taskId} in this session.` }
-  if (Date.now() - proposal.createdAt > WEEK_MS) return { deny: `${plan.taskId} expired after a week. Propose it again if it is still worth doing.` }
-  // The card's Start tells Claude in the user's words, and Claude may then start it again: that is no error.
-  if (proposal.status === 'started') {
-    const session = ((await read($, LINKED)) ?? []).find(s => s.callId === plan.taskId)
-    return { result: `${plan.taskId} is already started as session "${proposal.session}"${session ? ` (claude attach ${session.id})` : ''}, so there is nothing to start.` }
-  }
-  if (proposal.status === 'dismissed') return { deny: `${plan.taskId} was withdrawn.` }
-  if (proposal.status === 'here') return { deny: `The user chose Do it here for ${plan.taskId}: do it in this session.` }
-  if (proposal.initiation === 'offer' && proposal.status === 'open') return { deny: `The user has not answered the card for ${plan.taskId}.` }
-  let brief = proposal.brief
-  if (proposal.initiation === 'own_initiative') {
-    if (plan.prompt !== null || plan.background !== null) return { deny: 'Start a proposal exactly as proposed: proposal_id and nothing else. To change it, dismiss_task it and start a new session.' }
-  } else {
-    const made = makeBrief(input, proposal.title, plan.context, await caller($), true)
-    if ('deny' in made) return made
-    brief = made
-  }
-  if (brief === null) return { deny: `${plan.taskId} has no brief.` }
-  const started = await startProposal($, proposal, brief)
-  return 'error' in started ? { deny: started.error } : { result: started.text }
-}
-
-// A plain dim link. hover underlines the nearest keyed Box, so each button gets its own.
-const link = ({ Box, Button }: Elements['terminal'], key: string, label: string, onPress: () => void, isDim = false) => (
-  <Box key={`hover:${key}`}>
-    <Button key={key} plain dimColor={isDim} hover={{ underline: true }} label={label} onPress={onPress} />
-  </Box>
-)
-
-/** Drawn as the engine draws a tool row: a bullet, the heading and title, then `line` under ⎿. */
-function frame({ Box, Text }: Elements['terminal'], heading: string, title: string, line: JSX.Element) {
-  return (
-    <Box flexDirection="column" marginTop={1}>
-      <Box flexDirection="row">
-        <Box width={2} minWidth={2}>
-          <Text>●</Text>
-        </Box>
-        <Text>
-          <Text weight="semibold">{heading}</Text> {title}
-        </Text>
-      </Box>
-      <Box flexDirection="row">
-        <Box width={5} minWidth={5}>
-          <Text dimColor>{'  ⎿  '}</Text>
-        </Box>
-        <Box flexGrow={1}>{line}</Box>
-      </Box>
-    </Box>
-  )
-}
-
-// The terminal Claude Code runs in: it decides where a row can open its session. Read at session start, as a
-// drawing cannot run uname; a row drawn with none read yet reads it then.
-let terminal: Promise<Terminal> | undefined
-const terminalOnce = ($: EngineInterface) => (terminal ??= terminalOf($))
-
-/** Opens `session` in a pane, tab, popup or window beside this one, or toasts why not. */
-async function openBeside($: EngineInterface, term: Terminal, session: LinkedSession, place: Place) {
-  const run = await $.process.run(openArgv(term, place, session), { timeoutMs: 10_000 }).catch((err: unknown) => ({ exitCode: -1, stderr: String(err) }))
-  if (run.exitCode !== 0) $.ui.toast(`toolkit: could not open ${session.name} in a ${place}: ${run.stderr.trim().split('\n')[0] || `exit ${run.exitCode}`}`)
-}
-
-/** Switches this terminal to `session`: this session exits and comes back with `claude --resume`. */
-async function openHere($: EngineInterface, session: LinkedSession) {
-  const ready = await relaunchFile($)
-  if ('deny' in ready) return $.ui.toast(`toolkit: could not open ${session.name} here: ${ready.deny}`)
-  if ((await relaunchSoon($, ready.file, ['attach', session.id])) === 'after turn') $.ui.toast(`${session.name} opens here when this turn ends`)
-}
-
-/** Stops `session`, then looks again so its row says so; toasts why not. */
-function stopSession($: EngineInterface, session: LinkedSession) {
-  void $.process
-    .run(['claude', 'stop', session.id], { timeoutMs: 20_000 })
-    .then(run => (run.exitCode === 0 ? tick($) : $.ui.toast(`toolkit: could not stop ${session.name}: ${run.stderr.trim().split('\n')[0] || `exit ${run.exitCode}`}`)))
-    .catch((err: unknown) => $.ui.toast(`toolkit: could not stop ${session.name}: ${String(err)}`))
-}
-
-async function sessionLine($: EngineInterface, elements: Elements['terminal'], session: LinkedSession) {
-  const { Box, Text } = elements
-  const term = await terminalOnce($)
-  const stop = () => stopSession($, session)
-  const copy = () => void $.ui.copy({ text: `claude attach ${session.id}`, surface: 'terminal' })
-  const opens = isAlive(session.state)
-    ? [
-        <Text dimColor>{'open in '}</Text>,
-        ...placesOf(term).flatMap(place => [link(elements, `${place}:${session.id}`, place, () => void openBeside($, term, session, place)), <Text dimColor>{' · '}</Text>]),
-        link(elements, `here:${session.id}`, 'here', () => void openHere($, session)),
-        <Text dimColor>{'  ·  '}</Text>,
-      ]
-    : []
-  // Keyed by the session's id, as the running sessions card draws several lines.
-  return (
-    <Box key={session.id} flexDirection="row" flexWrap="wrap">
-      <Text>{`${session.name} · ${session.state === 'gone' ? 'removed' : session.state}${session.branch ? ` · ${session.branch}` : ''}  `}</Text>
-      {opens}
-      {link(elements, `attach:${session.id}`, `claude attach ${session.id}`, copy)}
-      {session.state === 'working' ? [<Text dimColor>{'  ·  '}</Text>, link(elements, `stop:${session.id}`, 'stop', stop, true)] : []}
-      {session.isMuted
-        ? [<Text dimColor>{'  ·  no reports'}</Text>]
-        : isAlive(session.state)
-          ? [<Text dimColor>{'  ·  '}</Text>, link(elements, `mute:${session.id}`, 'stop reports', () => void mute($, session.id), true)]
-          : []}
-    </Box>
-  )
-}
-
-/** Whether a session's row moved into the running sessions card, so its call's row draws nothing. */
-const isInCard = async ($: EngineInterface, session: LinkedSession) => ((await read($, SESSIONS_AT))?.ids ?? []).includes(session.id)
-
-/** An own_initiative card: Start and Dismiss while open, then the session it started, or how it ended. */
-async function drawCard($: EngineInterface, elements: Elements['terminal'], taskId: string) {
-  const { Box, Text } = elements
-  const proposal = await read($, { ...PROPOSALS, id: taskId })
-  if (!proposal) return <Box />
-  // Only a started card reads the linked sessions, which the poll rewrites every few seconds.
-  const session = proposal.status === 'started' ? ((await read($, LINKED)) ?? []).find(s => s.callId === taskId) : undefined
-  if (session) return (await isInCard($, session)) ? <Box /> : frame(elements, 'New session', proposal.title, await sessionLine($, elements, session))
-  const start = () =>
-    void (async () => {
-      if (!proposal.brief) return
-      const started = await startProposal($, proposal, proposal.brief)
-      if ('error' in started) return $.ui.toast(`toolkit: ${started.error}`)
-      // Claude learns of it as the user's own word, as on Desktop.
-      await $.prompt.submit({ text: `I started the suggested session "${proposal.title}" (${proposal.taskId}).`, asUser: true })
-    })()
-  const dismiss = () => void update($, { ...PROPOSALS, id: taskId }, was => (was && was.status === 'open' ? { ...was, status: 'dismissed' as const } : (was ?? null)))
-  const expired = Date.now() - proposal.createdAt > WEEK_MS
-  const line =
-    proposal.status === 'open' && !expired ? (
-      <Box flexDirection="row" flexWrap="wrap">
-        {link(elements, `start:${taskId}`, 'Start', start)}
-        <Text dimColor>{'  ·  '}</Text>
-        {link(elements, `dismiss:${taskId}`, 'Dismiss', dismiss, true)}
-      </Box>
-    ) : (
-      <Text dimColor>{expired && proposal.status === 'open' ? 'Expired' : proposal.status === 'dismissed' ? 'Dismissed' : proposal.status === 'started' ? `Started as ${proposal.session}` : proposal.status}</Text>
-    )
-  return frame(elements, 'Suggested session', proposal.title, line)
-}
-
-/**
- * What `find` makes of this session's transcript once it holds the turn's last rows. The transcript
- * may lag the end of the turn, so it is read again for up to three seconds.
- */
-export async function readTranscript<T>($: EngineInterface, find: (jsonl: string) => T | 'behind' | null): Promise<T | 'behind' | null> {
-  const [home, sessionId] = await Promise.all([$.env.get('HOME').then(home => home ?? ''), $.session.id()])
-  let found = find(await transcriptTail($, home, sessionId))
-  for (let tries = 0; found === 'behind' && tries < 10; tries++) {
-    await $.clock.sleep(300)
-    found = find(await transcriptTail($, home, sessionId))
-  }
-  return found
-}
-
-/** Moves the turn's open or started cards under its last reply text; a miss leaves them on their calls' rows. */
-async function moveCards($: EngineInterface, since: number, answer: string) {
-  const anchor = await readTranscript($, jsonl => cardAnchor(jsonl, since, answer))
-  if (anchor === null || anchor === 'behind') return $.ui.log(`toolkit: the suggested sessions stay on their calls' rows: ${anchor === null ? 'no reply text or proposal in the transcript' : 'the transcript did not catch up'}`, { to: 'debug' })
-  const taskIds: string[] = []
-  for (const id of anchor.toolUseIds) {
-    const proposal = await read($, { ...PROPOSALS, id: taskIdOf(id) })
-    if (proposal?.status === 'open' || proposal?.status === 'started') taskIds.push(proposal.taskId)
-  }
-  if (taskIds.length === 0) return
-  // The reply draws the cards before their rows stop drawing them, so no frame shows neither.
-  const { uuid } = anchor
-  await $.state.set({ ...CARDS_AT, id: uuid }, taskIds)
-  for (const taskId of taskIds) await update($, { ...PROPOSALS, id: taskId }, was => (was ? { ...was, movedTo: uuid } : null))
-}
-
-/**
- * Moves the rows of the sessions still running into one card under the turn's last reply text, so
- * the card stays at the end of the transcript. With none running, each row goes back to its call.
- */
-async function moveSessions($: EngineInterface, since: number, answer: string) {
-  const ids = ((await read($, LINKED)) ?? []).filter(s => isAlive(s.state)).map(s => s.id)
-  if (ids.length === 0) return $.state.set(SESSIONS_AT, null)
-  const anchor = await readTranscript($, jsonl => replyAnchor(jsonl, since, answer))
-  if (anchor === null || anchor === 'behind') return $.ui.log(`toolkit: the running sessions card stays where it was: ${anchor === null ? 'no reply text in the transcript' : 'the transcript did not catch up'}`, { to: 'debug' })
-  await $.state.set(SESSIONS_AT, { anchor: anchor.uuid, ids })
-}
-
-/**
- * The running sessions card: one row per session in aligned columns (name, state, branch), with only the
- * everyday actions. **open** opens it in the first place this terminal offers, or copies `claude attach <id>`
- * where there is none; **stop** shows while it works. The call's own row keeps every action.
- */
-async function drawSessions($: EngineInterface, elements: Elements['terminal'], sessions: LinkedSession[]) {
-  const { Box, Text } = elements
-  const term = await terminalOnce($)
-  const place = placesOf(term)[0]
-  const width = (texts: string[]) => Math.max(...texts.map(text => text.length)) + 2
-  const nameWidth = width(sessions.map(s => s.name))
-  const stateWidth = width(sessions.map(s => stateWord(s.state)))
-  const branchWidth = sessions.some(s => s.branch) ? width(sessions.map(s => s.branch ?? '')) : 0
-  const lines = sessions.map(session => {
-    const open = place
-      ? link(elements, `open:${session.id}`, 'open', () => void openBeside($, term, session, place))
-      : link(elements, `attach:${session.id}`, 'copy attach', () => void $.ui.copy({ text: `claude attach ${session.id}`, surface: 'terminal' }).then(() => $.ui.toast(`Copied claude attach ${session.id}`)))
-    return (
-      <Box key={session.id} flexDirection="row">
-        <Box width={nameWidth} minWidth={nameWidth}>
-          <Text>{session.name}</Text>
-        </Box>
-        <Box width={stateWidth} minWidth={stateWidth}>
-          <Text dimColor>{stateWord(session.state)}</Text>
-        </Box>
-        {branchWidth ? (
-          <Box width={branchWidth} minWidth={branchWidth}>
-            <Text dimColor>{session.branch ?? ''}</Text>
-          </Box>
-        ) : null}
-        {isAlive(session.state) ? open : null}
-        {session.state === 'working' ? [<Text dimColor>{'  ·  '}</Text>, link(elements, `stop:${session.id}`, 'stop', () => stopSession($, session), true)] : []}
-      </Box>
-    )
-  })
-  return frame(elements, 'Running sessions', '', <Box flexDirection="column">{lines}</Box>)
-}
-
-const stateWord = (state: LinkedSession['state']) => (state === 'gone' ? 'removed' : state)
 
 export const register: Register = on => {
-  // Desktop starts its own sessions, and a -p run has no one to answer a card.
+  // Desktop starts its own sessions, and a -p run has no one to open one.
   on('session.start', { surface: 'terminal', isInteractive: true }, async ($, e, next) => {
     await $.tool.register({ name: 'start_session', description: START_DESCRIPTION, inputSchema: START_SCHEMA, isDeferred: false })
-    await $.tool.register({ name: 'dismiss_task', description: DISMISS_DESCRIPTION, inputSchema: DISMISS_SCHEMA, isDeferred: false })
-    await $.tool.register({ name: 'list_sessions', description: LIST_DESCRIPTION, inputSchema: LIST_SCHEMA, isDeferred: false })
-    await $.tool.register({ name: 'hand_off_to_session', description: HAND_OFF_DESCRIPTION, inputSchema: HAND_OFF_SCHEMA, isDeferred: false })
-    await $.tool.register({ name: 'stop_reports', description: MUTE_DESCRIPTION, inputSchema: MUTE_SCHEMA, isDeferred: false })
-    terminal = terminalOf($)
-    await terminal
-    // A restart starts with no plugin state: the sessions still running come back from their link files.
-    if (((await read($, LINKED)) ?? []).length === 0) await recover($).catch(err => $.ui.log(`toolkit: could not bring back the running sessions: ${String(err)}`, { to: 'debug' }))
-    // A reload drops the module's timer, so the reloaded module watches again.
-    if (((await read($, LINKED)) ?? []).some(s => isAlive(s.state))) watch($)
     return next(e)
   })
 
@@ -660,10 +80,9 @@ export const register: Register = on => {
     queued.set(e.text, 'event')
     return next(e)
   })
-  // A turn that another session's report or another automated event started may propose sessions but not start them.
+  // A turn that another session's message or another automated event started starts no session, so sessions never wake each other into new ones.
   on('turn.start', { text: /[\s\S]*/ }, async ($, e, next) => {
     if (e.agentId === undefined) {
-      proposedThisTurn = 0
       const from = queued.get(e.text) ?? [...queued].find(([text]) => e.text.includes(text))?.[1]
       if (from !== 'same') isEventTurn = from === 'event'
       queued.clear()
@@ -671,173 +90,61 @@ export const register: Register = on => {
     return next(e)
   })
 
-  // A session start_session started reports each of its turns to the session that started it, a
-  // follow-up's too: Claude Code tells a sender of that turn only when it asked with notify_when_idle.
-  on('turn.complete', async ($, e, next) => {
-    const startedAt = Date.now() - e.durationMs
-    const result = await next(e)
-    if (e.agentId === undefined) void reportBack($, e.reason, e.answer).catch(err => $.ui.log(`toolkit: could not send the report: ${String(err)}`, { to: 'debug' }))
-    // An error or refusal may end on a row the transcript never draws, so its cards stay on their calls' rows.
-    if (e.agentId === undefined && (e.reason === 'answer' || e.reason === 'aborted')) {
-      const hasProposed = proposedThisTurn > 0
-      void (async () => {
-        if (hasProposed) await moveCards($, startedAt, e.answer).catch(err => $.ui.log(`toolkit: could not move the suggested sessions under the reply: ${String(err)}`, { to: 'debug' }))
-        await moveSessions($, startedAt, e.answer).catch(err => $.ui.log(`toolkit: could not move the running sessions card under the reply: ${String(err)}`, { to: 'debug' }))
-      })()
-    }
-    return result
-  })
-
-  // How many linked sessions are running a turn, after whatever another plugin already added to the hint line.
-  on('ui.render', { surface: 'terminal', component: 'PromptHint' }, async ($, e, next) => {
-    const tail = sessionsTail((await read($, LINKED)) ?? [])
-    if (tail === null) return next(e)
-    return next({ ...e, props: { ...e.props, tail: e.props.tail ? `${e.props.tail} · ${tail}` : tail } })
-  })
-
-  // A turn's suggested sessions, then the running sessions card, under its last reply text, so they come after the whole reply.
-  on('ui.render', { surface: 'terminal', component: 'AssistantMessage' }, async ($, e, next) => {
-    if (e.props.isSummary) return next(e)
-    const taskIds = (await read($, { ...CARDS_AT, id: e.requestId })) ?? []
-    const at = await read($, SESSIONS_AT)
-    const running = at?.anchor === e.requestId ? ((await read($, LINKED)) ?? []).filter(s => at.ids.includes(s.id)) : []
-    if (taskIds.length === 0 && running.length === 0) return next(e)
-    const reply = await next(e)
-    const elements = $.ui.resolve(e)
-    const { Box } = elements
-    const cards = await Promise.all(taskIds.map(taskId => drawCard($, elements, taskId)))
-    return (
-      <Box flexDirection="column">
-        {reply}
-        {cards}
-        {running.length > 0 ? await drawSessions($, elements, running) : []}
-      </Box>
-    )
-  })
-
   on('tool.call', { tool: START_TOOL }, async ($, e) => {
-    const input = e as unknown as Record<string, unknown>
-    const who = await caller($)
-    const plan = planStart(input, who)
-    if (plan.kind === 'deny') return { deny: plan.deny }
-    if (plan.kind === 'accept') return accept($, plan, input)
-
-    const taskId = taskIdOf(e.tool_use_id)
-    if (plan.kind === 'start' && input.switch === true) {
-      if (plan.brief.place.kind === 'cloud') return { deny: 'switch does not go with target "cloud": this terminal cannot open a cloud session.' }
-      const ready = await relaunchFile($)
-      if ('deny' in ready) return { deny: `Nothing was started: ${ready.deny}` }
-      const started = await launch($, plan.brief, e.tool_use_id, true)
-      if ('error' in started) return { deny: started.error }
-      await relaunch($, ready.file, ['attach', started.id])
-      return { result: started.text }
+    const brief = planStart(e, await caller($))
+    if ('deny' in brief) return brief
+    const stat = await $.fs.stat(brief.cwd, { resolve: true }).catch(() => undefined)
+    if (stat?.kind !== 'dir') return { deny: `${brief.cwd} is not a folder on this computer.` }
+    const cwd = stat.realPath ?? brief.cwd
+    const run = await $.process.run(startCommand(brief, await $.session.id()), { cwd, timeoutMs: 90_000 }).catch((err: unknown) => ({ exitCode: -1, stdout: '', stderr: String(err) }))
+    const id = backgroundedId(run.stdout)
+    if (run.exitCode !== 0 || id === null) return { deny: `The session did not start: ${(run.stderr || run.stdout).trim().slice(0, 500) || `exit code ${run.exitCode}`}` }
+    const where = brief.isWorktree ? `worktree .claude/worktrees/${brief.name} on branch worktree-${brief.name}` : cwd
+    await update($, STARTED, was => [...(was ?? []), { name: brief.name, id, where, callId: e.tool_use_id }])
+    return {
+      result: `Started session "${brief.name}" (id ${id}) in ${where}. The user can open it with \`claude attach ${id}\`. To hear when it ends its turn, with its final message, call SendMessage {"to": "${brief.name}", "notify_when_idle": true} now, with no message; pass notify_when_idle with each follow-up too. Never poll it.`,
     }
-    if (plan.kind === 'start') {
-      const started = await launch($, plan.brief, e.tool_use_id)
-      return 'error' in started ? { deny: started.error } : { result: started.text }
-    }
-
-    if (plan.kind === 'propose') {
-      if (proposedThisTurn >= PROPOSALS_PER_TURN) return { deny: `At most ${PROPOSALS_PER_TURN} proposals a turn.` }
-      proposedThisTurn++
-      await $.state.set({ ...PROPOSALS, id: taskId }, { taskId, title: plan.brief.title, initiation: 'own_initiative', brief: plan.brief, status: 'open', session: null, createdAt: Date.now() })
-      return {
-        result: `Proposed as task_id "${taskId}": a card the user can start with its Start button, shown under your reply once this turn ends. Nothing runs until they start it; if they tell you to, call start_session with just this proposal_id. It expires after a week. If it goes stale, withdraw it with dismiss_task. If it is part of what the user asked this turn (other than plan steps split off after ExitPlanMode), withdraw it now with dismiss_task and do it here.`,
-      }
-    }
-
-    await $.state.set({ ...PROPOSALS, id: taskId }, { taskId, title: plan.title, initiation: 'offer', brief: null, status: 'open', session: null, createdAt: Date.now() })
-    void $.ui.notify(`New task: ${plan.title}`).catch(() => undefined)
-    const answer = await $.ui.ask(`Start "${plan.title}" as a new session, or do it here?`, { options: ['New session', 'Do it here'], header: 'New task' }).catch(() => null)
-    const status: Proposal['status'] = answer === 'New session' ? 'new_session' : answer === 'Do it here' ? 'here' : 'dismissed'
-    await update($, { ...PROPOSALS, id: taskId }, was => (was ? { ...was, status } : null))
-    if (answer === 'New session') {
-      return {
-        result: `The user chose New session. Call start_session again with proposal_id "${taskId}", prompt, context, and background for "fresh" (and use_worktree, model or effort if needed); the session starts then. Then go on with anything else the user asked here.`,
-      }
-    }
-    if (answer === 'Do it here') return { result: 'The user chose Do it here: do the task in this session now.' }
-    if (answer === null) return { result: 'The user closed the card without choosing. Do not start a session; ask in your reply where they want this done.' }
-    return { result: `The user answered in their own words: "${answer}". Act on that.` }
   })
 
-  on('tool.call', { tool: HAND_OFF_TOOL }, async ($, e) => {
-    const brief = planHandOff(e, await caller($))
-    if ('deny' in brief) return { deny: brief.deny }
-    const started = await launch($, brief, e.tool_use_id)
-    if ('error' in started) return { deny: started.error }
-    const shared = brief.place.kind === 'folder' && brief.place.cwd === (await $.session.cwd()) ? ' It works in this folder, with your uncommitted edits: from now on, edit none of the files that task touches.' : ''
-    return { result: `${started.text}\nThe task is that session's now: stop it here and answer the user's new message, with no recap.${shared}` }
-  })
-
-  on('tool.call', { tool: DISMISS_TOOL }, async ($, e) => {
-    const { task_id: taskId } = e as unknown as { task_id?: unknown }
-    if (typeof taskId !== 'string') return { deny: 'task_id is required.' }
-    let was: Proposal | null = null
-    await update($, { ...PROPOSALS, id: taskId }, proposal => {
-      was = proposal ?? null
-      return proposal && proposal.status === 'open' ? { ...proposal, status: 'dismissed' as const } : (proposal ?? null)
-    })
-    const proposal = was as Proposal | null
-    if (proposal === null) return { deny: `No proposal ${taskId} in this session.` }
-    if (proposal.status === 'started') return { result: `${taskId} was already started as session "${proposal.session}", so it was not withdrawn. Its work is that session's: do not do it here unless the user tells you to.` }
-    if (proposal.status !== 'open') return { result: `${taskId} had already left (${proposal.status}); nothing to withdraw.` }
-    return { result: `Withdrew ${taskId}.` }
-  })
-
-  on('tool.call', { tool: MUTE_TOOL }, async ($, e) => {
-    const { name } = e as unknown as { name?: unknown }
-    const session = ((await read($, LINKED)) ?? []).find(s => s.name === name || s.id === name)
-    if (!session) return { deny: `No session "${String(name)}" was started here. Linked sessions:\n${linkedLines((await read($, LINKED)) ?? [])}` }
-    await mute($, session.id)
-    return { result: `Session "${session.name}" (id ${session.id}) sends no more reports here. It keeps working; the user can open it with \`claude attach ${session.id}\`.` }
-  })
-
-  on('tool.call', { tool: LIST_TOOL }, async ($, e) => {
-    const { linked } = e as unknown as { linked?: unknown }
-    if (linked === true) {
-      await tick($)
-      return { result: `Linked sessions now:\n${linkedLines((await read($, LINKED)) ?? [])}` }
-    }
-    const listing = await $.process.run(['claude', 'agents', '--json'], { timeoutMs: 20_000 })
-    return { result: listing.exitCode === 0 ? listing.stdout : `claude agents failed: ${listing.stderr.trim()}` }
-  })
-
-  // The call's row is the session's row: its state, and how to open or stop it, or the card to start it.
-  on('ui.render', { surface: 'terminal', component: 'ToolUse', props: { tool: /^mcp__toolkit__(start_session|hand_off_to_session)$/ } }, async ($, e, next) => {
-    if (e.props.isExpanded || e.props.isErrored) return next(e)
-    const input = (e.props.input ?? {}) as Record<string, unknown>
-    const elements = $.ui.resolve(e)
-    const { Box, Text } = elements
-    const proposalId = typeof input.proposal_id === 'string' ? input.proposal_id : null
-    const taskId = proposalId ?? taskIdOf(e.props.tool_use_id)
-    const proposal = await read($, { ...PROPOSALS, id: taskId })
-    // A card moved under its turn's reply leaves its call's row empty; the call that started it keeps its row.
-    if (proposal?.initiation === 'own_initiative' && proposalId === null) return proposal.movedTo ? <Box /> : drawCard($, elements, taskId)
-    const linked = (await read($, LINKED)) ?? []
-    // An offer's row keeps the user's answer; the call that sent its brief shows the session.
-    const isOfferCard = proposal?.initiation === 'offer' && proposalId === null
-    const session = linked.find(s => s.callId === e.props.tool_use_id || (!isOfferCard && s.callId === taskId))
-    const title = proposal?.title ?? (typeof input.title === 'string' ? input.title : 'session')
-
-    const heading = e.props.tool === HAND_OFF_TOOL ? 'Handed off' : 'New session'
-    if (session) return (await isInCard($, session)) ? <Box /> : frame(elements, heading, title, await sessionLine($, elements, session))
-    if (proposal?.initiation === 'offer') {
-      const said = { open: 'New session or do it here?', new_session: 'You chose: New session', here: 'You chose: Do it here', started: `Started as ${proposal.session}`, dismissed: 'Closed' }
-      return frame(elements, 'New task', title, <Text dimColor>{said[proposal.status]}</Text>)
-    }
-    // A proposal starts under its task id, a direct start under its call's.
-    if (await read($, { ...LAUNCHING, id: proposalId ?? e.props.tool_use_id })) return frame(elements, heading, title, <Text dimColor>starting…</Text>)
-    if (e.props.isRunning) return next(e)
-    return frame(elements, heading, title, <Text dimColor>{typeof input.target === 'string' && input.target === 'cloud' ? 'cloud session' : 'not linked here'}</Text>)
+  // The call's row names the session and copies the command that opens it.
+  on('ui.render', { surface: 'terminal', component: 'ToolUse', props: { tool: START_TOOL } }, async ($, e, next) => {
+    if (e.props.isExpanded || e.props.isErrored || e.props.isRunning) return next(e)
+    const session = ((await read($, STARTED)) ?? []).find(s => s.callId === e.props.tool_use_id)
+    if (!session) return next(e)
+    return sessionRow($.ui.resolve(e), session, () => void $.ui.copy({ text: `claude attach ${session.id}`, surface: 'terminal' }))
   })
 
   // The row above says it all; an error keeps the engine's drawing, so its reason shows.
-  for (const tool of [START_TOOL, HAND_OFF_TOOL, DISMISS_TOOL]) {
-    on('ui.render', { surface: 'terminal', component: 'ToolResult', props: { tool } }, async ($, e, next) => {
-      if (e.props.isExpanded || e.props.isErrored) return next(e)
-      const { Box } = $.ui.resolve(e)
-      return <Box />
-    })
-  }
+  on('ui.render', { surface: 'terminal', component: 'ToolResult', props: { tool: START_TOOL } }, async ($, e, next) => {
+    if (e.props.isExpanded || e.props.isErrored) return next(e)
+    const { Box } = $.ui.resolve(e)
+    return <Box />
+  })
+}
+
+/** Drawn as the engine draws a tool row: a bullet, `New session` and the name, then the folder and the attach command under ⎿. */
+function sessionRow({ Box, Button, Text }: Elements['terminal'], session: StartedSession, copy: () => void) {
+  return (
+    <Box flexDirection="column" marginTop={1}>
+      <Box flexDirection="row">
+        <Box width={2} minWidth={2}>
+          <Text>●</Text>
+        </Box>
+        <Text>
+          <Text weight="semibold">New session</Text> {session.name}
+        </Text>
+      </Box>
+      <Box flexDirection="row">
+        <Box width={5} minWidth={5}>
+          <Text dimColor>{'  ⎿  '}</Text>
+        </Box>
+        <Box flexDirection="row" flexWrap="wrap" flexGrow={1}>
+          <Text dimColor>{`${session.where}  ·  `}</Text>
+          <Box key={`hover:attach:${session.id}`}>
+            <Button key={`attach:${session.id}`} plain hover={{ underline: true }} label={`claude attach ${session.id}`} onPress={copy} />
+          </Box>
+        </Box>
+      </Box>
+    </Box>
+  )
 }

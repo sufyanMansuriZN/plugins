@@ -24,14 +24,7 @@ CONTROLS = [
     (r'answer:0', 'next step box', 'first answer'),
     (r'answer:', 'next step box', 'second answer'),
     (r'toggle$', 'task list', '+N more / show less'),
-    (r'(pane|tab|popup|window):', 'sessions', 'open in pane, tab, popup or window'),
-    (r'here:', 'sessions', 'open here'),
-    (r'open:', 'sessions', 'open (running sessions card)'),
     (r'attach:', 'sessions', 'copy claude attach'),
-    (r'stop:', 'sessions', 'stop'),
-    (r'mute:', 'sessions', 'stop reports'),
-    (r'start:', 'sessions', 'Start a suggested session'),
-    (r'dismiss:', 'sessions', 'Dismiss a suggested session'),
 ]
 TABLE = re.compile(r'^\s*\|.*\|\s*\n\s*\|[\s:|-]+\|\s*$', re.M)
 QUOTE = re.compile(r'^>\s?\S', re.M)

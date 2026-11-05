@@ -48,6 +48,18 @@ export type PageComment = {
   shot?: string
 }
 
+/** What the extension read from a tab for `read_tab`'s check: the target now, after a reload if asked. */
+export type PageCheck = {
+  found: boolean
+  text?: string
+  rect?: PageRect
+  /** The computed styles that were asked for, by name. */
+  styles?: Record<string, string>
+}
+
+/** A check request for the extension, as `read_tab` writes it. */
+export type PageCheckRequest = { type: 'check'; tabId: number; selector?: string; rect?: PageRect; styles: string[]; reload: boolean }
+
 export type PermissionMode ='default' | 'plan' | 'acceptEdits' | 'auto' | 'bypassPermissions'
 
 /** Everything a new session starts from, checked; `text` is its whole first message. */

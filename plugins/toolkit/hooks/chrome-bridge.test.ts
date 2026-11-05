@@ -154,3 +154,23 @@ test('the answer tools refuse an empty thread id or text', async ($, on) => {
   expect(await call($, clock, 'reply_comment', { threadId: 'th-1', text: '  ' })).toContain('text')
   expect(host.requests).toEqual([])
 })
+
+test('read_tab with a tabId asks the extension to check the tab and returns a marked block', async ($, on) => {
+  const host = engine(on)
+  const clock = mock.clock(on)
+  host.answer = () => ({ ok: true, check: { found: true, text: INJECTION, rect: { x: 1, y: 2, width: 3, height: 4 }, styles: { padding: '12px' } } })
+  await start($, on)
+  const result = await call($, clock, 'read_tab', { tabId: 7, selector: '#card', styles: ['padding'], reload: true })
+  expect(host.requests).toEqual([expect.objectContaining({ sessionId: SESSION, type: 'check', tabId: 7, selector: '#card', styles: ['padding'], reload: true })])
+  expect(result).toContain('page-content marker=')
+  expect(result).toContain('padding: 12px')
+})
+
+test('read_tab needs a commentId or a tabId with a target', async ($, on) => {
+  const host = engine(on)
+  const clock = mock.clock(on)
+  await start($, on)
+  expect(await call($, clock, 'read_tab', {})).toContain('commentId')
+  expect(await call($, clock, 'read_tab', { tabId: 7 })).toContain('selector or rect')
+  expect(host.requests).toEqual([])
+})

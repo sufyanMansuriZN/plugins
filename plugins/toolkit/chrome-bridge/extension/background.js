@@ -400,6 +400,10 @@ async function handleRequest(request) {
       sendReply({ id: request.id, ok: true })
       return
     }
+    if (request.type === 'check') {
+      sendReply({ id: request.id, ok: true, check: await checkTab(request) })
+      return
+    }
     if (request.type !== 'open') throw new Error(`Unknown request type: ${String(request.type)}`)
     let url
     try {
@@ -426,6 +430,91 @@ async function handleRequest(request) {
   } catch (err) {
     sendReply({ id: request.id, ok: false, error: String(err?.message ?? err) })
   }
+}
+
+// ---- Checks: read a target again, in any tab the asking session owns ----
+
+const CHECK_LOAD_MS = 15_000
+const MAX_CHECK_STYLES = 30
+
+/** Resolves when the tab has finished loading, or rejects after 15 seconds. */
+function loaded(tabId) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      chrome.tabs.onUpdated.removeListener(listener)
+      reject(new Error('The tab did not finish loading in 15 seconds.'))
+    }, CHECK_LOAD_MS)
+    function listener(id, changeInfo) {
+      if (id !== tabId || changeInfo.status !== 'complete') return
+      clearTimeout(timer)
+      chrome.tabs.onUpdated.removeListener(listener)
+      resolve()
+    }
+    chrome.tabs.onUpdated.addListener(listener)
+  })
+}
+
+/** Runs in the page (isolated world). It only reads: the target, its text, rect and the named styles. */
+function readTarget(selector, rect, styles, maxText) {
+  const ownHost = document.querySelector('[data-toolkit-chrome-bridge]')
+  const pageRect = b => ({
+    x: Math.round(b.left + window.scrollX),
+    y: Math.round(b.top + window.scrollY),
+    width: Math.round(b.width),
+    height: Math.round(b.height),
+  })
+  const textOf = el => (el.innerText || el.textContent || '').replace(/\s+\n/g, '\n').trim().slice(0, maxText)
+  let element = null
+  if (selector) {
+    try {
+      element = document.querySelector(selector)
+    } catch {
+      element = null
+    }
+  }
+  if (!element && rect) {
+    // The smallest element that covers the rect's centre; failing that, the text of what lies inside it.
+    const cx = rect.x + rect.width / 2
+    const cy = rect.y + rect.height / 2
+    let best = null
+    for (const el of document.body.querySelectorAll('*')) {
+      if (el === ownHost || ownHost?.contains(el)) continue
+      const r = pageRect(el.getBoundingClientRect())
+      if (r.width === 0 || r.height === 0) continue
+      if (cx < r.x || cx > r.x + r.width || cy < r.y || cy > r.y + r.height) continue
+      if (!best || r.width * r.height <= best.area) best = { el, area: r.width * r.height }
+    }
+    element = best?.el ?? null
+  }
+  if (!element) return { found: false }
+  const computed = getComputedStyle(element)
+  return {
+    found: true,
+    text: textOf(element),
+    rect: pageRect(element.getBoundingClientRect()),
+    styles: Object.fromEntries(styles.map(name => [name, computed.getPropertyValue(name)])),
+  }
+}
+
+async function checkTab(request) {
+  if (!Number.isInteger(request.tabId)) throw new Error('The request has no tab.')
+  const owner = await ownerOf(request.tabId)
+  if (!owner || owner.sessionId !== request.sessionId) throw new Error('This session does not own that tab.')
+  const selector = typeof request.selector === 'string' ? request.selector : null
+  const rect = isRect(request.rect) ? request.rect : null
+  if (!selector && !rect) throw new Error('The check has no selector or rect.')
+  const styles = Array.isArray(request.styles) ? request.styles.filter(s => typeof s === 'string').slice(0, MAX_CHECK_STYLES) : []
+  if (request.reload === true) {
+    const done = loaded(request.tabId)
+    await chrome.tabs.reload(request.tabId)
+    await done
+  }
+  const [frame] = await chrome.scripting.executeScript({
+    target: { tabId: request.tabId, frameIds: [0] },
+    func: readTarget,
+    args: [selector, rect, styles, MAX_TEXT],
+  })
+  return frame?.result ?? { found: false }
 }
 
 // ---- Screenshots ----

@@ -274,7 +274,18 @@ async function main() {
       await shows(tab, 'too much padding')
     })
 
-    await check('an answer shows in the thread and counts on the icon while the tab is in the background', async () => {
+    await check('the thread title names the heading and the marked text, not the selector', async () => {
+      const where = (await nodes(tab)).find(n => hasClass(n, 'where'))
+      assert.equal(textOf(where), 'Plans · Basic plan, 10 seats')
+    })
+
+    // The unread count in the toolbar: '' when there is none.
+    const countOf = async s => {
+      const n = (await nodes(s)).find(x => hasClass(x, 'count'))
+      return !n || (n.attributes ?? []).includes('hidden') ? '' : textOf(n)
+    }
+
+    await check('an answer shows in the thread and counts in the toolbar, not on the icon, while the tab is in the background', async () => {
       pageTarget = (await cdp.send('Target.getTargets')).targetInfos.find(i => i.type === 'page' && i.url.startsWith(`${origin}/plain`)).targetId
       const other = await cdp.send('Target.createTarget', { url: 'about:blank' })
       await cdp.send('Target.activateTarget', { targetId: other.targetId })
@@ -282,8 +293,9 @@ async function main() {
       await writeFile(join(root, 'requests', 'reply-1.json'), JSON.stringify({ id: 'reply-1', sessionId: SESSION, type: 'reply', threadId, text: 'Cut it from 24 to 12 px.' }))
       const reply = JSON.parse(await until('reply reply-1', () => readFile(join(root, 'replies', 'reply-1.json'), 'utf8'), 15_000))
       assert.equal(reply.ok, true, JSON.stringify(reply))
-      assert.equal(await until('badge 1', async () => (await badge()) === '1' && '1'), '1')
       await shows(tab, 'Cut it from 24 to 12 px.')
+      assert.equal(await until('count 1 in the toolbar', async () => (await countOf(tab)) === '1' && '1'), '1')
+      assert.equal(await badge(), '', 'the extension icon shows no count')
       await cdp.send('Target.activateTarget', { targetId: pageTarget })
       await cdp.send('Target.closeTarget', { targetId: other.targetId })
     })
@@ -297,7 +309,7 @@ async function main() {
         const { data } = await cdp.send('Page.captureScreenshot', { format: 'png' }, tab)
         await writeFile(process.env.E2E_SHOT_THREAD, Buffer.from(data, 'base64'))
       }
-      assert.equal(await until('badge cleared', async () => (await badge()) === '' && 'cleared'), 'cleared')
+      assert.equal(await until('count cleared', async () => (await countOf(tab)) === '' && 'cleared'), 'cleared')
     })
 
     await check('another session cannot answer the thread', async () => {
@@ -465,6 +477,42 @@ async function main() {
     await check('another session cannot check the tab', async () => {
       const reply = await checkTab('check-4', { sessionId: 'other-session', tabId: await plainTab(), selector: '#card', styles: [], reload: false })
       assert.equal(reply.ok, false)
+    })
+
+    const button = label => n => n.nodeName === 'BUTTON' && (n.attributes ?? [])[(n.attributes ?? []).indexOf('aria-label') + 1] === label
+    const collapsed = async s => (await nodes(s)).some(n => hasClass(n, 'toolbar') && hasClass(n, 'collapsed'))
+    const pinsHidden = async s => (await nodes(s)).some(n => hasClass(n, 'pins') && (n.attributes ?? []).includes('hidden'))
+
+    await check('hide folds the toolbar and hides the pins, also after a reload, and show brings them back', async () => {
+      await click(tab, await centerOf(tab, button('Hide the toolbar')))
+      await until('a folded toolbar', () => collapsed(tab))
+      assert.equal(await pinsHidden(tab), true)
+      await evaluate(tab, 'location.reload()')
+      await sleep(500)
+      await hasToolbar(tab)
+      await until('still folded after a reload', () => collapsed(tab))
+      // E2E_SHOT_FOLDED=<file.png> saves a screenshot of the folded toolbar.
+      if (process.env.E2E_SHOT_FOLDED) {
+        await sleep(300)
+        const { data } = await cdp.send('Page.captureScreenshot', { format: 'png' }, tab)
+        await writeFile(process.env.E2E_SHOT_FOLDED, Buffer.from(data, 'base64'))
+      }
+      await click(tab, await centerOf(tab, button('Show the toolbar')))
+      await until('an open toolbar', async () => !(await collapsed(tab)))
+      assert.equal(await pinsHidden(tab), false)
+    })
+
+    await check('turn off removes the toolbar and the session from the tab, and the icon brings the list back', async () => {
+      const id = await plainTab()
+      await click(tab, await centerOf(tab, button('Turn off on this tab')))
+      await until('no toolbar', async () => !(await evaluate(tab, `!!document.querySelector('[data-toolkit-chrome-bridge]')`)))
+      assert.equal(await workerEval(`chrome.storage.local.get('tabs').then(({ tabs }) => !!(tabs || {})[${id}])`), false)
+      await evaluate(tab, 'location.reload()')
+      await sleep(1000)
+      assert.equal(await evaluate(tab, `!!document.querySelector('[data-toolkit-chrome-bridge]')`), false, 'no toolbar after a reload')
+      await pressIcon(`${origin}/plain`)
+      await hasToolbar(tab)
+      await shows(tab, 'Send comments on this tab to')
     })
     // Not checked here: the self-reload after a version change. An extension loaded with
     // --load-extension does not come back after chrome.runtime.reload() in this test browser,

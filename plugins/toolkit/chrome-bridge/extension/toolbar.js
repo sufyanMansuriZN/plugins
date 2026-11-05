@@ -124,6 +124,15 @@ button:focus-visible, textarea:focus-visible {
   max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .owner:hover { background: var(--t3-accent); color: var(--t3-foreground); }
+.toolbar.collapsed > :not(.show):not(.count) { display: none; }
+.toolbar:not(.collapsed) > .show { display: none; }
+.count {
+  height: 22px; min-width: 22px; padding: 0 7px; margin: 0 2px; border: 1.5px solid #000; border-radius: 999px;
+  background: var(--badge); color: var(--badge-foreground); cursor: pointer;
+  font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums;
+}
+.count[hidden] { display: none !important; }
+.pins[hidden] { display: none; }
 .owner.none { background: var(--badge); color: var(--badge-foreground); }
 .picker {
   pointer-events: auto; position: fixed; right: 12px; bottom: 58px; display: none; flex-direction: column;
@@ -458,6 +467,7 @@ button:focus-visible, textarea:focus-visible {
   targetLabel.className = 'label'
   targetLabel.style.cssText = `display:none;left:0;top:0;z-index:${CONTENT_LAYER_Z_INDEX}`
   const pinLayer = document.createElement('div')
+  pinLayer.className = 'pins'
   root.append(hoverOutline, marqueeBox, targetOutline, targetLabel, pinLayer)
 
   // Built node by node, not with innerHTML, so a page's Trusted Types policy cannot block it.
@@ -465,6 +475,8 @@ button:focus-visible, textarea:focus-visible {
     select: [['path', { d: 'M4 4.5h12A1.5 1.5 0 0 1 17.5 6v7a1.5 1.5 0 0 1-1.5 1.5H9.5L6 17.5v-3H4A1.5 1.5 0 0 1 2.5 13V6A1.5 1.5 0 0 1 4 4.5Z' }]],
     marquee: [['rect', { x: '3', y: '4', width: '14', height: '12', rx: '1.5', 'stroke-dasharray': '3 2.2' }]],
     send: [['path', { d: 'M10 16V4M5 9l5-5 5 5' }]],
+    hide: [['path', { d: 'M5 8l5 5 5-5' }]],
+    off: [['path', { d: 'M10 3v7M6.2 5.6a6 6 0 1 0 7.6 0' }]],
   }
   function icon(name) {
     const NS = 'http://www.w3.org/2000/svg'
@@ -613,6 +625,26 @@ button:focus-visible, textarea:focus-visible {
     toolButtons.set(candidate, button)
     toolbar.appendChild(button)
   }
+
+  // Unread answers on this page. A click opens the first thread with one.
+  const countButton = document.createElement('button')
+  countButton.type = 'button'
+  countButton.className = 'count'
+  countButton.hidden = true
+  const toolbarButton = (name, label, title) => {
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.className = 'btn icon'
+    button.title = title
+    button.setAttribute('aria-label', label)
+    button.appendChild(icon(name))
+    return button
+  }
+  const hideButton = toolbarButton('hide', 'Hide the toolbar', 'Hide the toolbar and pins on this tab')
+  const offButton = toolbarButton('off', 'Turn off on this tab', 'Turn off on this tab: no toolbar, and no comments go to the session. The extension icon brings it back.')
+  const showButton = toolbarButton('select', 'Show the toolbar', 'Show the toolbar and pins')
+  showButton.classList.add('show')
+  toolbar.append(countButton, hideButton, offButton, showButton)
 
   const setStatus = (text) => {
     status.textContent = text
@@ -803,7 +835,61 @@ button:focus-visible, textarea:focus-visible {
     })
     paintPins()
     renderPanel()
+    renderCount()
   }
+
+  function renderCount() {
+    const unread = threads.filter(t => (t.unread || 0) > 0)
+    countButton.hidden = unread.length === 0
+    countButton.textContent = String(unread.length)
+    countButton.title = unread.length === 1 ? '1 thread has a new answer. Click to open it.' : `${unread.length} threads have new answers. Click to open the first.`
+    countButton.setAttribute('aria-label', countButton.title)
+  }
+
+  countButton.addEventListener('click', event => {
+    if (!event.isTrusted) return
+    const first = threads.find(t => (t.unread || 0) > 0)
+    if (!first) return
+    setCollapsed(false)
+    openThreadId = first.id
+    renderPanel()
+  })
+
+  // ---- Hide and turn off ----
+
+  let collapsed = false
+
+  /** Folds the toolbar to one button and hides pins and panels; `remember` keeps it through reloads. */
+  function setCollapsed(on, remember = true) {
+    if (collapsed === on) return
+    collapsed = on
+    toolbar.classList.toggle('collapsed', on)
+    pinLayer.hidden = on
+    if (on) {
+      setTool('off')
+      if (target && !sending) clearTarget()
+      openThreadId = null
+      renderPanel()
+      picker.style.display = 'none'
+    }
+    if (remember) void ask({ type: 'hide', hidden: on })
+  }
+
+  hideButton.addEventListener('click', event => {
+    if (!event.isTrusted) return
+    setCollapsed(true)
+  })
+
+  showButton.addEventListener('click', event => {
+    if (!event.isTrusted) return
+    setCollapsed(false)
+  })
+
+  offButton.addEventListener('click', async event => {
+    if (!event.isTrusted) return
+    const answer = await ask({ type: 'turn-off' })
+    if (answer.ok) teardown()
+  })
 
   function messageNode(m, sessionLabel) {
     const row = document.createElement('div')
@@ -850,8 +936,9 @@ button:focus-visible, textarea:focus-visible {
     const label = t.sessionName || sessionName || 'Claude Code'
     panelNum.textContent = String(index + 1)
     panelWho.textContent = label
-    panelWhere.textContent = t.selector ? `· ${t.selector}` : '· region'
-    panelWhere.title = t.selector || ''
+    // Older threads have no label; they fall back to the kind of target.
+    panelWhere.textContent = t.label || (t.kind === 'region' ? 'Region' : 'Element')
+    panelWhere.title = panelWhere.textContent
     disarmResolve()
     resolveButton.style.display = t.status === 'resolved' ? 'none' : ''
     panelMsgs.replaceChildren(...t.messages.map(m => messageNode(m, label)))
@@ -890,9 +977,10 @@ button:focus-visible, textarea:focus-visible {
   /** An answer counts as read once its thread is open on a page you can see. */
   function markReadIfSeen() {
     const t = threads.find(x => x.id === openThreadId)
-    if (!t || !t.unread || document.visibilityState !== 'visible') return
+    if (!t || !t.unread || collapsed || document.visibilityState !== 'visible') return
     t.unread = 0
     threadPins.find(p => p.id === t.id)?.node.classList.remove('unread')
+    renderCount()
     void ask({ type: 'read', threadId: t.id })
   }
 
@@ -1388,6 +1476,7 @@ button:focus-visible, textarea:focus-visible {
       return
     }
     showOwner(answer.sessionName || '', answer.running)
+    if (answer.hidden) setCollapsed(true, false)
     if (!answer.hasOwner) void openPicker('')
     else if (!answer.running) void openPicker('No session. Pick one')
     if (answer.hasOwner) void loadThreads()

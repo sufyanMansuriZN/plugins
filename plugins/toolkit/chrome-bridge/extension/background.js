@@ -132,16 +132,17 @@ async function threadsFor(url) {
     .sort((a, b) => a.at.localeCompare(b.at))
 }
 
-async function refreshBadge() {
-  const unread = Object.values(await readThreads()).reduce((sum, t) => sum + (t.unread || 0), 0)
-  await chrome.action.setBadgeText({ text: unread > 0 ? String(unread) : '' })
-  await chrome.action.setBadgeBackgroundColor({ color: '#ffd400' })
-  if (chrome.action.setBadgeTextColor) await chrome.action.setBadgeTextColor({ color: '#000000' })
+/** A thread's title: the nearest heading and the start of the marked text, never the selector. */
+function threadLabel(comment) {
+  const section = comment.section?.text?.replace(/\s+/g, ' ').trim().slice(0, 60) ?? ''
+  const text = (comment.text ?? '').replace(/\s+/g, ' ').trim()
+  const snippet = text.length > 60 ? `${text.slice(0, 59)}…` : text
+  if (comment.kind === 'region') return section ? `${section} · region` : 'Region'
+  return [section, snippet].filter(Boolean).join(' · ') || 'Element'
 }
 
-/** Tells the toolbars on pages with this URL to draw their threads again. */
+/** Tells the toolbars on pages with this URL to draw their threads again. The unread count shows there, in the page. */
 async function threadsChanged(url) {
-  await refreshBadge()
   const key = urlKey(url)
   for (const tab of await chrome.tabs.query({})) {
     if (tab.id === undefined || urlKey(tab.url) !== key || !(await ownerOf(tab.id))) continue
@@ -162,7 +163,6 @@ async function pruneThreads() {
     }
     return changed
   })
-  await refreshBadge()
 }
 
 /** Claude's answer to a thread, from a `reply` or `resolve` request. Only the thread's own session may answer. */
@@ -604,6 +604,7 @@ async function onToolbarMessage(message, tab) {
         ok: true,
         sessionName: owner?.sessionName ?? '',
         hasOwner: Boolean(owner),
+        hidden: owner?.hidden === true,
         running: owner ? await isRunning(owner.sessionId) : false,
         connected,
       }
@@ -674,6 +675,7 @@ async function onToolbarMessage(message, tab) {
           sessionName: owner.sessionName,
           url: urlKey(comment.url),
           kind: comment.kind,
+          label: threadLabel(comment),
           rect: comment.rect,
           ...(comment.selector ? { selector: comment.selector } : {}),
           status: 'open',
@@ -734,7 +736,23 @@ async function onToolbarMessage(message, tab) {
         if (!t || !t.unread) return false
         t.unread = 0
       })
-      await refreshBadge()
+      return { ok: true }
+
+    case 'hide':
+      // Folds the toolbar on this tab; kept through reloads, like the owner.
+      await updateTabs(tabs => {
+        const entry = tabs[String(tab.id)]
+        if (!entry) return false
+        entry.hidden = message.hidden === true
+      })
+      return { ok: true }
+
+    case 'turn-off':
+      // The tab stops sending comments; its threads stay for the URL. The icon brings the toolbar back.
+      pickTabs.delete(tab.id)
+      await updateTabs(tabs => {
+        delete tabs[String(tab.id)]
+      })
       return { ok: true }
 
     case 'resolve': {
@@ -777,4 +795,6 @@ chrome.runtime.onStartup.addListener(connect)
 chrome.runtime.onInstalled.addListener(connect)
 connect()
 void restoreOwnedTabs()
+// Earlier versions put the unread count on the icon; it now shows in the page.
+void chrome.action.setBadgeText({ text: '' })
 void pruneThreads()

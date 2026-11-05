@@ -206,11 +206,12 @@ async function injectToolbar(tabId) {
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
   // A completed load, or a same-document navigation (history API) that changes the URL.
   if (changeInfo.status !== 'complete' && changeInfo.url === undefined) return
-  if (!(await ownerOf(tabId))) return
+  if (!(await ownerOf(tabId)) && !pickTabs.has(tabId)) return
   await injectToolbar(tabId)
 })
 
 chrome.tabs.onRemoved.addListener(tabId => {
+  pickTabs.delete(tabId)
   updateTabs(tabs => {
     if (!(String(tabId) in tabs)) return false
     delete tabs[String(tabId)]
@@ -227,9 +228,18 @@ chrome.tabs.onReplaced.addListener((addedTabId, removedTabId) => {
   })
 })
 
-chrome.action.onClicked.addListener(tab => {
-  console.log('chrome bridge: the session picker comes in a later version. Tab', tab.id)
-})
+// Tabs where you pressed the extension icon. Only these may show the toolbar without a session, to pick one.
+const pickTabs = new Set()
+
+/** What a press on the extension icon does: add the toolbar and open its session list. */
+async function openPicker(tab) {
+  if (tab.id === undefined) return
+  pickTabs.add(tab.id)
+  await injectToolbar(tab.id)
+  chrome.tabs.sendMessage(tab.id, { type: 'open-picker' }, { frameId: 0 }).catch(() => undefined)
+}
+
+chrome.action.onClicked.addListener(tab => void openPicker(tab))
 
 /** At worker start: drop owners of tabs that closed while the worker was down, and add the toolbar again. */
 async function restoreOwnedTabs() {
@@ -488,17 +498,46 @@ function saveToHost(comment, png) {
   })
 }
 
+const NO_SESSION = { ok: false, noSession: true, error: 'No session. Pick one' }
+
+async function isRunning(sessionId) {
+  return (await freshSessions()).some(s => s.sessionId === sessionId)
+}
+
 async function onToolbarMessage(message, tab) {
   const owner = await ownerOf(tab.id)
-  if (!owner) return { ok: false, error: 'This tab has no Claude Code session.' }
+  const picking = pickTabs.has(tab.id) && ['toolbar-hello', 'sessions', 'pick'].includes(message.type)
+  if (!owner && !picking) return { ok: false, error: 'This tab has no Claude Code session.' }
 
   switch (message.type) {
     case 'toolbar-hello':
-      return { ok: true, sessionName: owner.sessionName, connected }
+      return {
+        ok: true,
+        sessionName: owner?.sessionName ?? '',
+        hasOwner: Boolean(owner),
+        running: owner ? await isRunning(owner.sessionId) : false,
+        connected,
+      }
+
+    case 'sessions':
+      if (!connected) return { ok: false, error: NOT_CONNECTED }
+      return { ok: true, sessions: await freshSessions(), current: owner?.sessionId ?? '' }
+
+    case 'pick': {
+      // The toolbar sends this only for a trusted click in its closed shadow root.
+      const session = (await freshSessions()).find(s => s.sessionId === message.sessionId)
+      if (!session) return { ok: false, error: 'That session is not running any more.' }
+      await updateTabs(tabs => {
+        tabs[String(tab.id)] = { sessionId: session.sessionId, sessionName: session.name }
+      })
+      pickTabs.add(tab.id)
+      return { ok: true, sessionName: session.name }
+    }
 
     case 'capture': {
       // Step 1 of a send. The toolbar has hidden itself, so the shot shows only the page.
       if (!connected) return { ok: false, error: NOT_CONNECTED }
+      if (!(await isRunning(owner.sessionId))) return NO_SESSION
       if (!isRect(message.clip) || !isFiniteNumber(message.dpr) || message.dpr <= 0) {
         return { ok: false, error: 'The toolbar sent a bad target.' }
       }
@@ -538,7 +577,7 @@ async function onToolbarMessage(message, tab) {
       }
       const png = typeof message.token === 'string' ? takeShot(message.token, tab.id) : undefined
       const result = await saveToHost(comment, png)
-      if (!result.ok) return result
+      if (!result.ok) return /not running/.test(result.error ?? '') ? NO_SESSION : result
       await updateThreads(threads => {
         threads[id] = {
           id,

@@ -118,9 +118,39 @@ button:focus-visible, textarea:focus-visible {
   backdrop-filter: blur(24px);
 }
 .owner {
-  padding: 0 8px; font-size: 12px; font-weight: 600; color: var(--t3-muted-foreground);
+  height: 30px; padding: 0 8px; border: 1px solid transparent; border-radius: calc(var(--t3-radius) - 2px);
+  background: transparent; cursor: pointer;
+  font-size: 12px; font-weight: 600; color: var(--t3-muted-foreground);
   max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+.owner:hover { background: var(--t3-accent); color: var(--t3-foreground); }
+.owner.none { background: var(--badge); color: var(--badge-foreground); }
+.picker {
+  pointer-events: auto; position: fixed; right: 12px; bottom: 58px; display: none; flex-direction: column;
+  width: min(320px, calc(100vw - 24px)); max-height: min(380px, calc(100vh - 80px));
+  border: 1px solid var(--t3-border); border-radius: calc(var(--t3-radius) + 4px);
+  background: color-mix(in srgb, var(--t3-popover) 98%, transparent); color: var(--t3-popover-foreground);
+  box-shadow: 0 16px 40px rgb(0 0 0 / 22%); backdrop-filter: blur(24px); overflow: hidden;
+}
+.picker .title { padding: 10px 12px 6px; font-size: 12px; font-weight: 700; }
+.picker .note { margin: 0 12px 6px; padding: 2px 6px; border-radius: 4px; justify-self: start; align-self: flex-start; font-size: 12px; font-weight: 600; background: var(--badge); color: var(--badge-foreground); }
+.picker .note:empty { display: none; }
+.picker .list { display: flex; flex-direction: column; gap: 2px; padding: 0 6px 6px; overflow-y: auto; }
+.picker .session {
+  display: grid; gap: 1px; justify-items: start; text-align: left; width: 100%; padding: 6px 8px;
+  border: 1px solid transparent; border-radius: 8px; background: transparent; cursor: pointer;
+}
+.picker .session:hover { background: var(--t3-accent); }
+.picker .session[aria-current="true"] { border-color: var(--t3-foreground); }
+.picker .session b { font-size: 13px; }
+.picker .session small {
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: var(--t3-font-mono); font-size: 11px; color: var(--t3-muted-foreground);
+}
+.picker .empty { padding: 4px 12px 8px; font-size: 12px; color: var(--t3-muted-foreground); }
+.picker .empty code { font-family: var(--t3-font-mono); }
+.picker .foot { display: flex; justify-content: flex-end; padding: 6px 8px; border-top: 1px solid var(--t3-border); }
+.picker .refresh { height: 26px; padding: 0 8px; font-size: 12px; border-color: var(--t3-border); }
 .btn {
   display: inline-flex; align-items: center; justify-content: center; height: 30px; padding: 0 10px;
   border: 1px solid transparent; border-radius: calc(var(--t3-radius) - 2px);
@@ -451,10 +481,31 @@ button:focus-visible, textarea:focus-visible {
   const toolbar = document.createElement('div')
   toolbar.className = 'toolbar'
   toolbar.style.zIndex = String(CHROME_LAYER_Z_INDEX)
-  const ownerLabel = document.createElement('span')
+  const ownerLabel = document.createElement('button')
+  ownerLabel.type = 'button'
   ownerLabel.className = 'owner'
   ownerLabel.textContent = 'Claude'
   toolbar.appendChild(ownerLabel)
+
+  // The session list: opened by the extension icon, by this label, or when the session has ended.
+  const picker = document.createElement('div')
+  picker.className = 'picker'
+  picker.style.zIndex = String(CHROME_LAYER_Z_INDEX)
+  const pickerTitle = document.createElement('div')
+  pickerTitle.className = 'title'
+  pickerTitle.textContent = 'Send comments on this tab to'
+  const pickerNote = document.createElement('div')
+  pickerNote.className = 'note'
+  const pickerList = document.createElement('div')
+  pickerList.className = 'list'
+  const pickerFoot = document.createElement('div')
+  pickerFoot.className = 'foot'
+  const refreshButton = document.createElement('button')
+  refreshButton.type = 'button'
+  refreshButton.className = 'btn refresh'
+  refreshButton.textContent = 'Refresh'
+  pickerFoot.appendChild(refreshButton)
+  picker.append(pickerTitle, pickerNote, pickerList, pickerFoot)
   root.appendChild(toolbar)
 
   const editor = document.createElement('div')
@@ -525,6 +576,7 @@ button:focus-visible, textarea:focus-visible {
   panelStatus.setAttribute('role', 'status')
   panel.append(panelHead, panelMsgs, panelNote, panelCompose, panelStatus)
   root.appendChild(panel)
+  root.appendChild(picker)
 
   // ---- State ----
 
@@ -902,10 +954,87 @@ button:focus-visible, textarea:focus-visible {
     if (!result.ok) setPanelStatus(result.error || NOT_CONNECTED)
   })
 
-  // The background says this page's threads changed: an answer, a resolve, or a reply from another tab.
+  // ---- Session picker ----
+
+  function showOwner(name, running) {
+    sessionName = running ? name : ''
+    ownerLabel.textContent = running ? name || 'Claude' : 'No session'
+    ownerLabel.classList.toggle('none', !running)
+    ownerLabel.title = running ? `Comments go to ${name || 'Claude Code'}. Click to change.` : 'Pick a Claude Code session for this tab'
+  }
+
+  function sessionButton(s, current) {
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.className = 'session'
+    button.dataset.session = s.sessionId
+    button.setAttribute('aria-current', String(s.sessionId === current))
+    const name = document.createElement('b')
+    name.textContent = s.name
+    const folder = document.createElement('small')
+    folder.textContent = s.cwd || ''
+    folder.title = s.cwd || ''
+    button.append(name, folder)
+    button.addEventListener('click', async event => {
+      if (!event.isTrusted) return
+      const answer = await ask({ type: 'pick', sessionId: s.sessionId })
+      if (finished) return
+      if (!answer.ok) {
+        pickerNote.textContent = answer.error || NOT_CONNECTED
+        void loadSessions()
+        return
+      }
+      showOwner(answer.sessionName, true)
+      picker.style.display = 'none'
+      if (target) setStatus('Press Enter to send.')
+      void loadThreads()
+    })
+    return button
+  }
+
+  async function loadSessions() {
+    const answer = await ask({ type: 'sessions' })
+    if (finished) return
+    if (!answer.ok) {
+      pickerList.replaceChildren()
+      pickerNote.textContent = answer.error || NOT_CONNECTED
+      return
+    }
+    const sessions = Array.isArray(answer.sessions) ? answer.sessions : []
+    if (sessions.length === 0) {
+      const empty = document.createElement('div')
+      empty.className = 'empty'
+      const cmd = document.createElement('code')
+      cmd.textContent = 'claude'
+      empty.append('No Claude Code sessions are running. Start one with ', cmd, ' in your project folder, then press Refresh.')
+      pickerList.replaceChildren(empty)
+      return
+    }
+    pickerList.replaceChildren(...sessions.map(s => sessionButton(s, answer.current)))
+  }
+
+  async function openPicker(note) {
+    pickerNote.textContent = note || ''
+    picker.style.display = 'flex'
+    await loadSessions()
+  }
+
+  ownerLabel.addEventListener('click', event => {
+    if (!event.isTrusted) return
+    if (picker.style.display === 'flex') picker.style.display = 'none'
+    else void openPicker('')
+  })
+
+  refreshButton.addEventListener('click', event => {
+    if (!event.isTrusted) return
+    void loadSessions()
+  })
+
+  // Messages from the background: this page's threads changed, or the extension icon was pressed.
   const onRuntimeMessage = (message, sender) => {
     if (sender.id !== chrome.runtime.id || sender.tab) return
     if (message?.type === 'threads-changed') void loadThreads()
+    if (message?.type === 'open-picker') void openPicker('')
   }
   chrome.runtime.onMessage.addListener(onRuntimeMessage)
   const onVisibility = () => markReadIfSeen()
@@ -997,6 +1126,13 @@ button:focus-visible, textarea:focus-visible {
     if (!captured.ok) {
       sending = false
       submit.disabled = false
+      if (captured.noSession) {
+        // The text and the target stay; after a pick, Enter sends them.
+        showOwner('', false)
+        setStatus('No session. Pick one, then press Enter again.')
+        void openPicker('No session. Pick one')
+        return
+      }
       setStatus(captured.error || NOT_CONNECTED)
       return
     }
@@ -1247,13 +1383,13 @@ button:focus-visible, textarea:focus-visible {
   void ask({ type: 'toolbar-hello' }).then(answer => {
     if (finished) return
     if (!answer.ok) {
-      ownerLabel.textContent = 'No session'
+      showOwner('', false)
       ownerLabel.title = answer.error || ''
       return
     }
-    sessionName = answer.sessionName || ''
-    ownerLabel.textContent = sessionName || 'Claude'
-    ownerLabel.title = `Comments go to ${sessionName || 'Claude Code'}`
-    void loadThreads()
+    showOwner(answer.sessionName || '', answer.running)
+    if (!answer.hasOwner) void openPicker('')
+    else if (!answer.running) void openPicker('No session. Pick one')
+    if (answer.hasOwner) void loadThreads()
   })
 })()

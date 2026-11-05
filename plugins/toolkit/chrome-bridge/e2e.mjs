@@ -13,6 +13,7 @@ import { fileURLToPath } from 'node:url'
 const here = dirname(fileURLToPath(import.meta.url))
 const EXTENSION_ID = 'mknpanjckphlgdceilkaohmlmoefoima'
 const SESSION = 'e2e-session-1'
+const OTHER = 'e2e-session-2'
 const sleep = ms => new Promise(r => setTimeout(r, ms))
 
 async function findChrome() {
@@ -54,6 +55,21 @@ setTimeout(() => {
 }, 1500)
 </script>`
 
+// A page that tries to pick a session in its own toolbar with made-up clicks and keys.
+const HOSTILE_PICK = `<!doctype html><title>Hostile picker</title><h2>Pick</h2>
+<script>
+setTimeout(() => {
+  const fire = (t, init) => document.dispatchEvent(new KeyboardEvent(t, { bubbles: true, ...init }))
+  for (let x = 900; x < 1280; x += 20) for (let y = 500; y < 900; y += 20) {
+    const el = document.elementFromPoint(x, y)
+    if (!el) continue
+    for (const t of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) el.dispatchEvent(new MouseEvent(t, { bubbles: true, composed: true, clientX: x, clientY: y }))
+  }
+  fire('keydown', { key: 'Enter' })
+  window.__done = true
+}, 1500)
+</script>`
+
 class Cdp {
   constructor(ws) {
     this.ws = ws
@@ -86,14 +102,20 @@ async function main() {
   await writeFile(join(root, 'host.sh'), `#!/bin/sh\nexec '${process.execPath}' '${join(root, 'host.mjs')}' "$@"\n`, { mode: 0o755 })
   await writeFile(join(root, 'version'), 'e2e\n')
   await writeFile(join(profile, 'NativeMessagingHosts', 'com.toolkit.chrome_bridge.json'), JSON.stringify({ name: 'com.toolkit.chrome_bridge', description: 'e2e', path: join(root, 'host.sh'), type: 'stdio', allowed_origins: [`chrome-extension://${EXTENSION_ID}/`] }))
-  const beat = () => writeFile(join(root, 'sessions', `${SESSION}.json`), JSON.stringify({ sessionId: SESSION, name: 'e2e-app', cwd: '/w/e2e-app', heartbeatAt: new Date().toISOString() }))
+  // A second running session, for the picker. Setting otherAlive to false ends it.
+  let otherAlive = true
+  const beat = async () => {
+    const heartbeatAt = new Date().toISOString()
+    await writeFile(join(root, 'sessions', `${SESSION}.json`), JSON.stringify({ sessionId: SESSION, name: 'e2e-app', cwd: '/w/e2e-app', heartbeatAt }))
+    if (otherAlive) await writeFile(join(root, 'sessions', `${OTHER}.json`), JSON.stringify({ sessionId: OTHER, name: 'other-app', cwd: '/w/other-app', heartbeatAt }))
+  }
   await beat()
-  const beating = setInterval(beat, 5000)
+  let beating = setInterval(beat, 5000)
 
   const server = createServer((req, res) => {
     res.setHeader('content-type', 'text/html')
     res.setHeader('content-security-policy', "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'")
-    res.end(req.url.startsWith('/hostile') ? HOSTILE : PAGE)
+    res.end(req.url.startsWith('/hostile-pick') ? HOSTILE_PICK : req.url.startsWith('/hostile') ? HOSTILE : PAGE)
   })
   await new Promise(r => server.listen(0, '127.0.0.1', r))
   const origin = `http://127.0.0.1:${server.address().port}`
@@ -174,19 +196,27 @@ async function main() {
       return pin
     }
     let worker
-    const badge = async () => {
+    const workerEval = async expression => {
       if (!worker) {
         const t = await until('the service worker', async () => (await cdp.send('Target.getTargets')).targetInfos.find(i => i.type === 'service_worker' && i.url.includes(EXTENSION_ID)))
         worker = (await cdp.send('Target.attachToTarget', { targetId: t.targetId, flatten: true })).sessionId
       }
-      return (await cdp.send('Runtime.evaluate', { expression: 'chrome.action.getBadgeText({})', awaitPromise: true, returnByValue: true }, worker)).result.value
+      return (await cdp.send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true }, worker)).result.value
     }
+    const badge = () => workerEval('chrome.action.getBadgeText({})')
+    const tabIdOf = url => workerEval(`chrome.tabs.query({}).then(ts => ts.find(t => t.url === ${JSON.stringify(url)})?.id)`)
+    // What a press on the extension icon does, since CDP cannot press the icon itself.
+    const pressIcon = async url => workerEval(`chrome.tabs.get(${await tabIdOf(url)}).then(t => openPicker(t)).then(() => true)`)
     const typeAndSend = async (s, text) => {
       await cdp.send('Input.insertText', { text }, s)
       await cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, text: '\r' }, s)
       await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 }, s)
     }
     const commentLines = async () => (await readFile(join(root, 'comments', `${SESSION}.jsonl`), 'utf8').catch(() => '')).trim().split('\n').filter(Boolean).map(l => JSON.parse(l))
+    const commentTool = n => {
+      const a = n.attributes ?? []
+      return n.nodeName === 'BUTTON' && a[a.indexOf('aria-label') + 1] === 'Comment'
+    }
     const textOf = n => (n.children ?? []).filter(c => c.nodeType === 3).map(c => c.nodeValue).join('').trim()
 
     let tab
@@ -205,7 +235,7 @@ async function main() {
     })
 
     await check('a comment reaches the right comments file with a PNG, and only that file', async () => {
-      await click(tab, await centerOf(tab, n => n.nodeName === 'BUTTON' && /comment/i.test(textOf(n) + (n.attributes ?? []).join(' '))))
+      await click(tab, await centerOf(tab, commentTool))
       await sleep(200)
       await click(tab, await centerOf(tab, n => (n.attributes ?? []).includes('card')))
       await sleep(300)
@@ -303,6 +333,82 @@ async function main() {
       await cdp.send('DOM.enable', {}, s)
       await until('pin 1 in the new tab', () => pinOf(s, '1'))
       await cdp.send('Target.closeTarget', { targetId: t.targetId })
+    })
+
+    const pickedUrl = `${origin}/picked`
+    let picked
+    await check('the icon on a tab you opened lists the running sessions by name and folder', async () => {
+      await cdp.send('Target.createTarget', { url: pickedUrl })
+      picked = await attach(pickedUrl)
+      await until('the page to load', async () => (await evaluate(picked, 'document.readyState')) === 'complete')
+      assert.equal(await evaluate(picked, `!!document.querySelector('[data-toolkit-chrome-bridge]')`), false, 'no toolbar before the icon')
+      await pressIcon(pickedUrl)
+      await hasToolbar(picked)
+      await shows(picked, 'Send comments on this tab to')
+      await shows(picked, 'other-app')
+      await shows(picked, '/w/other-app')
+      await shows(picked, 'e2e-app')
+      // E2E_SHOT_PICKER=<file.png> saves a screenshot of the session list.
+      if (process.env.E2E_SHOT_PICKER) {
+        await sleep(300)
+        const { data } = await cdp.send('Page.captureScreenshot', { format: 'png' }, picked)
+        await writeFile(process.env.E2E_SHOT_PICKER, Buffer.from(data, 'base64'))
+      }
+    })
+
+    await check('a picked session gets the comments, also after a reload', async () => {
+      await click(picked, await centerOf(picked, n => n.nodeName === 'BUTTON' && hasClass(n, 'session') && (n.attributes ?? []).includes(OTHER)))
+      await until('the owner label', async () => (await nodes(picked)).some(n => hasClass(n, 'owner') && textOf(n) === 'other-app'))
+      await evaluate(picked, 'location.reload()')
+      await sleep(500)
+      await hasToolbar(picked)
+      await click(picked, await centerOf(picked, commentTool))
+      await sleep(200)
+      await click(picked, await centerOf(picked, n => (n.attributes ?? []).includes('card')))
+      await sleep(300)
+      await typeAndSend(picked, 'picked comment')
+      const lines = async () => (await readFile(join(root, 'comments', `${OTHER}.jsonl`), 'utf8').catch(() => '')).trim().split('\n').filter(Boolean).map(l => JSON.parse(l))
+      const [c] = await until('a comment for the other session', async () => (await lines()).length > 0 && lines())
+      assert.equal(c.body, 'picked comment')
+      assert.equal(c.sessionId, OTHER)
+      assert.equal((await commentLines()).some(x => x.body === 'picked comment'), false)
+    })
+
+    await check('when the session ends, the tab asks you to pick one and keeps your text', async () => {
+      otherAlive = false
+      await rm(join(root, 'sessions', `${OTHER}.json`), { force: true })
+      const before = (await readFile(join(root, 'comments', `${OTHER}.jsonl`), 'utf8')).length
+      await click(picked, await centerOf(picked, n => (n.attributes ?? []).includes('card')))
+      await sleep(300)
+      await typeAndSend(picked, 'comment after the end')
+      await shows(picked, 'No session. Pick one')
+      assert.equal(await evaluate(picked, 'true'), true)
+      const kept = (await nodes(picked)).find(n => n.nodeName === 'TEXTAREA' && hasClass(n, 'comment'))
+      const { object } = await cdp.send('DOM.resolveNode', { backendNodeId: kept.backendNodeId }, picked)
+      const value = (await cdp.send('Runtime.callFunctionOn', { objectId: object.objectId, functionDeclaration: 'function () { return this.value }', returnByValue: true }, picked)).result.value
+      assert.equal(value, 'comment after the end')
+      assert.equal((await readFile(join(root, 'comments', `${OTHER}.jsonl`), 'utf8')).length, before)
+      assert.equal((await nodes(picked)).some(n => n.nodeType === 3 && n.nodeValue.includes('/w/other-app')), false, 'the ended session is not listed')
+    })
+
+    await check('with no session running, the list says how to start one', async () => {
+      clearInterval(beating)
+      await rm(join(root, 'sessions', `${SESSION}.json`), { force: true })
+      await click(picked, await centerOf(picked, n => n.nodeName === 'BUTTON' && hasClass(n, 'refresh')))
+      await shows(picked, 'No Claude Code sessions are running')
+      await beat()
+      beating = setInterval(beat, 5000)
+    })
+
+    await check('a page script cannot pick a session', async () => {
+      const url = `${origin}/hostile-pick`
+      await cdp.send('Target.createTarget', { url })
+      const s = await attach(url)
+      await pressIcon(url)
+      await hasToolbar(s)
+      await until('the hostile script', () => evaluate(s, 'window.__done === true'))
+      await sleep(1000)
+      assert.equal(await workerEval(`chrome.storage.local.get('tabs').then(({ tabs }) => !!(tabs || {})[${await tabIdOf(url)}])`), false)
     })
 
     await check('a hostile page cannot reach the toolbar or send a comment', async () => {

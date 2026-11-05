@@ -25,7 +25,30 @@ export type PlanStatus = 'pending' | 'in_progress' | 'completed'
 /** One step of the task list Claude keeps with `update_plan`. */
 export type PlanStep = { content: string; status: PlanStatus }
 
-export type PermissionMode = 'default' | 'plan' | 'acceptEdits' | 'auto' | 'bypassPermissions'
+export type PageRect = { x: number; y: number; width: number; height: number }
+
+/** One comment the person left on a page in Chrome, as the native host appends it to this session's comments file. */
+export type PageComment = {
+  id: string
+  at: string
+  sessionId: string
+  tabId: number
+  url: string
+  title: string
+  kind: 'element' | 'region' | 'reply'
+  threadId: string
+  /** What the person typed. */
+  body: string
+  section?: { text: string; id?: string }
+  text?: string
+  selector?: string
+  rect: PageRect
+  viewport: { width: number; height: number; scrollY: number; dpr: number }
+  /** The cropped screenshot's path. */
+  shot?: string
+}
+
+export type PermissionMode ='default' | 'plan' | 'acceptEdits' | 'auto' | 'bypassPermissions'
 
 /** Everything a new session starts from, checked; `text` is its whole first message. */
 export type Brief = {
@@ -62,6 +85,8 @@ declare module 'claude-code' {
       cdPending: { dir: string; task: string } | null
       /** The restart file a restart tool call wrote, until its turn ends and Claude Code is stopped. */
       restartPending: string | null
+      /** How far this session has read its chrome bridge comments file; null until the session first starts watching it. */
+      bridgeOffset: number | null
       /** The reply row (its uuid) the open task list shows under, from the end of the turn that changed it to the next turn's start. */
       planAt: string | null
       /** The label of the next step button pressed, by the call's tool_use_id; null until one is. */

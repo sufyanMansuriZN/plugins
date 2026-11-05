@@ -1,6 +1,7 @@
 import type { Register } from 'claude-code'
 
 import { register as cd } from './cd'
+import { register as chromeBridge } from './chrome-bridge'
 import { register as mermaid } from './mermaid'
 import { register as plan } from './plan'
 import { register as reply } from './reply'
@@ -23,4 +24,5 @@ export const register: Register = (on, options) => {
   cd(on, options)
   restart(on, options)
   usage(on, options)
+  chromeBridge(on, options)
 }

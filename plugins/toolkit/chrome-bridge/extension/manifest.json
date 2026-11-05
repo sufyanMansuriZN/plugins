@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "Claude chrome bridge",
+  "version": "0.1.0",
+  "description": "Comment on a page in Chrome and send the comment to the Claude Code session that owns the tab.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAng8cFCDnOLh0J0UUjl/JeAOhEDGiqxW2vMKX7eTT++F8m7pjXf7SmdOmiHchEwUMe9qfqhSUb6heh4XWpSvaYSxRM0USleWCxCkAMsrDlPSza3Wf6c57OHzuJvfSYoBkOpZpiPDo6QV8Wv66FEYmEzyPWuBdMeJffWmOxCrWmIQ/BnCmwobOLYBhec812+QxByh5tLU+4U3MguxdCB9znso2ZhKy9F8Qgvsjk3ubqfBb/Ebmqf6IeneMfao3gLrHkeHkUzfA0TXFE7C1mZYYGwdYQp4HGyuA2myfQ1vX52AEKU/u4VF0UGmBY/IvPA7kc4+rN0hDy2pEcrPXCgaQ0QIDAQAB",
+  "permissions": ["scripting", "nativeMessaging", "tabs", "storage"],
+  "host_permissions": ["<all_urls>"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Claude chrome bridge"
+  }
+}

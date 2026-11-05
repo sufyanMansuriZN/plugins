@@ -131,6 +131,30 @@ Gives Claude one tool, `start_session`, that starts a background session (`claud
 
 It runs in an interactive terminal session only. The Claude desktop app has its own sessions, and a `claude -p` run has no one to open one.
 
+### Comments on web pages (`open_tab`, `read_tab`)
+
+You comment on any web page in your own Chrome, with your logins, and the Claude Code session that owns the tab acts on each comment. It starts a turn even when the session is idle. It works like comments on a Claude artifact, but on any page.
+
+- **Opening a page.** Claude calls `open_tab` with a URL. The page opens in your Chrome as a tab that belongs to this session, with a comment toolbar at the bottom right.
+- **Commenting.** Press **Comment** and click an element, or press **Region** and drag a box. Type your comment and press Enter. Shift+Enter starts a new line, and Escape cancels. The toolbar takes a cropped screenshot of the part you marked, and a pin shows "Waiting for <session>" until Claude answers. You can move to another tab right away.
+- **What Claude gets.** The comment starts a turn whose prompt holds only what you typed and the comment's IDs. Claude then calls `read_tab` with the comment ID to get the URL, title, nearest heading, marked text, selector, position and the screenshot's path.
+- **Page content is untrusted.** A page can hold text written to steer Claude, so page content never goes into the prompt. `read_tab` returns it in a block that starts and ends with a new random marker, labeled as data, not instructions. The toolbar sits in a closed shadow root, and it ignores clicks and keys that a script made, so a page cannot post a comment as you.
+- **Routing.** A tab keeps its session when you reload or navigate inside it. Each session's toolkit writes a heartbeat every 10 seconds, and a session without one for 30 seconds counts as ended. A comment for an ended session is refused, and the toolbar keeps your text.
+
+**Setup.** The first CLI session copies the extension and its native messaging host to `~/.claude/toolkit/chrome-bridge/`. It registers the host in `~/.config/google-chrome/NativeMessagingHosts/com.toolkit.chrome_bridge.json`, and copies again whenever the toolkit's files change. Load the extension once:
+
+1. Open `chrome://extensions`.
+2. Turn on **Developer mode**.
+3. Press **Load unpacked** and select `~/.claude/toolkit/chrome-bridge/extension`.
+
+If the extension is not loaded or Chrome is not running, `open_tab` says so and gives these steps.
+
+It needs Google Chrome on Linux and Node. It uses no remote debugging, no `debugger` permission and no network: Chrome talks to the host over native messaging, and the host and sessions share files. The toolbar is ported from [T3Code](https://github.com/pingdotgg/t3code) (MIT) at commit `8b44f42b14c8`.
+
+Tests: `node --test chrome-bridge/host.test.mjs` for the host, and `node chrome-bridge/e2e.mjs` for the whole path. The end-to-end test runs Chrome for Testing headless with a throwaway profile and drives it over CDP. It never touches your own Chrome.
+
+It runs in an interactive terminal session only.
+
 ### Cut from Desktop's version
 
 Earlier versions copied the Claude desktop app's session tools whole. These parts were cut because Claude Code already does the job, or because they were rarely used:

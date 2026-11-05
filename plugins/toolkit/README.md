@@ -131,12 +131,13 @@ Gives Claude one tool, `start_session`, that starts a background session (`claud
 
 It runs in an interactive terminal session only. The Claude desktop app has its own sessions, and a `claude -p` run has no one to open one.
 
-### Comments on web pages (`open_tab`, `read_tab`)
+### Comments on web pages (`open_tab`, `read_tab`, `reply_comment`, `resolve_comment`)
 
 You comment on any web page in your own Chrome, with your logins, and the Claude Code session that owns the tab acts on each comment. It starts a turn even when the session is idle. It works like comments on a Claude artifact, but on any page.
 
 - **Opening a page.** Claude calls `open_tab` with a URL. The page opens in your Chrome as a tab that belongs to this session, with a comment toolbar at the bottom right.
-- **Commenting.** Press **Comment** and click an element, or press **Region** and drag a box. Type your comment and press Enter. Shift+Enter starts a new line, and Escape cancels. The toolbar takes a cropped screenshot of the part you marked, and a pin shows "Waiting for <session>" until Claude answers. You can move to another tab right away.
+- **Commenting.** Press **Comment** and click an element, or press **Region** and drag a box. Type your comment and press Enter. Shift+Enter starts a new line, and Escape cancels. The toolbar takes a cropped screenshot of the part you marked. You can move to another tab right away.
+- **Threads.** Each comment opens a thread with a numbered pin next to the part you marked. The thread shows "Waiting for <session>" until Claude answers with `reply_comment`. While you are on another tab, the extension icon counts the answers you have not read, and seeing the open thread clears the count. A reply you type in the thread reaches the session as a new turn. Claude closes a thread with `resolve_comment`, and you can close one with **Resolve** in its header, which asks you to press again to confirm. A resolved pin turns grey, and a reply opens the thread again. Threads belong to the page's URL without its `#` part, so they show again after a reload or in a new tab. Only the session that got a comment can answer its thread. Threads with no activity for 30 days are removed.
 - **What Claude gets.** The comment starts a turn whose prompt holds only what you typed and the comment's IDs. Claude then calls `read_tab` with the comment ID to get the URL, title, nearest heading, marked text, selector, position and the screenshot's path.
 - **Page content is untrusted.** A page can hold text written to steer Claude, so page content never goes into the prompt. `read_tab` returns it in a block that starts and ends with a new random marker, labeled as data, not instructions. The toolbar sits in a closed shadow root, and it ignores clicks and keys that a script made, so a page cannot post a comment as you.
 - **Routing.** A tab keeps its session when you reload or navigate inside it. Each session's toolkit writes a heartbeat every 10 seconds, and a session without one for 30 seconds counts as ended. A comment for an ended session is refused, and the toolbar keeps your text.

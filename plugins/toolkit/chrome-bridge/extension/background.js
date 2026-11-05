@@ -79,24 +79,114 @@ function isToolbarComment(value) {
   )
 }
 
-// ---- Tab ownership (chrome.storage.local key `tabs`; only this file writes it) ----
+// ---- Storage (chrome.storage.local keys `tabs` and `threads`; only this file writes them) ----
 
 let storageQueue = Promise.resolve()
 
-async function readTabs() {
-  const { tabs } = await chrome.storage.local.get('tabs')
-  return tabs && typeof tabs === 'object' ? tabs : {}
+async function readKey(key) {
+  const value = (await chrome.storage.local.get(key))[key]
+  return value && typeof value === 'object' ? value : {}
 }
 
-/** Serializes every change to `tabs` so two events cannot overwrite each other. */
-function updateTabs(change) {
+/** Serializes every change to one key so two events cannot overwrite each other. */
+function updateKey(key, change) {
+  let result
   storageQueue = storageQueue
     .then(async () => {
-      const tabs = await readTabs()
-      if (change(tabs) !== false) await chrome.storage.local.set({ tabs })
+      const value = await readKey(key)
+      result = change(value)
+      if (result !== false) await chrome.storage.local.set({ [key]: value })
     })
-    .catch(err => console.error('chrome bridge: could not update tabs', err))
-  return storageQueue
+    .catch(err => console.error(`chrome bridge: could not update ${key}`, err))
+  return storageQueue.then(() => result)
+}
+
+const readTabs = () => readKey('tabs')
+const updateTabs = change => updateKey('tabs', change)
+
+// ---- Threads: one per comment, kept by the page's URL without its #part ----
+
+const THREAD_KEEP_MS = 30 * 24 * 60 * 60_000
+
+function urlKey(url) {
+  try {
+    const u = new URL(url)
+    u.hash = ''
+    return u.href
+  } catch {
+    return String(url ?? '')
+  }
+}
+
+async function readThreads() {
+  await storageQueue
+  return readKey('threads')
+}
+
+const updateThreads = change => updateKey('threads', change)
+
+async function threadsFor(url) {
+  const key = urlKey(url)
+  return Object.values(await readThreads())
+    .filter(t => t.url === key)
+    .sort((a, b) => a.at.localeCompare(b.at))
+}
+
+async function refreshBadge() {
+  const unread = Object.values(await readThreads()).reduce((sum, t) => sum + (t.unread || 0), 0)
+  await chrome.action.setBadgeText({ text: unread > 0 ? String(unread) : '' })
+  await chrome.action.setBadgeBackgroundColor({ color: '#ffd400' })
+  if (chrome.action.setBadgeTextColor) await chrome.action.setBadgeTextColor({ color: '#000000' })
+}
+
+/** Tells the toolbars on pages with this URL to draw their threads again. */
+async function threadsChanged(url) {
+  await refreshBadge()
+  const key = urlKey(url)
+  for (const tab of await chrome.tabs.query({})) {
+    if (tab.id === undefined || urlKey(tab.url) !== key || !(await ownerOf(tab.id))) continue
+    chrome.tabs.sendMessage(tab.id, { type: 'threads-changed' }, { frameId: 0 }).catch(() => undefined)
+  }
+}
+
+/** Drops threads with no activity for 30 days. */
+async function pruneThreads() {
+  const now = Date.now()
+  await updateThreads(threads => {
+    let changed = false
+    for (const [id, t] of Object.entries(threads)) {
+      if (now - Date.parse(t.updatedAt || t.at) > THREAD_KEEP_MS) {
+        delete threads[id]
+        changed = true
+      }
+    }
+    return changed
+  })
+  await refreshBadge()
+}
+
+/** Claude's answer to a thread, from a `reply` or `resolve` request. Only the thread's own session may answer. */
+async function answerThread(request) {
+  if (typeof request.threadId !== 'string') throw new Error('The request has no thread.')
+  const text = typeof request.text === 'string' ? request.text.trim().slice(0, 10_000) : ''
+  if (request.type === 'reply' && text === '') throw new Error('The answer is empty.')
+  const now = new Date().toISOString()
+  const outcome = await updateThreads(threads => {
+    const t = threads[request.threadId]
+    if (!t) return false
+    if (t.sessionId !== request.sessionId) return false
+    if (text) {
+      t.messages.push({ from: 'claude', text, at: now })
+      t.unread = (t.unread || 0) + 1
+    }
+    t.status = request.type === 'resolve' ? 'resolved' : 'open'
+    t.updatedAt = now
+  })
+  if (outcome === false) {
+    const t = (await readThreads())[request.threadId]
+    throw new Error(t ? 'This thread belongs to another session.' : 'There is no thread with that id in Chrome.')
+  }
+  await threadsChanged((await readThreads())[request.threadId].url)
 }
 
 async function ownerOf(tabId) {
@@ -293,12 +383,14 @@ function sendReply(reply) {
 
 async function handleRequest(request) {
   if (typeof request !== 'object' || request === null || typeof request.id !== 'string') return
-  if (request.type !== 'open') {
-    sendReply({ id: request.id, ok: false, error: 'not supported yet' })
-    return
-  }
   try {
     if (typeof request.sessionId !== 'string' || request.sessionId === '') throw new Error('The request has no session.')
+    if (request.type === 'reply' || request.type === 'resolve') {
+      await answerThread(request)
+      sendReply({ id: request.id, ok: true })
+      return
+    }
+    if (request.type !== 'open') throw new Error(`Unknown request type: ${String(request.type)}`)
     let url
     try {
       url = new URL(request.url)
@@ -380,6 +472,22 @@ function takeShot(token, tabId) {
 
 // ---- Messages from the toolbar ----
 
+/** Sends one comment to the host and waits for it to confirm the write. */
+function saveToHost(comment, png) {
+  return new Promise(resolve => {
+    const timer = setTimeout(() => {
+      pendingSaves.delete(comment.id)
+      resolve({ ok: false, error: 'Claude Code did not confirm the comment in time.' })
+    }, SAVE_TIMEOUT_MS)
+    pendingSaves.set(comment.id, { resolve, timer })
+    if (!post({ type: 'comment', comment, ...(png ? { png } : {}) })) {
+      clearTimeout(timer)
+      pendingSaves.delete(comment.id)
+      resolve({ ok: false, error: NOT_CONNECTED })
+    }
+  })
+}
+
 async function onToolbarMessage(message, tab) {
   const owner = await ownerOf(tab.id)
   if (!owner) return { ok: false, error: 'This tab has no Claude Code session.' }
@@ -429,19 +537,90 @@ async function onToolbarMessage(message, tab) {
         viewport: input.viewport,
       }
       const png = typeof message.token === 'string' ? takeShot(message.token, tab.id) : undefined
-      const result = await new Promise(resolve => {
-        const timer = setTimeout(() => {
-          pendingSaves.delete(id)
-          resolve({ ok: false, error: 'Claude Code did not confirm the comment in time.' })
-        }, SAVE_TIMEOUT_MS)
-        pendingSaves.set(id, { resolve, timer })
-        if (!post({ type: 'comment', comment, ...(png ? { png } : {}) })) {
-          clearTimeout(timer)
-          pendingSaves.delete(id)
-          resolve({ ok: false, error: NOT_CONNECTED })
+      const result = await saveToHost(comment, png)
+      if (!result.ok) return result
+      await updateThreads(threads => {
+        threads[id] = {
+          id,
+          sessionId: owner.sessionId,
+          sessionName: owner.sessionName,
+          url: urlKey(comment.url),
+          kind: comment.kind,
+          rect: comment.rect,
+          ...(comment.selector ? { selector: comment.selector } : {}),
+          status: 'open',
+          messages: [{ from: 'you', text: comment.body, at: comment.at }],
+          unread: 0,
+          at: comment.at,
+          updatedAt: comment.at,
         }
       })
-      return result.ok ? { ok: true, id, sessionName: owner.sessionName } : result
+      await threadsChanged(comment.url)
+      return { ok: true, id, sessionName: owner.sessionName }
+    }
+
+    case 'threads':
+      return { ok: true, threads: await threadsFor(tab.url) }
+
+    case 'reply': {
+      // Your follow-up in a thread. It goes to the thread's session as a comment of kind `reply`.
+      if (typeof message.threadId !== 'string' || typeof message.body !== 'string' || message.body.trim() === '') {
+        return { ok: false, error: 'Type a reply first.' }
+      }
+      if (!isViewport(message.viewport)) return { ok: false, error: 'The toolbar sent a bad viewport.' }
+      const thread = (await readThreads())[message.threadId]
+      if (!thread || thread.url !== urlKey(tab.url)) return { ok: false, error: 'That thread is not on this page.' }
+      if (!connected) return { ok: false, error: NOT_CONNECTED }
+      const id = crypto.randomUUID()
+      const body = message.body.trim()
+      const comment = {
+        id,
+        at: new Date().toISOString(),
+        sessionId: thread.sessionId,
+        tabId: tab.id,
+        url: tab.url ?? '',
+        title: tab.title ?? '',
+        kind: 'reply',
+        threadId: thread.id,
+        body,
+        ...(thread.selector ? { selector: thread.selector } : {}),
+        rect: thread.rect,
+        viewport: message.viewport,
+      }
+      const result = await saveToHost(comment)
+      if (!result.ok) return result
+      await updateThreads(threads => {
+        const t = threads[thread.id]
+        if (!t) return false
+        t.messages.push({ from: 'you', text: body, at: comment.at })
+        t.status = 'open'
+        t.updatedAt = comment.at
+      })
+      await threadsChanged(tab.url)
+      return { ok: true }
+    }
+
+    case 'read':
+      await updateThreads(threads => {
+        const t = threads[message.threadId]
+        if (!t || !t.unread) return false
+        t.unread = 0
+      })
+      await refreshBadge()
+      return { ok: true }
+
+    case 'resolve': {
+      // You resolved the thread yourself, after confirming in the toolbar.
+      const changed = await updateThreads(threads => {
+        const t = threads[message.threadId]
+        if (!t || t.url !== urlKey(tab.url)) return false
+        t.status = 'resolved'
+        t.unread = 0
+        t.updatedAt = new Date().toISOString()
+      })
+      if (changed === false) return { ok: false, error: 'That thread is not on this page.' }
+      await threadsChanged(tab.url)
+      return { ok: true }
     }
 
     default:
@@ -470,3 +649,4 @@ chrome.runtime.onStartup.addListener(connect)
 chrome.runtime.onInstalled.addListener(connect)
 connect()
 void restoreOwnedTabs()
+void pruneThreads()

@@ -165,6 +165,52 @@ button:focus-visible, textarea:focus-visible {
   font-size: 12px; font-weight: 700; box-shadow: 0 2px 8px rgb(0 0 0 / 25%);
 }
 .pin.error { background: #fff; white-space: normal; border-radius: 8px; }
+.pin.thread {
+  width: 24px; height: 24px; padding: 0; display: grid; place-items: center; cursor: pointer;
+  font-variant-numeric: tabular-nums;
+}
+.pin.thread.unread { box-shadow: 0 0 0 3px var(--t3-primary), 0 2px 8px rgb(0 0 0 / 25%); }
+.pin.thread.resolved { background: #d4d4d4; border-color: #6b6b6b; color: #3a3a3a; }
+.panel {
+  pointer-events: auto; position: fixed; display: none; flex-direction: column;
+  width: min(340px, calc(100vw - 16px)); max-height: min(440px, calc(100vh - 16px));
+  border: 1px solid var(--t3-border); border-radius: calc(var(--t3-radius) + 4px);
+  background: color-mix(in srgb, var(--t3-popover) 98%, transparent); color: var(--t3-popover-foreground);
+  box-shadow: 0 16px 40px rgb(0 0 0 / 22%); backdrop-filter: blur(24px); overflow: hidden;
+}
+.panel .head { display: flex; align-items: center; gap: 8px; padding: 8px 8px 8px 12px; border-bottom: 1px solid var(--t3-border); }
+.panel .num {
+  width: 20px; height: 20px; flex: none; display: grid; place-items: center; border-radius: 50%;
+  border: 1.5px solid #000; background: var(--badge); color: var(--badge-foreground); font-size: 11px; font-weight: 700;
+}
+.panel .who { font-weight: 600; font-size: 13px; white-space: nowrap; }
+.panel .where {
+  flex: 1; min-width: 0; color: var(--t3-muted-foreground); font-size: 12px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.panel .small { height: 26px; padding: 0 8px; font-size: 12px; font-weight: 600; border-color: var(--t3-border); }
+.panel .small.confirm { background: var(--t3-primary); color: var(--t3-primary-foreground); border-color: var(--t3-primary); }
+.panel .close { width: 26px; height: 26px; padding: 0; font-size: 16px; color: var(--t3-muted-foreground); }
+.panel .msgs { display: flex; flex-direction: column; gap: 12px; padding: 12px; overflow-y: auto; }
+.panel .msg { display: grid; grid-template-columns: 24px 1fr; gap: 2px 8px; }
+.panel .av {
+  grid-row: span 2; width: 24px; height: 24px; display: grid; place-items: center; border-radius: 50%;
+  background: var(--t3-accent); font-size: 11px; font-weight: 700;
+}
+.panel .av.claude { background: var(--t3-primary); color: var(--t3-primary-foreground); }
+.panel .name { font-size: 12px; font-weight: 600; }
+.panel .name span { margin-left: 6px; font-weight: 400; color: var(--t3-muted-foreground); }
+.panel .text { font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.panel .waiting { display: flex; align-items: center; gap: 8px; padding: 0 12px 12px 44px; color: var(--t3-muted-foreground); font-size: 12px; }
+.panel .waiting::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #e8a400; }
+.panel .resolved-note { padding: 0 12px 12px 44px; color: var(--t3-muted-foreground); font-size: 12px; }
+.panel .compose { display: flex; align-items: flex-end; gap: 6px; padding: 8px 8px 8px 12px; border-top: 1px solid var(--t3-border); }
+.panel .reply {
+  flex: 1; min-width: 0; min-height: 30px; max-height: 96px; resize: none; overflow-y: hidden;
+  border: 0; background: transparent; padding: 5px 0; font-size: 13px; line-height: 20px; outline: none;
+}
+.panel .reply::placeholder { color: var(--t3-muted-foreground); }
+.panel .status { padding: 0 12px 8px; }
 `
   const PAGE_CURSOR_STYLES = 'html, html body, html body * { cursor: crosshair !important; }'
 
@@ -434,6 +480,52 @@ button:focus-visible, textarea:focus-visible {
   editor.append(composerRow, status)
   root.appendChild(editor)
 
+  // The thread panel: one thread's messages and a reply box. Resolve sits in the header, away from Send.
+  const panel = document.createElement('div')
+  panel.className = 'panel'
+  panel.style.zIndex = String(CHROME_LAYER_Z_INDEX)
+  const panelHead = document.createElement('div')
+  panelHead.className = 'head'
+  const panelNum = document.createElement('span')
+  panelNum.className = 'num'
+  const panelWho = document.createElement('span')
+  panelWho.className = 'who'
+  const panelWhere = document.createElement('span')
+  panelWhere.className = 'where'
+  const resolveButton = document.createElement('button')
+  resolveButton.type = 'button'
+  resolveButton.className = 'btn small'
+  const closeButton = document.createElement('button')
+  closeButton.type = 'button'
+  closeButton.className = 'btn close'
+  closeButton.textContent = '×'
+  closeButton.title = 'Close (Escape)'
+  closeButton.setAttribute('aria-label', 'Close the thread')
+  panelHead.append(panelNum, panelWho, panelWhere, resolveButton, closeButton)
+  const panelMsgs = document.createElement('div')
+  panelMsgs.className = 'msgs'
+  const panelNote = document.createElement('div')
+  const panelCompose = document.createElement('div')
+  panelCompose.className = 'compose'
+  const replyBox = document.createElement('textarea')
+  replyBox.className = 'reply'
+  replyBox.placeholder = 'Reply…'
+  replyBox.setAttribute('dir', 'auto')
+  replyBox.setAttribute('aria-label', 'Reply in the thread')
+  replyBox.rows = 1
+  const replySend = document.createElement('button')
+  replySend.type = 'button'
+  replySend.className = 'btn primary icon'
+  replySend.title = 'Send the reply (Enter). New line: Shift+Enter.'
+  replySend.setAttribute('aria-label', 'Send the reply')
+  replySend.appendChild(icon('send'))
+  panelCompose.append(replyBox, replySend)
+  const panelStatus = document.createElement('div')
+  panelStatus.className = 'status'
+  panelStatus.setAttribute('role', 'status')
+  panel.append(panelHead, panelMsgs, panelNote, panelCompose, panelStatus)
+  root.appendChild(panel)
+
   // ---- State ----
 
   /** @type {'off' | 'select' | 'marquee'} */
@@ -445,6 +537,10 @@ button:focus-visible, textarea:focus-visible {
   let sessionName = ''
   let editorLayoutFrame = null
   const pins = [] // { node, x, y } in page coordinates
+  let threads = [] // this page's threads, oldest first, from the background
+  let openThreadId = null
+  let replying = false
+  let resolveArmedTimer = null
 
   const toolButtons = new Map()
   const tools = [
@@ -586,8 +682,10 @@ button:focus-visible, textarea:focus-visible {
 
   // ---- Pins ----
 
+  const threadPins = [] // { node, x, y, id } in page coordinates, one per thread
+
   function paintPins() {
-    for (const pin of pins) {
+    for (const pin of [...pins, ...threadPins]) {
       const left = Math.max(4, Math.min(window.innerWidth - 40, pin.x - window.scrollX))
       const top = Math.max(4, pin.y - window.scrollY - 26)
       pin.node.style.transform = `translate(${left}px, ${top}px)`
@@ -617,6 +715,201 @@ button:focus-visible, textarea:focus-visible {
     const index = pins.indexOf(pin)
     if (index >= 0) pins.splice(index, 1)
   }
+
+  // ---- Threads ----
+
+  const clock = iso => {
+    const d = new Date(iso)
+    return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  }
+
+  async function loadThreads() {
+    const answer = await ask({ type: 'threads' })
+    if (finished || !answer.ok) return
+    threads = Array.isArray(answer.threads) ? answer.threads : []
+    renderThreads()
+  }
+
+  function renderThreads() {
+    for (const pin of threadPins.splice(0)) pin.node.remove()
+    threads.forEach((t, index) => {
+      const node = document.createElement('div')
+      node.className = 'pin thread'
+      node.classList.toggle('resolved', t.status === 'resolved')
+      node.classList.toggle('unread', (t.unread || 0) > 0)
+      node.textContent = String(index + 1)
+      node.title = `${t.status === 'resolved' ? 'Resolved: ' : ''}${t.messages[0]?.text ?? ''}`
+      node.style.cssText = `left:0;top:0;z-index:${CONTENT_LAYER_Z_INDEX + 1}`
+      node.addEventListener('click', event => {
+        if (!event.isTrusted) return
+        openThreadId = openThreadId === t.id ? null : t.id
+        renderPanel()
+        if (openThreadId) window.setTimeout(() => replyBox.focus({ preventScroll: true }), 0)
+      })
+      pinLayer.appendChild(node)
+      threadPins.push({ node, x: t.rect.x + t.rect.width - 12, y: t.rect.y + 14, id: t.id })
+    })
+    paintPins()
+    renderPanel()
+  }
+
+  function messageNode(m, sessionLabel) {
+    const row = document.createElement('div')
+    row.className = 'msg'
+    const avatar = document.createElement('span')
+    avatar.className = m.from === 'claude' ? 'av claude' : 'av'
+    avatar.textContent = m.from === 'claude' ? 'C' : 'Y'
+    const name = document.createElement('span')
+    name.className = 'name'
+    name.textContent = m.from === 'claude' ? sessionLabel : 'You'
+    const time = document.createElement('span')
+    time.textContent = clock(m.at)
+    name.appendChild(time)
+    const text = document.createElement('span')
+    text.className = 'text'
+    text.textContent = m.text
+    row.append(avatar, name, text)
+    return row
+  }
+
+  function setPanelStatus(text) {
+    panelStatus.textContent = text
+    panelStatus.classList.toggle('shown', text !== '')
+  }
+
+  function disarmResolve() {
+    window.clearTimeout(resolveArmedTimer)
+    resolveArmedTimer = null
+    resolveButton.textContent = '✓ Resolve'
+    resolveButton.title = 'Resolve the thread'
+    resolveButton.classList.remove('confirm')
+  }
+
+  function renderPanel() {
+    const index = threads.findIndex(t => t.id === openThreadId)
+    if (index < 0) {
+      openThreadId = null
+      panel.style.display = 'none'
+      setPanelStatus('')
+      disarmResolve()
+      return
+    }
+    const t = threads[index]
+    const label = t.sessionName || sessionName || 'Claude Code'
+    panelNum.textContent = String(index + 1)
+    panelWho.textContent = label
+    panelWhere.textContent = t.selector ? `· ${t.selector}` : '· region'
+    panelWhere.title = t.selector || ''
+    disarmResolve()
+    resolveButton.style.display = t.status === 'resolved' ? 'none' : ''
+    panelMsgs.replaceChildren(...t.messages.map(m => messageNode(m, label)))
+    const last = t.messages[t.messages.length - 1]
+    if (t.status === 'resolved') {
+      panelNote.className = 'resolved-note'
+      panelNote.textContent = 'Resolved. A reply opens it again.'
+    } else if (last?.from === 'you') {
+      panelNote.className = 'waiting'
+      panelNote.textContent = `Waiting for ${label}`
+    } else {
+      panelNote.className = ''
+      panelNote.textContent = ''
+    }
+    panel.style.display = 'flex'
+    positionPanel()
+    panelMsgs.scrollTop = panelMsgs.scrollHeight
+    markReadIfSeen()
+  }
+
+  /** Below the thread's pin, or above it when there is no room below. */
+  function positionPanel() {
+    if (panel.style.display === 'none') return
+    const pin = threadPins.find(p => p.id === openThreadId)
+    if (!pin) return
+    const box = panel.getBoundingClientRect()
+    const pinLeft = pin.x - window.scrollX
+    const pinTop = pin.y - window.scrollY - 26
+    let top = pinTop + 30
+    if (top + box.height > window.innerHeight - 8) top = pinTop - box.height - 6
+    const left = Math.min(Math.max(8, pinLeft - 12), Math.max(8, window.innerWidth - box.width - 8))
+    panel.style.left = `${left}px`
+    panel.style.top = `${Math.max(8, top)}px`
+  }
+
+  /** An answer counts as read once its thread is open on a page you can see. */
+  function markReadIfSeen() {
+    const t = threads.find(x => x.id === openThreadId)
+    if (!t || !t.unread || document.visibilityState !== 'visible') return
+    t.unread = 0
+    threadPins.find(p => p.id === t.id)?.node.classList.remove('unread')
+    void ask({ type: 'read', threadId: t.id })
+  }
+
+  async function sendReply() {
+    const threadId = openThreadId
+    const body = replyBox.value.trim()
+    if (replying || !threadId) return
+    if (!body) {
+      setPanelStatus('Type a reply first.')
+      return
+    }
+    replying = true
+    replySend.disabled = true
+    setPanelStatus('')
+    const viewport = { width: window.innerWidth, height: window.innerHeight, scrollY: window.scrollY, dpr: window.devicePixelRatio || 1 }
+    const result = await ask({ type: 'reply', threadId, body, viewport })
+    replying = false
+    replySend.disabled = false
+    if (finished) return
+    if (!result.ok) {
+      // The typed text stays, so you can press Enter again.
+      setPanelStatus(`Not sent: ${result.error || NOT_CONNECTED}. Your text is kept.`)
+      return
+    }
+    replyBox.value = ''
+    resizeReply()
+  }
+
+  function resizeReply() {
+    replyBox.style.height = 'auto'
+    replyBox.style.height = `${Math.min(replyBox.scrollHeight, 96)}px`
+    replyBox.style.overflowY = replyBox.scrollHeight > 96 ? 'auto' : 'hidden'
+  }
+  replyBox.addEventListener('input', resizeReply)
+
+  replySend.addEventListener('click', event => {
+    if (!event.isTrusted) return
+    void sendReply()
+  })
+
+  closeButton.addEventListener('click', event => {
+    if (!event.isTrusted) return
+    openThreadId = null
+    renderPanel()
+  })
+
+  // Two presses: the first arms the button for 4 seconds, the second resolves.
+  resolveButton.addEventListener('click', async event => {
+    if (!event.isTrusted || !openThreadId) return
+    if (resolveArmedTimer === null) {
+      resolveButton.textContent = 'Confirm resolve'
+      resolveButton.title = 'Press again to resolve the thread'
+      resolveButton.classList.add('confirm')
+      resolveArmedTimer = window.setTimeout(disarmResolve, 4000)
+      return
+    }
+    disarmResolve()
+    const result = await ask({ type: 'resolve', threadId: openThreadId })
+    if (!result.ok) setPanelStatus(result.error || NOT_CONNECTED)
+  })
+
+  // The background says this page's threads changed: an answer, a resolve, or a reply from another tab.
+  const onRuntimeMessage = (message, sender) => {
+    if (sender.id !== chrome.runtime.id || sender.tab) return
+    if (message?.type === 'threads-changed') void loadThreads()
+  }
+  chrome.runtime.onMessage.addListener(onRuntimeMessage)
+  const onVisibility = () => markReadIfSeen()
+  document.addEventListener('visibilitychange', onVisibility)
 
   // ---- Send ----
 
@@ -719,8 +1012,11 @@ button:focus-visible, textarea:focus-visible {
     submit.disabled = false
     if (finished) return
     if (result.ok) {
-      setPin(pin, `Waiting for ${result.sessionName || sessionName || 'Claude Code'}`, false)
+      // The thread's own numbered pin takes this one's place.
+      removePin(pin)
       clearTarget()
+      openThreadId = result.id
+      await loadThreads()
       return
     }
     // Keep the typed text and the target, so you can press Enter again.
@@ -747,6 +1043,13 @@ button:focus-visible, textarea:focus-visible {
       if (event.target === comment && isSubmitKey(event)) {
         event.preventDefault()
         void send()
+      } else if (event.target === replyBox && isSubmitKey(event)) {
+        event.preventDefault()
+        void sendReply()
+      } else if (event.key === 'Escape' && openThreadId && target === null) {
+        event.preventDefault()
+        openThreadId = null
+        renderPanel()
       }
     })
   }
@@ -864,6 +1167,7 @@ button:focus-visible, textarea:focus-visible {
   const repaint = () => {
     paintTarget()
     paintPins()
+    positionPanel()
     queueEditorLayout()
   }
   // A scrollbar appearing narrows the viewport without a window resize.
@@ -911,6 +1215,11 @@ button:focus-visible, textarea:focus-visible {
     window.removeEventListener('keydown', onKeyDown, true)
     window.removeEventListener('scroll', repaint, true)
     window.removeEventListener('resize', repaint)
+    document.removeEventListener('visibilitychange', onVisibility)
+    try {
+      chrome.runtime.onMessage.removeListener(onRuntimeMessage)
+    } catch {}
+    disarmResolve()
     if (editorLayoutFrame !== null) window.cancelAnimationFrame(editorLayoutFrame)
     if (document.adoptedStyleSheets.includes(cursorSheet)) {
       document.adoptedStyleSheets = document.adoptedStyleSheets.filter(s => s !== cursorSheet)
@@ -945,5 +1254,6 @@ button:focus-visible, textarea:focus-visible {
     sessionName = answer.sessionName || ''
     ownerLabel.textContent = sessionName || 'Claude'
     ownerLabel.title = `Comments go to ${sessionName || 'Claude Code'}`
+    void loadThreads()
   })
 })()

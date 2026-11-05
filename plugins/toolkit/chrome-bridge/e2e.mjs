@@ -151,6 +151,41 @@ async function main() {
       await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1 }, s)
       await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 }, s)
     }
+    // Every node in the tab, closed shadow roots included (CDP pierces them; page scripts cannot).
+    const nodes = async s => {
+      const { root: doc } = await cdp.send('DOM.getDocument', { depth: -1, pierce: true }, s)
+      const all = []
+      const walk = n => {
+        all.push(n)
+        for (const c of [...(n.children ?? []), ...(n.shadowRoots ?? []), ...(n.contentDocument ? [n.contentDocument] : [])]) walk(c)
+      }
+      walk(doc)
+      return all
+    }
+    const shows = (s, needle) => until(`"${needle}" in the page`, async () => (await nodes(s)).some(n => n.nodeType === 3 && n.nodeValue.includes(needle)))
+    const hasClass = (n, name) => {
+      const a = n.attributes ?? []
+      const i = a.indexOf('class')
+      return i >= 0 && a[i + 1].split(/\s+/).includes(name)
+    }
+    const pinOf = async (s, label) => {
+      const pin = (await nodes(s)).find(n => hasClass(n, 'pin') && textOf(n) === label)
+      if (!pin) throw new Error(`no pin ${label}`)
+      return pin
+    }
+    let worker
+    const badge = async () => {
+      if (!worker) {
+        const t = await until('the service worker', async () => (await cdp.send('Target.getTargets')).targetInfos.find(i => i.type === 'service_worker' && i.url.includes(EXTENSION_ID)))
+        worker = (await cdp.send('Target.attachToTarget', { targetId: t.targetId, flatten: true })).sessionId
+      }
+      return (await cdp.send('Runtime.evaluate', { expression: 'chrome.action.getBadgeText({})', awaitPromise: true, returnByValue: true }, worker)).result.value
+    }
+    const typeAndSend = async (s, text) => {
+      await cdp.send('Input.insertText', { text }, s)
+      await cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, text: '\r' }, s)
+      await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 }, s)
+    }
     const commentLines = async () => (await readFile(join(root, 'comments', `${SESSION}.jsonl`), 'utf8').catch(() => '')).trim().split('\n').filter(Boolean).map(l => JSON.parse(l))
     const textOf = n => (n.children ?? []).filter(c => c.nodeType === 3).map(c => c.nodeValue).join('').trim()
 
@@ -188,10 +223,86 @@ async function main() {
       assert.deepEqual(await readdir(join(root, 'comments')), [`${SESSION}.jsonl`])
     })
 
-    await check('a reload keeps the owner and the toolbar', async () => {
+    let threadId
+    let pageTarget
+    const panelOpen = async s => (await nodes(s)).some(n => hasClass(n, 'panel') && /display:\s*flex/.test((n.attributes ?? [])[(n.attributes ?? []).indexOf('style') + 1] ?? ''))
+    const openThread = async s => {
+      if (await panelOpen(s)) return
+      await click(s, await centerOf(s, n => hasClass(n, 'pin') && textOf(n) === '1'))
+      await until('the open thread panel', () => panelOpen(s))
+    }
+
+    await check('the comment becomes thread 1, open and waiting for the session', async () => {
+      threadId = (await commentLines())[0].threadId
+      await until('the thread panel opens after sending', () => panelOpen(tab))
+      await shows(tab, 'Waiting for e2e-app')
+      await shows(tab, 'too much padding')
+    })
+
+    await check('an answer shows in the thread and counts on the icon while the tab is in the background', async () => {
+      pageTarget = (await cdp.send('Target.getTargets')).targetInfos.find(i => i.type === 'page' && i.url.startsWith(`${origin}/plain`)).targetId
+      const other = await cdp.send('Target.createTarget', { url: 'about:blank' })
+      await cdp.send('Target.activateTarget', { targetId: other.targetId })
+      await until('the page to be hidden', async () => (await evaluate(tab, 'document.visibilityState')) === 'hidden')
+      await writeFile(join(root, 'requests', 'reply-1.json'), JSON.stringify({ id: 'reply-1', sessionId: SESSION, type: 'reply', threadId, text: 'Cut it from 24 to 12 px.' }))
+      const reply = JSON.parse(await until('reply reply-1', () => readFile(join(root, 'replies', 'reply-1.json'), 'utf8'), 15_000))
+      assert.equal(reply.ok, true, JSON.stringify(reply))
+      assert.equal(await until('badge 1', async () => (await badge()) === '1' && '1'), '1')
+      await shows(tab, 'Cut it from 24 to 12 px.')
+      await cdp.send('Target.activateTarget', { targetId: pageTarget })
+      await cdp.send('Target.closeTarget', { targetId: other.targetId })
+    })
+
+    await check('seeing the open thread again clears the count', async () => {
+      await until('the page to be visible', async () => (await evaluate(tab, 'document.visibilityState')) === 'visible')
+      await openThread(tab)
+      // E2E_SHOT_THREAD=<file.png> saves a screenshot of the open thread panel.
+      if (process.env.E2E_SHOT_THREAD) {
+        await sleep(300)
+        const { data } = await cdp.send('Page.captureScreenshot', { format: 'png' }, tab)
+        await writeFile(process.env.E2E_SHOT_THREAD, Buffer.from(data, 'base64'))
+      }
+      assert.equal(await until('badge cleared', async () => (await badge()) === '' && 'cleared'), 'cleared')
+    })
+
+    await check('another session cannot answer the thread', async () => {
+      await writeFile(join(root, 'requests', 'reply-2.json'), JSON.stringify({ id: 'reply-2', sessionId: 'other-session', type: 'reply', threadId, text: 'not mine' }))
+      const reply = JSON.parse(await until('reply reply-2', () => readFile(join(root, 'replies', 'reply-2.json'), 'utf8'), 15_000))
+      assert.equal(reply.ok, false)
+    })
+
+    await check('your reply in the thread reaches the comments file as kind reply', async () => {
+      await click(tab, await centerOf(tab, n => n.nodeName === 'TEXTAREA' && hasClass(n, 'reply')))
+      await typeAndSend(tab, 'and the margin too')
+      const r = await until('a reply line', async () => (await commentLines()).find(c => c.kind === 'reply'))
+      assert.equal(r.threadId, threadId)
+      assert.equal(r.body, 'and the margin too')
+      assert.equal(r.sessionId, SESSION)
+      assert.equal(r.shot, undefined)
+    })
+
+    await check('resolve marks the thread resolved', async () => {
+      await writeFile(join(root, 'requests', 'resolve-1.json'), JSON.stringify({ id: 'resolve-1', sessionId: SESSION, type: 'resolve', threadId, text: 'Done.' }))
+      const reply = JSON.parse(await until('reply resolve-1', () => readFile(join(root, 'replies', 'resolve-1.json'), 'utf8'), 15_000))
+      assert.equal(reply.ok, true, JSON.stringify(reply))
+      await until('a resolved pin', async () => hasClass(await pinOf(tab, '1'), 'resolved'))
+    })
+
+    await check('a reload keeps the owner, the toolbar and the threads', async () => {
       await evaluate(tab, 'location.reload()')
       await sleep(500)
       await hasToolbar(tab)
+      await until('pin 1 after reload', () => pinOf(tab, '1'))
+    })
+
+    await check('threads show again in a new tab with the same URL', async () => {
+      const reply = await request('open-3', `${origin}/plain#plans`)
+      assert.equal(reply.ok, true)
+      const t = await until('the new tab', async () => (await cdp.send('Target.getTargets')).targetInfos.find(i => i.type === 'page' && i.url.endsWith('#plans')))
+      const { sessionId: s } = await cdp.send('Target.attachToTarget', { targetId: t.targetId, flatten: true })
+      await cdp.send('DOM.enable', {}, s)
+      await until('pin 1 in the new tab', () => pinOf(s, '1'))
+      await cdp.send('Target.closeTarget', { targetId: t.targetId })
     })
 
     await check('a hostile page cannot reach the toolbar or send a comment', async () => {

@@ -126,6 +126,9 @@ button:focus-visible, textarea:focus-visible {
   border: 1px solid transparent; border-radius: calc(var(--t3-radius) - 2px);
   background: transparent; cursor: pointer; font-size: 13px; font-weight: 500;
 }
+.btn.icon { width: 30px; padding: 0; }
+.btn svg { width: 17px; height: 17px; flex: none; }
+.btn.primary svg { width: 15px; height: 15px; margin-right: 4px; }
 .btn:hover { background: var(--t3-accent); }
 .btn[aria-pressed="true"] { border-color: var(--t3-foreground); background: var(--t3-accent); font-weight: 700; }
 .btn[disabled] { opacity: 0.45; pointer-events: none; }
@@ -381,6 +384,24 @@ button:focus-visible, textarea:focus-visible {
   const pinLayer = document.createElement('div')
   root.append(hoverOutline, marqueeBox, targetOutline, targetLabel, pinLayer)
 
+  // Built node by node, not with innerHTML, so a page's Trusted Types policy cannot block it.
+  const ICONS = {
+    select: [['path', { d: 'M4 4.5h12A1.5 1.5 0 0 1 17.5 6v7a1.5 1.5 0 0 1-1.5 1.5H9.5L6 17.5v-3H4A1.5 1.5 0 0 1 2.5 13V6A1.5 1.5 0 0 1 4 4.5Z' }]],
+    marquee: [['rect', { x: '3', y: '4', width: '14', height: '12', rx: '1.5', 'stroke-dasharray': '3 2.2' }]],
+    send: [['path', { d: 'M10 16V4M5 9l5-5 5 5' }]],
+  }
+  function icon(name) {
+    const NS = 'http://www.w3.org/2000/svg'
+    const svg = document.createElementNS(NS, 'svg')
+    for (const [k, v] of Object.entries({ viewBox: '0 0 20 20', fill: 'none', stroke: 'currentColor', 'stroke-width': '1.7', 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'aria-hidden': 'true' })) svg.setAttribute(k, v)
+    for (const [tag, attrs] of ICONS[name]) {
+      const shape = document.createElementNS(NS, tag)
+      for (const [k, v] of Object.entries(attrs)) shape.setAttribute(k, v)
+      svg.appendChild(shape)
+    }
+    return svg
+  }
+
   const toolbar = document.createElement('div')
   toolbar.className = 'toolbar'
   toolbar.style.zIndex = String(CHROME_LAYER_Z_INDEX)
@@ -404,7 +425,7 @@ button:focus-visible, textarea:focus-visible {
   const submit = document.createElement('button')
   submit.type = 'button'
   submit.className = 'btn primary'
-  submit.textContent = 'Send'
+  submit.append(icon('send'), 'Send')
   submit.title = 'Send to Claude Code (Enter). New line: Shift+Enter. Cancel: Escape.'
   composerRow.append(comment, submit)
   const status = document.createElement('div')
@@ -433,9 +454,10 @@ button:focus-visible, textarea:focus-visible {
   for (const [candidate, label, title] of tools) {
     const button = document.createElement('button')
     button.type = 'button'
-    button.className = 'btn'
-    button.textContent = label
+    button.className = 'btn icon'
+    button.appendChild(icon(candidate))
     button.title = title
+    button.setAttribute('aria-label', label)
     button.addEventListener('click', event => {
       if (!event.isTrusted) return
       setTool(tool === candidate ? 'off' : candidate)

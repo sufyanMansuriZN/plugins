@@ -161,6 +161,12 @@ async function main() {
       assert.equal(typeof reply.tabId, 'number')
       tab = await attach(`${origin}/plain`)
       await hasToolbar(tab)
+      // E2E_SHOT=<file.png> saves a screenshot of the page with the toolbar, to look at it.
+      if (process.env.E2E_SHOT) {
+        await sleep(300)
+        const { data } = await cdp.send('Page.captureScreenshot', { format: 'png' }, tab)
+        await writeFile(process.env.E2E_SHOT, Buffer.from(data, 'base64'))
+      }
     })
 
     await check('a comment reaches the right comments file with a PNG, and only that file', async () => {

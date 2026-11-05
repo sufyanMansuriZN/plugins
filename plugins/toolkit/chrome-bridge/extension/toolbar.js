@@ -124,15 +124,27 @@ button:focus-visible, textarea:focus-visible {
   max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .owner:hover { background: var(--t3-accent); color: var(--t3-foreground); }
-.toolbar.collapsed > :not(.show):not(.count) { display: none; }
-.toolbar:not(.collapsed) > .show { display: none; }
+.root.peek > :not(.handle) { display: none !important; }
+.root:not(.peek) > .handle { display: none; }
+.handle {
+  pointer-events: auto; position: fixed; right: 12px; bottom: 12px; width: 28px; height: 28px; padding: 0;
+  display: grid; place-items: center; border: 1px solid var(--t3-border); border-radius: 50%;
+  background: color-mix(in srgb, var(--t3-popover) 88%, transparent); color: var(--t3-popover-foreground);
+  box-shadow: 0 2px 8px rgb(0 0 0 / 18%); cursor: pointer; z-index: 10;
+}
+.handle:hover { background: var(--t3-popover); }
+.handle svg { width: 15px; height: 15px; }
+.handle .dot {
+  position: absolute; top: -2px; right: -2px; width: 10px; height: 10px; border-radius: 50%;
+  border: 1.5px solid #000; background: var(--badge);
+}
+.handle .dot[hidden] { display: none; }
 .count {
   height: 22px; min-width: 22px; padding: 0 7px; margin: 0 2px; border: 1.5px solid #000; border-radius: 999px;
   background: var(--badge); color: var(--badge-foreground); cursor: pointer;
   font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums;
 }
 .count[hidden] { display: none !important; }
-.pins[hidden] { display: none; }
 .owner.none { background: var(--badge); color: var(--badge-foreground); }
 .picker {
   pointer-events: auto; position: fixed; right: 12px; bottom: 58px; display: none; flex-direction: column;
@@ -475,8 +487,7 @@ button:focus-visible, textarea:focus-visible {
     select: [['path', { d: 'M4 4.5h12A1.5 1.5 0 0 1 17.5 6v7a1.5 1.5 0 0 1-1.5 1.5H9.5L6 17.5v-3H4A1.5 1.5 0 0 1 2.5 13V6A1.5 1.5 0 0 1 4 4.5Z' }]],
     marquee: [['rect', { x: '3', y: '4', width: '14', height: '12', rx: '1.5', 'stroke-dasharray': '3 2.2' }]],
     send: [['path', { d: 'M10 16V4M5 9l5-5 5 5' }]],
-    hide: [['path', { d: 'M5 8l5 5 5-5' }]],
-    off: [['path', { d: 'M10 3v7M6.2 5.6a6 6 0 1 0 7.6 0' }]],
+    eyeOff: [['path', { d: 'M2.5 10s3-5.5 7.5-5.5S17.5 10 17.5 10s-3 5.5-7.5 5.5S2.5 10 2.5 10Z' }], ['path', { d: 'M4 16 16 4' }]],
   }
   function icon(name) {
     const NS = 'http://www.w3.org/2000/svg'
@@ -640,11 +651,20 @@ button:focus-visible, textarea:focus-visible {
     button.appendChild(icon(name))
     return button
   }
-  const hideButton = toolbarButton('hide', 'Hide the toolbar', 'Hide the toolbar and pins on this tab')
-  const offButton = toolbarButton('off', 'Turn off on this tab', 'Turn off on this tab: no toolbar, and no comments go to the session. The extension icon brings it back.')
-  const showButton = toolbarButton('select', 'Show the toolbar', 'Show the toolbar and pins')
-  showButton.classList.add('show')
-  toolbar.append(countButton, hideButton, offButton, showButton)
+  const eyeButton = toolbarButton('eyeOff', 'Hide the review layer', 'Hide the toolbar, pins and threads to look at the page (Alt+Shift+C)')
+  toolbar.append(countButton, eyeButton)
+
+  // While peeking, only this handle stays; a dot on it means a new answer.
+  const handle = document.createElement('button')
+  handle.type = 'button'
+  handle.className = 'handle'
+  handle.setAttribute('aria-label', 'Show the review layer')
+  handle.appendChild(icon('select'))
+  const handleDot = document.createElement('span')
+  handleDot.className = 'dot'
+  handleDot.hidden = true
+  handle.appendChild(handleDot)
+  root.appendChild(handle)
 
   const setStatus = (text) => {
     status.textContent = text
@@ -844,51 +864,49 @@ button:focus-visible, textarea:focus-visible {
     countButton.textContent = String(unread.length)
     countButton.title = unread.length === 1 ? '1 thread has a new answer. Click to open it.' : `${unread.length} threads have new answers. Click to open the first.`
     countButton.setAttribute('aria-label', countButton.title)
+    handleDot.hidden = unread.length === 0
+    handle.title = unread.length > 0 ? `${countButton.title.split('.')[0]}. Show the review layer (Alt+Shift+C).` : 'Show the review layer (Alt+Shift+C)'
   }
 
   countButton.addEventListener('click', event => {
     if (!event.isTrusted) return
     const first = threads.find(t => (t.unread || 0) > 0)
     if (!first) return
-    setCollapsed(false)
     openThreadId = first.id
     renderPanel()
   })
 
-  // ---- Hide and turn off ----
+  // ---- Peek: hide the whole review layer to look at the page, and bring it back as it was ----
 
-  let collapsed = false
+  let peek = false
+  let toolBeforePeek = 'off'
 
-  /** Folds the toolbar to one button and hides pins and panels; `remember` keeps it through reloads. */
-  function setCollapsed(on, remember = true) {
-    if (collapsed === on) return
-    collapsed = on
-    toolbar.classList.toggle('collapsed', on)
-    pinLayer.hidden = on
+  /** Everything but the handle hides; a target, a typed comment or an open thread stay for later. `remember` keeps it through reloads. */
+  function setPeek(on, remember = true) {
+    if (peek === on) return
+    peek = on
+    root.classList.toggle('peek', on)
     if (on) {
+      toolBeforePeek = tool
       setTool('off')
-      if (target && !sending) clearTarget()
-      openThreadId = null
-      renderPanel()
-      picker.style.display = 'none'
+      const focused = shadowRoot.activeElement
+      if (focused instanceof HTMLElement) focused.blur()
+    } else {
+      if (toolBeforePeek !== 'off') setTool(toolBeforePeek)
+      repaint()
+      markReadIfSeen()
     }
     if (remember) void ask({ type: 'hide', hidden: on })
   }
 
-  hideButton.addEventListener('click', event => {
+  eyeButton.addEventListener('click', event => {
     if (!event.isTrusted) return
-    setCollapsed(true)
+    setPeek(true)
   })
 
-  showButton.addEventListener('click', event => {
+  handle.addEventListener('click', event => {
     if (!event.isTrusted) return
-    setCollapsed(false)
-  })
-
-  offButton.addEventListener('click', async event => {
-    if (!event.isTrusted) return
-    const answer = await ask({ type: 'turn-off' })
-    if (answer.ok) teardown()
+    setPeek(false)
   })
 
   function messageNode(m, sessionLabel) {
@@ -977,7 +995,7 @@ button:focus-visible, textarea:focus-visible {
   /** An answer counts as read once its thread is open on a page you can see. */
   function markReadIfSeen() {
     const t = threads.find(x => x.id === openThreadId)
-    if (!t || !t.unread || collapsed || document.visibilityState !== 'visible') return
+    if (!t || !t.unread || peek || document.visibilityState !== 'visible') return
     t.unread = 0
     threadPins.find(p => p.id === t.id)?.node.classList.remove('unread')
     renderCount()
@@ -1122,7 +1140,11 @@ button:focus-visible, textarea:focus-visible {
   const onRuntimeMessage = (message, sender) => {
     if (sender.id !== chrome.runtime.id || sender.tab) return
     if (message?.type === 'threads-changed') void loadThreads()
-    if (message?.type === 'open-picker') void openPicker('')
+    if (message?.type === 'open-picker') {
+      setPeek(false)
+      void openPicker('')
+    }
+    if (message?.type === 'toggle-peek') setPeek(!peek)
   }
   chrome.runtime.onMessage.addListener(onRuntimeMessage)
   const onVisibility = () => markReadIfSeen()
@@ -1476,7 +1498,7 @@ button:focus-visible, textarea:focus-visible {
       return
     }
     showOwner(answer.sessionName || '', answer.running)
-    if (answer.hidden) setCollapsed(true, false)
+    if (answer.hidden) setPeek(true, false)
     if (!answer.hasOwner) void openPicker('')
     else if (!answer.running) void openPicker('No session. Pick one')
     if (answer.hasOwner) void loadThreads()

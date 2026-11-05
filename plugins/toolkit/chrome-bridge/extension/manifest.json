@@ -11,5 +11,11 @@
   },
   "action": {
     "default_title": "Claude chrome bridge"
+  },
+  "commands": {
+    "toggle-review": {
+      "suggested_key": { "default": "Alt+Shift+C" },
+      "description": "Hide or show the review layer on this tab"
+    }
   }
 }

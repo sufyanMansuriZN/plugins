@@ -480,39 +480,64 @@ async function main() {
     })
 
     const button = label => n => n.nodeName === 'BUTTON' && (n.attributes ?? [])[(n.attributes ?? []).indexOf('aria-label') + 1] === label
-    const collapsed = async s => (await nodes(s)).some(n => hasClass(n, 'toolbar') && hasClass(n, 'collapsed'))
-    const pinsHidden = async s => (await nodes(s)).some(n => hasClass(n, 'pins') && (n.attributes ?? []).includes('hidden'))
+    // Peeking: the review layer is hidden and only the handle shows.
+    const peeking = async s => (await nodes(s)).some(n => hasClass(n, 'root') && hasClass(n, 'peek'))
+    const dotShown = async s => (await nodes(s)).some(n => hasClass(n, 'dot') && !(n.attributes ?? []).includes('hidden'))
+    // What the Alt+Shift+C shortcut does, since CDP cannot press a browser shortcut.
+    const shortcut = async () => workerEval(`chrome.tabs.get(${await plainTab()}).then(t => toggleReview(t)).then(() => true)`)
+    const textareaValue = async (s, cls) => {
+      const n = (await nodes(s)).find(x => x.nodeName === 'TEXTAREA' && hasClass(x, cls))
+      const { object } = await cdp.send('DOM.resolveNode', { backendNodeId: n.backendNodeId }, s)
+      return (await cdp.send('Runtime.callFunctionOn', { objectId: object.objectId, functionDeclaration: 'function () { return this.value }', returnByValue: true }, s)).result.value
+    }
 
-    await check('hide folds the toolbar and hides the pins, also after a reload, and show brings them back', async () => {
-      await click(tab, await centerOf(tab, button('Hide the toolbar')))
-      await until('a folded toolbar', () => collapsed(tab))
-      assert.equal(await pinsHidden(tab), true)
+    await check('the toolbar has no power button any more', async () => {
+      assert.equal((await nodes(tab)).some(button('Turn off on this tab')), false)
+    })
+
+    await check('the eye button hides the whole review layer but the handle, also after a reload, and the handle brings it back', async () => {
+      await click(tab, await centerOf(tab, button('Hide the review layer')))
+      await until('peeking', () => peeking(tab))
       await evaluate(tab, 'location.reload()')
       await sleep(500)
       await hasToolbar(tab)
-      await until('still folded after a reload', () => collapsed(tab))
-      // E2E_SHOT_FOLDED=<file.png> saves a screenshot of the folded toolbar.
-      if (process.env.E2E_SHOT_FOLDED) {
-        await sleep(300)
-        const { data } = await cdp.send('Page.captureScreenshot', { format: 'png' }, tab)
-        await writeFile(process.env.E2E_SHOT_FOLDED, Buffer.from(data, 'base64'))
-      }
-      await click(tab, await centerOf(tab, button('Show the toolbar')))
-      await until('an open toolbar', async () => !(await collapsed(tab)))
-      assert.equal(await pinsHidden(tab), false)
+      await until('still peeking after a reload', () => peeking(tab))
+      await click(tab, await centerOf(tab, button('Show the review layer')))
+      await until('reviewing again', async () => !(await peeking(tab)))
     })
 
-    await check('turn off removes the toolbar and the session from the tab, and the icon brings the list back', async () => {
-      const id = await plainTab()
-      await click(tab, await centerOf(tab, button('Turn off on this tab')))
-      await until('no toolbar', async () => !(await evaluate(tab, `!!document.querySelector('[data-toolkit-chrome-bridge]')`)))
-      assert.equal(await workerEval(`chrome.storage.local.get('tabs').then(({ tabs }) => !!(tabs || {})[${id}])`), false)
-      await evaluate(tab, 'location.reload()')
-      await sleep(1000)
-      assert.equal(await evaluate(tab, `!!document.querySelector('[data-toolkit-chrome-bridge]')`), false, 'no toolbar after a reload')
-      await pressIcon(`${origin}/plain`)
-      await hasToolbar(tab)
-      await shows(tab, 'Send comments on this tab to')
+    await check('the shortcut hides and shows, and a comment being written comes back as it was', async () => {
+      await click(tab, await centerOf(tab, commentTool))
+      await sleep(200)
+      await click(tab, await centerOf(tab, n => (n.attributes ?? []).includes('card')))
+      await sleep(300)
+      await cdp.send('Input.insertText', { text: 'draft text' }, tab)
+      await shortcut()
+      await until('peeking', () => peeking(tab))
+      await shortcut()
+      await until('reviewing again', async () => !(await peeking(tab)))
+      assert.equal(await textareaValue(tab, 'comment'), 'draft text')
+      await cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 }, tab)
+      await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 }, tab)
+    })
+
+    await check('an answer while peeking shows only a dot on the handle', async () => {
+      await shortcut()
+      await until('peeking', () => peeking(tab))
+      assert.equal(await dotShown(tab), false)
+      await writeFile(join(root, 'requests', 'reply-9.json'), JSON.stringify({ id: 'reply-9', sessionId: SESSION, type: 'reply', threadId, text: 'Another answer.' }))
+      const reply = JSON.parse(await until('reply reply-9', () => readFile(join(root, 'replies', 'reply-9.json'), 'utf8'), 15_000))
+      assert.equal(reply.ok, true, JSON.stringify(reply))
+      await until('the dot', () => dotShown(tab))
+      assert.equal(await peeking(tab), true, 'the answer did not bring the layer back')
+      // E2E_SHOT_PEEK=<file.png> saves a screenshot of a peeking page with the dot.
+      if (process.env.E2E_SHOT_PEEK) {
+        await sleep(300)
+        const { data } = await cdp.send('Page.captureScreenshot', { format: 'png' }, tab)
+        await writeFile(process.env.E2E_SHOT_PEEK, Buffer.from(data, 'base64'))
+      }
+      await shortcut()
+      await until('reviewing again', async () => !(await peeking(tab)))
     })
     // Not checked here: the self-reload after a version change. An extension loaded with
     // --load-extension does not come back after chrome.runtime.reload() in this test browser,

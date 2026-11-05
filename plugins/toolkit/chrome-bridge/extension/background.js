@@ -241,6 +241,17 @@ async function openPicker(tab) {
 
 chrome.action.onClicked.addListener(tab => void openPicker(tab))
 
+/** What the Alt+Shift+C shortcut does: hide or show the review layer on a tab with a toolbar. */
+async function toggleReview(tab) {
+  if (tab?.id === undefined) return
+  if (!(await ownerOf(tab.id)) && !pickTabs.has(tab.id)) return
+  chrome.tabs.sendMessage(tab.id, { type: 'toggle-peek' }, { frameId: 0 }).catch(() => undefined)
+}
+
+chrome.commands.onCommand.addListener((command, tab) => {
+  if (command === 'toggle-review') void toggleReview(tab)
+})
+
 /** At worker start: drop owners of tabs that closed while the worker was down, and add the toolbar again. */
 async function restoreOwnedTabs() {
   const owned = Object.keys(await readTabs())
@@ -739,19 +750,11 @@ async function onToolbarMessage(message, tab) {
       return { ok: true }
 
     case 'hide':
-      // Folds the toolbar on this tab; kept through reloads, like the owner.
+      // Peeking on this tab: kept through reloads, like the owner.
       await updateTabs(tabs => {
         const entry = tabs[String(tab.id)]
         if (!entry) return false
         entry.hidden = message.hidden === true
-      })
-      return { ok: true }
-
-    case 'turn-off':
-      // The tab stops sending comments; its threads stay for the URL. The icon brings the toolbar back.
-      pickTabs.delete(tab.id)
-      await updateTabs(tabs => {
-        delete tabs[String(tab.id)]
       })
       return { ok: true }
 

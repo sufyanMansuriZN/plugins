@@ -36,20 +36,28 @@ async function paths($: EngineInterface): Promise<BridgePaths> {
   return bridgePaths((await $.env.get('HOME')) ?? '', await $.session.id())
 }
 
-/** Copies the extension and host to their fixed folder when the plugin's copy changed, and registers the host with Chrome. */
+/**
+ * Copies the extension and host to their fixed folder when the plugin's copy changed, and registers the host with Chrome.
+ * host.sh is checked on every start: it names node by path, and a Node upgrade removes the old one.
+ */
 async function install($: EngineInterface, p: BridgePaths) {
   const source = `${$.plugin.root}/chrome-bridge`
   const sum = await run($, ['sha1sum', ...SOURCE_FILES.map(f => `${source}/${f}`)])
   const version = sum.stdout.split('\n').map(l => l.slice(0, 4)).join('')
   const installed = (await $.fs.read(p.version).catch(() => '')).trim()
-  if (sum.exitCode === 0 && installed === version) return
-  await run($, ['mkdir', '-p', p.root, p.hostManifest.slice(0, p.hostManifest.lastIndexOf('/'))])
-  await run($, ['cp', '-R', `${source}/extension`, `${source}/host.mjs`, `${p.root}/`])
+  const current = sum.exitCode === 0 && installed === version
+  if (!current) {
+    await run($, ['mkdir', '-p', p.root, p.hostManifest.slice(0, p.hostManifest.lastIndexOf('/'))])
+    await run($, ['cp', '-R', `${source}/extension`, `${source}/host.mjs`, `${p.root}/`])
+    await $.fs.write(p.hostManifest, `${JSON.stringify(hostManifest(p.hostLauncher), null, 2)}\n`)
+  }
   const node = (await run($, ['node', '-e', 'process.stdout.write(process.execPath)'])).stdout
-  await $.fs.write(p.hostLauncher, hostLauncher(node, p.hostModule))
-  await run($, ['chmod', '+x', p.hostLauncher])
-  await $.fs.write(p.hostManifest, `${JSON.stringify(hostManifest(p.hostLauncher), null, 2)}\n`)
-  await $.fs.write(p.version, `${version}\n`)
+  const launcher = hostLauncher(node, p.hostModule)
+  if (node !== '' && (await $.fs.read(p.hostLauncher).catch(() => '')) !== launcher) {
+    await $.fs.write(p.hostLauncher, launcher)
+    await run($, ['chmod', '+x', p.hostLauncher])
+  }
+  if (!current) await $.fs.write(p.version, `${version}\n`)
 }
 
 type Answer = { ok: true; tabId?: number; check?: unknown } | { ok: false; error?: string }

@@ -19,10 +19,10 @@ const DESCRIPTION = `Keep the task list the terminal shows at the end of the tra
 
 Never spend a message on this tool alone: send it IN THE SAME MESSAGE as another tool call (in parallel), so it costs no extra round trip.
 - First call: with the VERY FIRST tool call of the turn, even one that only reads or lists files: {"items": [...]}, the whole plan in order, short imperative phrases (at most ~7 words, no numbering), the step you are starting "in_progress", the rest "pending". If you must look around first, make "Look at how X is set up" step one and refine the list once you know.
-- Next step: {"advance": true} alongside the call that begins it (completes the in_progress step, starts the next pending one); after the last step, advance alongside wrap_up, and let your reply say what now works: the list goes away once every step is done.
-- Out of order: {"done": [2], "start": 4} (1-based).
+- Next step: {"advance": true} alongside the call that begins it (completes every in_progress step, starts the next pending one); after the last step, advance alongside wrap_up, and let your reply say what now works: the list goes away once every step is done.
+- Out of order or in parallel: {"done": [2], "start": [4, 5]} (1-based; start also takes one number).
 - Plan changed, including right after the user interrupts or sends a new instruction mid-task: {"items": [...]} again, the new whole list, so the list never shows an abandoned plan.
-Keep exactly one step in_progress while working and none when everything is done. Do not also write the plan as a numbered list in your message: the list on screen is the plan.`
+Mark in_progress the step you are working on, or every step that runs at the same time (parallel agents, sessions or background commands); none when everything is done. Do not also write the plan as a numbered list in your message: the list on screen is the plan.`
 
 const INPUT_SCHEMA = {
   type: 'object',
@@ -43,7 +43,7 @@ const INPUT_SCHEMA = {
     },
     advance: { type: 'boolean' },
     done: { type: 'array', items: { type: 'number' } },
-    start: { type: 'number' },
+    start: { anyOf: [{ type: 'number' }, { type: 'array', items: { type: 'number' } }] },
   },
 }
 
@@ -66,8 +66,7 @@ function parseItems(items: unknown[]): PlanStep[] | { deny: string } {
 export function applyPlan(plan: PlanStep[] | null, input: unknown): PlanStep[] | { deny: string } {
   const { items, advance, done, start } = (input ?? {}) as { items?: unknown; advance?: unknown; done?: unknown; start?: unknown }
   const next = Array.isArray(items) ? parseItems(items) : advance === true || done !== undefined || start !== undefined ? applyMoves(plan, advance === true, done, start) : { deny: 'Give items (the whole plan), advance, or done and start.' }
-  if ('deny' in next) return next
-  if (next.filter(step => step.status === 'in_progress').length > 1) return { deny: 'Keep exactly one step in_progress.' }
+  // Several steps in progress at once is parallel work, such as agents or sessions running side by side.
   return next
 }
 
@@ -75,20 +74,22 @@ function applyMoves(plan: PlanStep[] | null, advance: boolean, done: unknown, st
   if (plan === null) return { deny: 'There is no plan yet: send items, the whole plan, first.' }
   const restatus = (status: (step: PlanStep, index: number) => PlanStatus) => plan.map((step, index) => ({ ...step, status: status(step, index) }))
   if (advance) {
-    const current = plan.findIndex(step => step.status === 'in_progress')
+    // Every step in progress is done, parallel ones too, and the first one still to do starts.
     const following = plan.findIndex(step => step.status === 'pending')
-    return restatus((step, index) => (index === current ? 'completed' : index === following ? 'in_progress' : step.status))
+    return restatus((step, index) => (step.status === 'in_progress' ? 'completed' : index === following ? 'in_progress' : step.status))
   }
   const isStep = (n: unknown): n is number => Number.isInteger(n) && (n as number) >= 1 && (n as number) <= plan.length
   const finished = Array.isArray(done) ? done : done === undefined ? [] : [done]
   const wrong = finished.find(n => !isStep(n))
   if (wrong !== undefined) return { deny: `done: ${String(wrong)} is not a step number (1–${plan.length}).` }
-  if (start !== undefined && !isStep(start)) return { deny: `start: ${String(start)} is not a step number (1–${plan.length}).` }
+  const starting: unknown[] = Array.isArray(start) ? start : start === undefined ? [] : [start]
+  const wrongStart = starting.find(n => !isStep(n))
+  if (wrongStart !== undefined) return { deny: `start: ${String(wrongStart)} is not a step number (1–${plan.length}).` }
   return restatus((step, index) => {
     if (finished.includes(index + 1)) return 'completed'
     if (start === undefined) return step.status
-    // Starting another step puts the one in progress back, unless it was just finished.
-    return index + 1 === start ? 'in_progress' : step.status === 'in_progress' ? 'pending' : step.status
+    // The steps started are the ones in progress now; one in progress and not named goes back, unless it was just finished.
+    return starting.includes(index + 1) ? 'in_progress' : step.status === 'in_progress' ? 'pending' : step.status
   })
 }
 
@@ -110,8 +111,8 @@ export function replayPlan(messages: readonly SessionMessage[]): { steps: PlanSt
 /** What the model reads back: enough to pick up the plan after a compaction. */
 function summary(plan: PlanStep[]): string {
   const count = plan.filter(step => step.status === 'completed').length
-  const current = plan.findIndex(step => step.status === 'in_progress')
-  const now = current >= 0 ? ` Now on step ${current + 1}: ${plan[current]?.content}.` : isDone(plan) ? ' All steps are done.' : ''
+  const current = plan.flatMap((step, index) => (step.status === 'in_progress' ? [`${index + 1}: ${step.content}`] : []))
+  const now = current.length === 1 ? ` Now on step ${current[0]}.` : current.length > 1 ? ` Now on steps ${current.join('; ')}.` : isDone(plan) ? ' All steps are done.' : ''
   return `Plan updated: ${count} of ${plan.length} done.${now}`
 }
 

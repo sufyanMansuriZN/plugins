@@ -67,7 +67,7 @@ test('bad input is denied with a reason Claude can act on', async ($, on) => {
     { recap: '  ' },
     { recap: RECAP, ask: ASK },
     { recap: RECAP, ask: ASK, actions: [] },
-    { recap: RECAP, ask: ASK, actions: [{ label: 'A' }, { label: 'B' }, { label: 'C' }] },
+    { recap: RECAP, ask: ASK, actions: [{ label: 'A' }, { label: 'B' }, { label: 'C' }, { label: 'D' }, { label: 'E' }] },
     { recap: RECAP, ask: ASK, actions: [{ label: '/clear' }] },
     { recap: RECAP, ask: ASK, actions: [{ action: 'archive' }] },
   ]
@@ -224,7 +224,7 @@ test('a prompt typed after a press keeps the choice', async ($, on) => {
   await ui.press({ key: 'answer:0' })
   await ui.unmount()
   await $.prompt.submit({ text: 'And push it', wait: false, origin: { kind: 'composer' } })
-  expect(await once(mountReply($, 'a1'))).toEqual(['Text: engine: AssistantMessage', 'Text: Next step', `Text: ${RECAP}`, 'Text: You chose: Yes'])
+  expect(await once(mountReply($, 'a1'))).toEqual(['Text: engine: AssistantMessage', 'Text: Next step', `Text: ${RECAP}`, `Text: ${ASK}`, 'Text: You chose: Yes'])
 })
 
 test('a turn that ends in an error keeps the box on its call row', async ($, on) => {
@@ -302,7 +302,7 @@ test('a later turn with no box of its own moves an unanswered box under its repl
   jsonl += `\n${line({ type: 'assistant', uuid: 'a3', timestamp: at(9), message: { content: [{ type: 'text', text: REPLY }] } })}`
   await $.turn.start({ text: 'Yes', turnId: 't3' })
   await endTurn($)
-  expect(await once(mountReply($, 'a2'))).toEqual(['Text: engine: AssistantMessage', 'Text: Next step', `Text: ${RECAP}`, 'Text: You chose: Yes'])
+  expect(await once(mountReply($, 'a2'))).toEqual(['Text: engine: AssistantMessage', 'Text: Next step', `Text: ${RECAP}`, `Text: ${ASK}`, 'Text: You chose: Yes'])
   expect(await once(mountReply($, 'a3'))).toEqual(['Text: engine: AssistantMessage'])
 })
 
@@ -347,6 +347,14 @@ test('a resumed session leaves out a box the user already answered or typed past
   expect(await resume($, on, [{ type: 'user', uuid: 'u2', timestamp: at(6), message: { content: 'Do something else' } }])).toEqual([])
 })
 
+test('a call with four answers draws all four buttons', async ($, on) => {
+  engine(on)
+  const labels = ['Fix all three', 'Fix 1 only', 'Fix 2 only', 'Leave it']
+  const ui = await askOnRow($, on, { recap: RECAP, ask: ASK, actions: labels.map(label => ({ label })) })
+  expect(await shown(ui)).toEqual(['Text: Next step', `Text: ${RECAP}`, `Text: ${ASK}`, ...labels.map(label => `Button: ${label}`)])
+  await ui.unmount()
+})
+
 test('a call with a question and two answers draws both buttons under it', async ($, on) => {
   engine(on)
   const ui = await askOnRow($, on, { recap: RECAP, ask: ASK, actions: [{ label: 'Yes, commit' }, { label: 'Leave uncommitted' }] })
@@ -354,12 +362,12 @@ test('a call with a question and two answers draws both buttons under it', async
   await ui.unmount()
 })
 
-test('a press sends exactly its label as the user and leaves only the choice', async ($, on) => {
+test('a press sends exactly its label as the user and leaves the question with the choice', async ($, on) => {
   const host = engine(on)
   const ui = await askOnRow($, on, { recap: RECAP, ask: ASK, actions: [{ label: 'Yes, commit' }, { label: 'Leave uncommitted' }] })
   await ui.press({ key: 'answer:1' })
   expect(host.prompts).toEqual([{ text: 'Leave uncommitted', asUser: true }])
-  expect(await shown(ui)).toEqual(['Text: Next step', `Text: ${RECAP}`, 'Text: You chose: Leave uncommitted'])
+  expect(await shown(ui)).toEqual(['Text: Next step', `Text: ${RECAP}`, `Text: ${ASK}`, 'Text: You chose: Leave uncommitted'])
   await ui.unmount()
 
   const again = await mountRow($, { recap: RECAP, ask: ASK, actions: [{ label: 'Yes, commit' }] })

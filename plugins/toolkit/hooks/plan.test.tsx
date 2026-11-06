@@ -71,6 +71,20 @@ test('advance finishes the step in progress and starts the next one', async ($, 
   expect(last.result).toBe('Plan updated: 3 of 3 done. All steps are done.')
 })
 
+test('steps run in parallel: several in progress, start takes a list, advance finishes them all', async ($, on) => {
+  engine(on)
+  const parallel = await $.tool.call({ tool: TOOL, items: PLAN.map((step, index) => ({ ...step, status: index < 2 ? 'in_progress' : 'pending' })) })
+  expect(parallel.result).toBe('Plan updated: 0 of 3 done. Now on steps 1: Read the parser; 2: Fix blank lines.')
+  const one = await $.tool.call({ tool: TOOL, done: [1] })
+  expect(one.result).toBe('Plan updated: 1 of 3 done. Now on step 2: Fix blank lines.')
+  await $.tool.call({ tool: TOOL, items: PLAN })
+  const started = await $.tool.call({ tool: TOOL, done: [1], start: [2, 3] })
+  expect(started.result).toBe('Plan updated: 1 of 3 done. Now on steps 2: Fix blank lines; 3: Run the tests.')
+  expect(await spinner($)).toEqual(['engine: Spinner', '✔', 'Read the parser', '◼', 'Fix blank lines', '◼', 'Run the tests'])
+  const last = await $.tool.call({ tool: TOOL, advance: true })
+  expect(last.result).toBe('Plan updated: 3 of 3 done. All steps are done.')
+})
+
 test('done and start move steps out of order', async ($, on) => {
   engine(on)
   await $.tool.call({ tool: TOOL, items: PLAN })
@@ -90,7 +104,7 @@ test('bad calls are denied with a reason Claude can act on, and the plan stays',
     { items: [] },
     { items: [{ content: ' ', status: 'pending' }] },
     { items: [{ content: 'A', status: 'doing' }] },
-    { items: PLAN.map(step => ({ ...step, status: 'in_progress' })) },
+    { start: [2, 4] },
     { items: Array.from({ length: 13 }, (_, i) => ({ content: `Step ${i}`, status: 'pending' })) },
     { done: [4] },
     { start: 0 },

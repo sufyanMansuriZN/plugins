@@ -12,6 +12,7 @@ const IS_MOVED = { plugin: 'toolkit', key: 'wrapUpIsMoved' } as const
 const LAST = { plugin: 'toolkit', key: 'wrapUpLast' } as const
 const CURRENT = { plugin: 'toolkit', key: 'wrapUpCurrent' } as const
 const ANSWER = { plugin: 'toolkit', key: 'wrapUpAnswer' } as const
+const ANSWERS_MAX = 4
 
 
 type AppAction = 'commit' | 'create_pr' | 'merge' | 'fix_ci' | 'address_comments' | 'resolve_conflicts' | 'verify'
@@ -33,6 +34,7 @@ The recap never replaces your answer to the user. Call this first, then write yo
 
 Fields — recap and ask are said to the user, in the second person; a reply button's label is the user's whole answer back to you:
 - recap: what is now true or changed, then where it stands, including what is not done or not verified (for example: nothing committed, or not checked in the app). Two or three short sentences, about 40 words / 300 characters, in the project's own words. No recommendation here.
+- actions: 1 to ${ANSWERS_MAX} buttons. Offer each realistic choice the user has, not only your pick, so they can answer with a press instead of typing.
 - ask (with actions, only when the next move is the user's call — a choice of approach, a go-ahead to fix, commit, push, post or send, an approval): just that ONE decision in one short sentence, never two joined by "and" ("Which fix first?"), with no reason or recommendation and without listing the options the buttons give: your pick, actions[0], is drawn first. At most 100 characters.
 Every field is a top-level parameter holding plain prose (actions: a JSON array); none contains markup or another field.`
 
@@ -52,9 +54,8 @@ const INPUT_SCHEMA = {
     actions: {
       type: 'array',
       minItems: 1,
-      maxItems: 2,
-      description:
-        '1 or 2 buttons, recommendation first. They are answers to your ask: the first accepts your recommendation, and another is there only when it is a realistic alternative the user might pick instead, not a menu of everything you mentioned. When blocked is true, they are the most likely answers to your question.',
+      maxItems: ANSWERS_MAX,
+      description: `1 to ${ANSWERS_MAX} buttons, recommendation first. They are answers to your ask: the first accepts your recommendation, and each other one is a realistic alternative the user might pick instead, not a menu of everything you mentioned. When blocked is true, they are the most likely answers to your question.`,
       items: {
         type: 'object',
         properties: {
@@ -103,8 +104,8 @@ export function parseWrapUp(input: unknown): WrapUp | { deny: string } {
   const hasAsk = typeof ask === 'string' && ask.trim() !== ''
   const hasActions = Array.isArray(actions) && actions.length > 0
   if (!hasAsk && !hasActions) return { recap, question: null }
-  if (!hasAsk || !hasActions) return { deny: 'Give ask and 1 or 2 actions together, or neither when nothing waits on the user.' }
-  if (actions.length > 2) return { deny: 'Give at most 2 actions: your pick first, then one realistic alternative.' }
+  if (!hasAsk || !hasActions) return { deny: `Give ask and 1 to ${ANSWERS_MAX} actions together, or neither when nothing waits on the user.` }
+  if (actions.length > ANSWERS_MAX) return { deny: `Give at most ${ANSWERS_MAX} actions: your pick first, then the realistic alternatives.` }
   const answers: string[] = []
   for (const [index, item] of actions.entries()) {
     const answer = parseAnswer(item, index)
@@ -151,15 +152,13 @@ export function drawWrapUp(elements: Elements['terminal'], recap: string, questi
     )
     return index === 0 ? [link] : [<Text dimColor>{'  ·  '}</Text>, link]
   })
-  const choice =
-    answered !== null ? (
-      <Text dimColor>{`You chose: ${answered}`}</Text>
-    ) : (
-      <Box flexDirection="row" flexWrap="wrap">
-        <Text>{`${question.ask}  `}</Text>
-        {links}
-      </Box>
-    )
+  // Once answered, the question stays and the links give way to the choice, so the box still says what was asked.
+  const choice = (
+    <Box flexDirection="row" flexWrap="wrap">
+      <Text>{`${question.ask}  `}</Text>
+      {answered !== null ? <Text dimColor>{`You chose: ${answered}`}</Text> : links}
+    </Box>
+  )
   // Drawn as the engine draws a tool row: a bullet and the name, then the result under ⎿.
   return (
     <Box flexDirection="column" marginTop={1}>

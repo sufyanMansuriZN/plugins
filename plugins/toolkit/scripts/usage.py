@@ -22,7 +22,7 @@ CONTROLS = [
     (r'toggle-', 'mermaid', 'Show source / Show picture'),
     (r'full-', 'mermaid', 'open full size'),
     (r'answer:0', 'next step box', 'first answer'),
-    (r'answer:', 'next step box', 'second answer'),
+    (r'answer:', 'next step box', 'another answer'),
     (r'toggle$', 'task list', '+N more / show less'),
     (r'attach:', 'sessions', 'copy claude attach'),
 ]

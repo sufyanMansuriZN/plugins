@@ -12,7 +12,11 @@ const COMMENT = {
   kind: 'element' as const, threadId: 'c1', body: 'Hi.', section: { text: 'Syntax' }, rect: { x: 1, y: 2, width: 3, height: 4 },
   viewport: { width: 1, height: 1, scrollY: 0, dpr: 1 },
 }
-const ROW = { text: commentPrompt(COMMENT), origin: { kind: 'plugin' as const, name: 'toolkit' }, isExpanded: false }
+const ROW = { text: commentPrompt(COMMENT, () => 'm1'), origin: { kind: 'plugin' as const, name: 'toolkit' }, isExpanded: false }
+const OLD_ROW = {
+  ...ROW,
+  text: 'The person sent a new comment (thread c1) from a page in Chrome, tab 4. What they wrote:\n\nHi.\n\nCall read_tab with commentId "c1" to see the part of the page they marked and its screenshot.',
+}
 
 // Beneath the plugin: the comments file, the session, and the engine's own drawing.
 function engine(on: On) {
@@ -28,13 +32,22 @@ function engine(on: On) {
   })
 }
 
-test('a comment prompt shows as the words and one line about the page', async ($, on) => {
+test('a comment prompt shows as the words and one line about the page, a prompt before 0.21.0 too', async ($, on) => {
   engine(on)
-  const ui = await $.ui.mount({ plugin: 'toolkit', surface: 'terminal', component: 'UserMessage', props: ROW })
-  const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
-  expect(texts).toContain('❯ Hi.')
-  expect(texts).toContain('  comment from Chrome, scale CSS property, near "Syntax"')
-  expect(texts.join('\n')).not.toContain('read_tab')
+  for (const props of [ROW, OLD_ROW]) {
+    const ui = await $.ui.mount({ plugin: 'toolkit', surface: 'terminal', component: 'UserMessage', props })
+    const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
+    expect(texts).toContain('❯ Hi.')
+    expect(texts).toContain('  comment from Chrome, scale CSS property, near "Syntax"')
+    expect(texts.join('\n')).not.toContain('read_tab')
+    await ui.unmount()
+  }
+})
+
+test('a toolkit prompt that is not a comment keeps the engine\'s drawing', async ($, on) => {
+  engine(on)
+  const ui = await $.ui.mount({ plugin: 'toolkit', surface: 'terminal', component: 'UserMessage', props: { ...ROW, text: 'Something else' } })
+  expect(await ui.find({ type: 'Text', text: 'engine drawing' })).toBeDefined()
   await ui.unmount()
 })
 

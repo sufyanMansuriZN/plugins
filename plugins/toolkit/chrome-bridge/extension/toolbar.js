@@ -43,9 +43,9 @@
   const Z_INDEX_OVERLAY = 2147483646
   const CONTENT_LAYER_Z_INDEX = 1
   const CHROME_LAYER_Z_INDEX = 10
-  const PRIMARY = 'var(--t3-primary)'
-  const PRIMARY_FILL = 'color-mix(in srgb, var(--t3-primary) 10%, transparent)'
-  const REGION_FILL = 'color-mix(in srgb, var(--t3-primary) 6%, transparent)'
+  const PRIMARY = 'var(--target)'
+  const PRIMARY_FILL = 'var(--target-fill)'
+  const REGION_FILL = 'var(--region-fill)'
   const MAX_TEXT = 2000
   const MAX_SECTION_TEXT = 200
   const MAX_REGION_ELEMENTS = 200
@@ -74,194 +74,243 @@
     return event.key === 'Enter' && !event.shiftKey && !event.isComposing
   }
 
-  // ---- Theme (tokens from Annotation.css; hand-written rules in place of the Tailwind build) ----
+  // ---- Theme: Field notes. A paper sheet with a hairline edge laid on the page; tangerine only as a fill under ink ----
+  // The system face on purpose: a page's font-src CSP can block font files, even inside a shadow root.
 
-  const STYLES = `
-:host {
+  const STYLES = `/* Hallmark · component: review layer · genre: modern-minimal · theme: furrow (dealt 1/3, picked as "Field notes") · states: 8 · contrast: pass · redesign: full · v2.0.0
+ * critique: one paper surface with a hairline edge on any site; what needs you is a tangerine fill with ink on it, and every state also has a word or a shape
+ * note 48: the tokens sit on :host, which is :root inside this closed shadow root; sloplint reads only :root, so it reports them as literals */
+/* Hallmark · waive 24b · padding on 2px steps · a dense tool layer drawn over other sites, sized by eye to sit beside the page's own controls */:host {
   all: initial;
-  --t3-font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-  --t3-font-mono: "SF Mono", "SFMono-Regular", "JetBrains Mono", Consolas, "Liberation Mono", Menlo, monospace;
-  --t3-radius: 0.625rem;
-  --t3-background: white;
-  --t3-foreground: oklch(0.269 0 0);
-  --t3-popover: white;
-  --t3-popover-foreground: oklch(0.269 0 0);
-  --t3-primary: oklch(0.488 0.217 264);
-  --t3-primary-foreground: white;
-  --t3-muted: rgb(0 0 0 / 4%);
-  --t3-muted-foreground: oklch(0.45 0 0);
-  --t3-accent: rgb(0 0 0 / 6%);
-  --t3-border: rgb(0 0 0 / 14%);
-  --t3-input: rgb(0 0 0 / 10%);
-  --t3-ring: oklch(0.488 0.217 264);
-  --badge: #ffd400;
-  --badge-foreground: #000;
-  color: var(--t3-foreground);
-  font-family: var(--t3-font-sans);
-  font-size: 14px;
-  line-height: 1.4;
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-outlier: ui-monospace, "SF Mono", "JetBrains Mono", Consolas, "Liberation Mono", Menlo, monospace;
+  --sheet: oklch(99.5% 0.005 85);
+  --paper: oklch(96% 0.011 85);
+  --ink: oklch(18% 0.006 60);
+  --ink-2: oklch(30% 0.008 60);
+  --muted: oklch(44% 0.012 60);
+  --rule: oklch(88% 0.013 85);
+  --hover: oklch(18% 0.006 60 / 0.06);
+  --on-ink-muted: oklch(80% 0.01 85);
+  --on-ink-hover: oklch(100% 0 0 / 0.12);
+  --accent: oklch(70% 0.19 40);
+  --accent-hover: oklch(74% 0.17 42);
+  --accent-ink: oklch(18% 0.006 60);
+  --accent-soft: oklch(91% 0.05 50);
+  --done: oklch(92% 0.04 150);
+  --focus: oklch(55% 0.19 40);
+  --target: oklch(60% 0.19 40);
+  --target-fill: oklch(70% 0.19 40 / 0.10);
+  --region-fill: oklch(70% 0.19 40 / 0.06);
+  --edge: inset 0 1px 0 oklch(100% 0 0 / 0.35), inset 0 -1px 0 oklch(18% 0.006 60 / 0.12);
+  /* The edge: a hairline at 12% ink and a soft shadow, never a solid ink ring. */
+  --ring: 0 0 0 1px oklch(18% 0.006 60 / 0.12);
+  --shadow: 0 1px 2px oklch(18% 0.006 60 / 0.08), 0 8px 24px -8px oklch(18% 0.006 60 / 0.28);
+  --lift: 0 0 0 1px oklch(18% 0.006 60 / 0.12), 0 1px 2px oklch(18% 0.006 60 / 0.08), 0 24px 44px -20px oklch(18% 0.006 60 / 0.42);
+  --r-panel: 14px;
+  --r-ctl: 6px;
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
 }
 * { box-sizing: border-box; }
 button, textarea { font: inherit; color: inherit; }
-button:focus-visible, textarea:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--t3-ring) 72%, transparent);
-  outline-offset: -2px;
-}
-.root { position: fixed; inset: 0; pointer-events: none; }
+button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.comment:focus-visible, .reply:focus-visible { outline: none; }
+.composer:has(.comment:focus-visible), .compose:has(.reply:focus-visible) { box-shadow: inset 0 -2px 0 var(--focus); }
+/* The type lives here, not on :host: the host's inline "all: initial !important" wins over :host rules. */
+.root { position: fixed; inset: 0; pointer-events: none; color: var(--ink); font-family: var(--font-sans); font-size: 14px; line-height: 1.4; }
+
+/* Toolbar */
 .toolbar {
   pointer-events: auto; position: fixed; right: 12px; bottom: 12px;
   display: flex; align-items: center; gap: 2px; padding: 4px;
-  border: 1px solid var(--t3-border); border-radius: var(--t3-radius);
-  background: color-mix(in srgb, var(--t3-popover) 96%, transparent);
-  color: var(--t3-popover-foreground);
-  box-shadow: 0 8px 24px rgb(0 0 0 / 18%);
-  backdrop-filter: blur(24px);
+  border-radius: calc(var(--r-ctl) + 4px); background: var(--sheet); color: var(--ink);
+  box-shadow: var(--ring), var(--shadow);
 }
+.sep { width: 1px; height: 20px; margin: 0 4px; flex: none; background: var(--rule); }
 .owner {
-  height: 30px; padding: 0 8px; border: 1px solid transparent; border-radius: calc(var(--t3-radius) - 2px);
-  background: transparent; cursor: pointer;
-  font-size: 12px; font-weight: 600; color: var(--t3-muted-foreground);
+  position: relative; height: 32px; padding: 0 24px 0 8px; border: 0; border-radius: var(--r-ctl);
+  background: transparent; cursor: pointer; font-size: 13px; font-weight: 600; color: var(--ink);
   max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  transition: scale 120ms var(--ease-out);
 }
-.owner:hover { background: var(--t3-accent); color: var(--t3-foreground); }
+.owner::after {
+  content: ""; position: absolute; right: 10px; top: 14px; width: 6px; height: 6px;
+  border-left: 1.6px solid currentColor; border-top: 1.6px solid currentColor; rotate: 45deg;
+}
+.owner.none { background: var(--accent); color: var(--accent-ink); box-shadow: var(--edge); }
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 32px; padding: 0 10px;
+  border: 0; border-radius: var(--r-ctl); background: transparent; cursor: pointer; font-size: 13px; font-weight: 500;
+  transition: scale 120ms var(--ease-out);
+}
+.btn.icon { min-width: 32px; padding: 0 7px; }
+.btn svg { width: 17px; height: 17px; flex: none; }
+.btn kbd { font: 500 11px/16px var(--font-sans); color: var(--muted); border: 1px solid var(--rule); border-radius: 4px; padding: 0 4px; }
+.btn[aria-pressed="true"] { background: var(--ink); color: var(--sheet); }
+.btn[aria-pressed="true"] kbd { color: inherit; border-color: currentColor; }
+.btn.primary { background: var(--accent); color: var(--accent-ink); font-weight: 600; box-shadow: var(--edge); }
+/* While a comment or reply is on its way: the fill goes, so the button reads as off, not just faded. */
+.btn[disabled], .btn.primary[disabled] { background: var(--paper); color: var(--muted); box-shadow: inset 0 0 0 1px var(--rule); cursor: progress; pointer-events: none; }
+.btn.primary svg { width: 15px; height: 15px; }
+.count {
+  display: inline-flex; align-items: center; height: 24px; padding: 0 8px; margin: 0 2px; border: 0; border-radius: var(--r-ctl);
+  background: var(--accent); color: var(--accent-ink); box-shadow: var(--edge); cursor: pointer;
+  font-size: 12px; font-weight: 650; font-variant-numeric: tabular-nums; white-space: pre;
+  transition: scale 120ms var(--ease-out);
+}
+.count[hidden] { display: none !important; }
+
+/* Peek: only the handle stays */
 .root.peek > :not(.handle) { display: none !important; }
 .root:not(.peek) > .handle { display: none; }
 .handle {
-  pointer-events: auto; position: fixed; right: 12px; bottom: 12px; width: 28px; height: 28px; padding: 0;
-  display: grid; place-items: center; border: 1px solid var(--t3-border); border-radius: 50%;
-  background: color-mix(in srgb, var(--t3-popover) 88%, transparent); color: var(--t3-popover-foreground);
-  box-shadow: 0 2px 8px rgb(0 0 0 / 18%); cursor: pointer; z-index: 10;
+  pointer-events: auto; position: fixed; right: 12px; bottom: 12px; width: 36px; height: 36px; padding: 0;
+  display: grid; place-items: center; border: 0; border-radius: 50%;
+  background: var(--sheet); color: var(--ink); box-shadow: var(--ring), var(--shadow); cursor: pointer; z-index: 10;
+  transition: scale 120ms var(--ease-out);
 }
-.handle:hover { background: var(--t3-popover); }
-.handle svg { width: 15px; height: 15px; }
+.handle svg { width: 16px; height: 16px; }
 .handle .dot {
-  position: absolute; top: -2px; right: -2px; width: 10px; height: 10px; border-radius: 50%;
-  border: 1.5px solid #000; background: var(--badge);
+  position: absolute; top: -6px; right: -8px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px;
+  background: var(--accent); color: var(--accent-ink); box-shadow: 0 0 0 2px var(--sheet);
+  font-size: 11px; font-weight: 700; line-height: 18px; text-align: center; font-variant-numeric: tabular-nums;
 }
 .handle .dot[hidden] { display: none; }
-.count {
-  height: 22px; min-width: 22px; padding: 0 7px; margin: 0 2px; border: 1.5px solid #000; border-radius: 999px;
-  background: var(--badge); color: var(--badge-foreground); cursor: pointer;
-  font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums;
+
+/* Sheets: the session list, the comment box and the thread */
+.picker, .editor, .panel {
+  pointer-events: auto; position: fixed; display: none; flex-direction: column; overflow: hidden;
+  border-radius: var(--r-panel); background: var(--sheet); color: var(--ink); box-shadow: var(--lift);
+  transition: opacity 180ms ease-out, scale 180ms var(--ease-out);
 }
-.count[hidden] { display: none !important; }
-.owner.none { background: var(--badge); color: var(--badge-foreground); }
+@starting-style { .picker, .editor, .panel { opacity: 0; scale: 0.96; } }
+.root.still .picker, .root.still .editor, .root.still .panel { transition: none; }
 .picker {
-  pointer-events: auto; position: fixed; right: 12px; bottom: 58px; display: none; flex-direction: column;
+  right: 12px; bottom: 60px; transform-origin: right bottom;
   width: min(320px, calc(100vw - 24px)); max-height: min(380px, calc(100vh - 80px));
-  border: 1px solid var(--t3-border); border-radius: calc(var(--t3-radius) + 4px);
-  background: color-mix(in srgb, var(--t3-popover) 98%, transparent); color: var(--t3-popover-foreground);
-  box-shadow: 0 16px 40px rgb(0 0 0 / 22%); backdrop-filter: blur(24px); overflow: hidden;
 }
-.picker .title { padding: 10px 12px 6px; font-size: 12px; font-weight: 700; }
-.picker .note { margin: 0 12px 6px; padding: 2px 6px; border-radius: 4px; justify-self: start; align-self: flex-start; font-size: 12px; font-weight: 600; background: var(--badge); color: var(--badge-foreground); }
+.picker .title { padding: 12px 14px 8px; font-size: 13px; font-weight: 650; }
+.picker .note { margin: 0 14px 8px; padding: 2px 8px; border-radius: 4px; align-self: flex-start; font-size: 12px; font-weight: 600; background: var(--accent); color: var(--accent-ink); }
 .picker .note:empty { display: none; }
 .picker .list { display: flex; flex-direction: column; gap: 2px; padding: 0 6px 6px; overflow-y: auto; }
 .picker .session {
-  display: grid; gap: 1px; justify-items: start; text-align: left; width: 100%; padding: 6px 8px;
-  border: 1px solid transparent; border-radius: 8px; background: transparent; cursor: pointer;
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 1px 8px;
+  text-align: left; width: 100%; padding: 8px 10px; border: 0; border-radius: var(--r-ctl); background: transparent; cursor: pointer;
+  transition: scale 120ms var(--ease-out);
 }
-.picker .session:hover { background: var(--t3-accent); }
-.picker .session[aria-current="true"] { border-color: var(--t3-foreground); }
-.picker .session b { font-size: 13px; }
+.picker .session b { min-width: 0; font-size: 13.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .picker .session small {
-  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font-family: var(--t3-font-mono); font-size: 11px; color: var(--t3-muted-foreground);
+  grid-column: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: var(--font-outlier); font-size: 11.5px; color: var(--muted);
 }
-.picker .empty { padding: 4px 12px 8px; font-size: 12px; color: var(--t3-muted-foreground); }
-.picker .empty code { font-family: var(--t3-font-mono); }
-.picker .foot { display: flex; justify-content: flex-end; padding: 6px 8px; border-top: 1px solid var(--t3-border); }
-.picker .refresh { height: 26px; padding: 0 8px; font-size: 12px; border-color: var(--t3-border); }
-.btn {
-  display: inline-flex; align-items: center; justify-content: center; height: 30px; padding: 0 10px;
-  border: 1px solid transparent; border-radius: calc(var(--t3-radius) - 2px);
-  background: transparent; cursor: pointer; font-size: 13px; font-weight: 500;
-}
-.btn.icon { width: 30px; padding: 0; }
-.btn svg { width: 17px; height: 17px; flex: none; }
-.btn.primary svg { width: 15px; height: 15px; margin-right: 4px; }
-.btn:hover { background: var(--t3-accent); }
-.btn[aria-pressed="true"] { border-color: var(--t3-foreground); background: var(--t3-accent); font-weight: 700; }
-.btn[disabled] { opacity: 0.45; pointer-events: none; }
-.btn.primary { background: var(--t3-primary); color: var(--t3-primary-foreground); border-color: var(--t3-primary); }
-.editor {
-  pointer-events: auto; position: fixed; display: none; flex-direction: column;
-  width: min(360px, calc(100vw - 16px)); max-height: calc(100vh - 16px); overflow: hidden;
-  border: 1px solid var(--t3-border); border-radius: calc(var(--t3-radius) + 4px);
-  background: color-mix(in srgb, var(--t3-popover) 97%, transparent);
-  color: var(--t3-popover-foreground);
-  box-shadow: 0 16px 40px rgb(0 0 0 / 22%);
-  backdrop-filter: blur(24px);
-}
-.composer { display: flex; align-items: flex-start; gap: 8px; padding: 8px; }
+.picker .session .cur { grid-column: 2; grid-row: 1 / span 2; padding: 1px 8px; border-radius: var(--r-ctl); background: var(--done); color: var(--ink); font-size: 12px; font-weight: 600; }
+.picker .empty { padding: 4px 14px 10px; font-size: 12.5px; color: var(--muted); }
+.picker .empty code { font-family: var(--font-outlier); color: var(--ink); }
+.picker .foot { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 6px 8px 6px 14px; border-top: 1px solid var(--rule); font-size: 12px; color: var(--muted); }
+.picker .refresh { height: 28px; padding: 0 10px; font-size: 12.5px; font-weight: 600; color: var(--ink); }
+.editor { width: min(360px, calc(100vw - 16px)); max-height: calc(100vh - 16px); }
+.composer { display: flex; align-items: flex-end; gap: 8px; padding: 10px 10px 10px 14px; }
 .comment {
   flex: 1; min-width: 0; min-height: 32px; max-height: 96px; resize: none; overflow-y: hidden;
-  border: 0; border-bottom: 1px solid transparent; background: transparent;
-  padding: 6px 0; font-size: 14px; line-height: 20px; outline: none;
+  border: 0; background: transparent; padding: 6px 0; font-size: 14px; line-height: 20px; outline: none;
 }
-.comment:focus { border-bottom-color: var(--t3-primary); outline: none; }
-.comment::placeholder { color: var(--t3-muted-foreground); }
-.status { display: none; padding: 0 10px 8px; font-size: 12px; font-weight: 600; }
+.comment::placeholder, .reply::placeholder { color: var(--muted); }
+.hint { padding: 8px 14px; border-top: 1px solid var(--rule); font-size: 12px; color: var(--muted); }
+.status { display: none; padding: 0 14px 10px; font-size: 12px; font-weight: 600; }
 .status.shown { display: block; }
+
+/* On the page: the target's selector and the pins */
 .label {
   position: fixed; max-width: 280px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
-  padding: 2px 8px; border-radius: 6px; pointer-events: none;
-  background: var(--t3-primary); color: var(--t3-primary-foreground);
-  font-family: var(--t3-font-mono); font-size: 12px; font-weight: 600;
+  padding: 1px 7px; border-radius: 4px; pointer-events: none;
+  background: var(--ink); color: var(--sheet); font-family: var(--font-outlier); font-size: 11.5px; font-weight: 500;
 }
 .pin {
   position: fixed; max-width: 320px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
-  padding: 3px 9px; border: 2px solid #000; border-radius: 999px; pointer-events: auto;
-  background: var(--badge); color: var(--badge-foreground);
-  font-size: 12px; font-weight: 700; box-shadow: 0 2px 8px rgb(0 0 0 / 25%);
+  padding: 3px 9px; border: 0; border-radius: var(--r-ctl); pointer-events: auto;
+  background: var(--sheet); color: var(--ink); box-shadow: var(--ring), var(--shadow);
+  font-size: 12px; font-weight: 700;
 }
-.pin.error { background: #fff; white-space: normal; border-radius: 8px; }
+.pin.error { white-space: normal; background: var(--accent-soft); }
 .pin.thread {
-  width: 24px; height: 24px; padding: 0; display: grid; place-items: center; cursor: pointer;
-  font-variant-numeric: tabular-nums;
+  min-width: 26px; height: 26px; padding: 0 7px; display: inline-flex; align-items: center; justify-content: center; gap: 3px;
+  overflow: visible; cursor: pointer; font-variant-numeric: tabular-nums;
+  transition: scale 120ms var(--ease-out);
 }
-.pin.thread.unread { box-shadow: 0 0 0 3px var(--t3-primary), 0 2px 8px rgb(0 0 0 / 25%); }
-.pin.thread.resolved { background: #d4d4d4; border-color: #6b6b6b; color: #3a3a3a; }
-.panel {
-  pointer-events: auto; position: fixed; display: none; flex-direction: column;
-  width: min(340px, calc(100vw - 16px)); max-height: min(440px, calc(100vh - 16px));
-  border: 1px solid var(--t3-border); border-radius: calc(var(--t3-radius) + 4px);
-  background: color-mix(in srgb, var(--t3-popover) 98%, transparent); color: var(--t3-popover-foreground);
-  box-shadow: 0 16px 40px rgb(0 0 0 / 22%); backdrop-filter: blur(24px); overflow: hidden;
+.pin.thread svg { width: 13px; height: 13px; flex: none; }
+.pin.thread .who, .panel .num .who { font-size: 11.5px; font-weight: 700; }
+.pin-peek {
+  position: fixed; display: grid; gap: 2px; max-width: 260px; padding: 8px 10px; pointer-events: none;
+  border-radius: var(--r-ctl); background: var(--sheet); color: var(--ink); box-shadow: var(--ring), var(--shadow);
+  font-size: 12.5px; line-height: 1.35; overflow-wrap: anywhere;
 }
-.panel .head { display: flex; align-items: center; gap: 8px; padding: 8px 8px 8px 12px; border-bottom: 1px solid var(--t3-border); }
+.pin-peek .state { color: var(--muted); font-size: 12px; }
+.pin.thread.unread { background: var(--accent); color: var(--accent-ink); }
+.pin.thread.unread::after {
+  content: ""; position: absolute; top: -4px; right: -4px; width: 9px; height: 9px; border-radius: 50%;
+  background: var(--ink); box-shadow: 0 0 0 2px var(--accent);
+}
+.pin.thread.resolved { background: var(--done); }
+.pin.thread.pop { animation: pin-pop 220ms var(--ease-out); }
+.pin.thread.arrive { animation: pin-arrive 180ms var(--ease-out); }
+@keyframes pin-pop { from { scale: 0.85; } to { scale: 1; } }
+@keyframes pin-arrive { from { opacity: 0; filter: blur(2px); } to { opacity: 1; filter: none; } }
+
+/* The thread */
+.panel { width: min(340px, calc(100vw - 16px)); max-height: min(440px, calc(100vh - 16px)); }
+.panel .head { display: flex; align-items: center; gap: 8px; padding: 9px 8px 9px 12px; background: var(--ink); color: var(--sheet); }
 .panel .num {
-  width: 20px; height: 20px; flex: none; display: grid; place-items: center; border-radius: 50%;
-  border: 1.5px solid #000; background: var(--badge); color: var(--badge-foreground); font-size: 11px; font-weight: 700;
+  min-width: 22px; height: 22px; padding: 0 5px; flex: none; display: inline-flex; align-items: center; justify-content: center; gap: 3px;
+  border-radius: var(--r-ctl); background: var(--sheet); color: var(--ink); font-size: 11px; font-weight: 700;
 }
-.panel .who { font-weight: 600; font-size: 13px; white-space: nowrap; }
-.panel .where {
-  flex: 1; min-width: 0; color: var(--t3-muted-foreground); font-size: 12px;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.panel .small { height: 26px; padding: 0 8px; font-size: 12px; font-weight: 600; border-color: var(--t3-border); }
-.panel .small.confirm { background: var(--t3-primary); color: var(--t3-primary-foreground); border-color: var(--t3-primary); }
-.panel .close { width: 26px; height: 26px; padding: 0; font-size: 16px; color: var(--t3-muted-foreground); }
-.panel .msgs { display: flex; flex-direction: column; gap: 12px; padding: 12px; overflow-y: auto; }
-.panel .msg { display: grid; grid-template-columns: 24px 1fr; gap: 2px 8px; }
+.panel .num svg { width: 13px; height: 13px; }
+.panel .num.resolved { background: var(--done); }
+.panel .heading { flex: 1; min-width: 0; display: grid; }
+.panel .who, .panel .where { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.panel .who { font-size: 13px; font-weight: 600; }
+.panel .where { font-size: 12px; color: var(--on-ink-muted); }
+.panel .head .btn { height: 28px; padding: 0 8px; color: inherit; }
+.panel .head .btn:focus-visible { outline-color: var(--accent); }
+.panel .small { font-size: 12.5px; font-weight: 600; }
+.panel .small svg { width: 15px; height: 15px; }
+.panel .small.confirm { background: var(--accent); color: var(--accent-ink); }
+.panel .close { min-width: 28px; padding: 0; }
+.panel .msgs { display: flex; flex-direction: column; gap: 14px; padding: 14px 14px 12px; overflow-y: auto; }
+.panel .msg { display: grid; grid-template-columns: 24px minmax(0, 1fr); gap: 2px 10px; }
 .panel .av {
   grid-row: span 2; width: 24px; height: 24px; display: grid; place-items: center; border-radius: 50%;
-  background: var(--t3-accent); font-size: 11px; font-weight: 700;
+  background: var(--hover); font-size: 11px; font-weight: 700;
 }
-.panel .av.claude { background: var(--t3-primary); color: var(--t3-primary-foreground); }
-.panel .name { font-size: 12px; font-weight: 600; }
-.panel .name span { margin-left: 6px; font-weight: 400; color: var(--t3-muted-foreground); }
-.panel .text { font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
-.panel .waiting { display: flex; align-items: center; gap: 8px; padding: 0 12px 12px 44px; color: var(--t3-muted-foreground); font-size: 12px; }
-.panel .waiting::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #e8a400; }
-.panel .resolved-note { padding: 0 12px 12px 44px; color: var(--t3-muted-foreground); font-size: 12px; }
-.panel .compose { display: flex; align-items: flex-end; gap: 6px; padding: 8px 8px 8px 12px; border-top: 1px solid var(--t3-border); }
+.panel .av.claude { background: var(--accent); color: var(--accent-ink); }
+.panel .name { font-size: 12.5px; font-weight: 600; }
+.panel .name span { margin-left: 8px; font-weight: 400; color: var(--muted); font-variant-numeric: tabular-nums; }
+.panel .text { font-size: 13.5px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.panel .waiting, .panel .resolved-note { display: flex; align-items: center; gap: 8px; padding: 0 14px 12px 48px; color: var(--muted); font-size: 12.5px; }
+.panel .waiting svg, .panel .resolved-note svg { width: 14px; height: 14px; flex: none; }
+.panel .compose { display: flex; align-items: flex-end; gap: 8px; padding: 8px 8px 8px 14px; border-top: 1px solid var(--rule); }
 .panel .reply {
-  flex: 1; min-width: 0; min-height: 30px; max-height: 96px; resize: none; overflow-y: hidden;
-  border: 0; background: transparent; padding: 5px 0; font-size: 13px; line-height: 20px; outline: none;
+  flex: 1; min-width: 0; min-height: 32px; max-height: 96px; resize: none; overflow-y: hidden;
+  border: 0; background: transparent; padding: 6px 0; font-size: 13.5px; line-height: 20px; outline: none;
 }
-.panel .reply::placeholder { color: var(--t3-muted-foreground); }
-.panel .status { padding: 0 12px 8px; }
+.panel .status { padding: 0 14px 10px; }
+
+/* Press and hover */
+.btn:active, .owner:active, .count:active, .handle:active, .picker .session:active { scale: 0.97; }
+.pin.thread:active { scale: 0.95; }
+@media (hover: hover) and (pointer: fine) {
+  .btn:hover, .owner:hover, .picker .session:hover { background: var(--hover); }
+  .btn[aria-pressed="true"]:hover { background: var(--ink-2); }
+  .btn.primary:hover, .owner.none:hover, .count:hover, .panel .small.confirm:hover { background: var(--accent-hover); }
+  .panel .head .btn:not(.confirm):hover { background: var(--on-ink-hover); }
+  .handle:hover { background: var(--paper); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .picker, .editor, .panel { transition: opacity 120ms ease-out; }
+  .btn:active, .owner:active, .count:active, .handle:active, .picker .session:active, .pin.thread:active { scale: none; }
+  .pin.thread.pop { animation: none; }
+  .pin.thread.arrive { animation: pin-fade 180ms ease-out; }
+}
+@keyframes pin-fade { from { opacity: 0; } to { opacity: 1; } }
 `
   const PAGE_CURSOR_STYLES = 'html, html body, html body * { cursor: crosshair !important; }'
 
@@ -488,6 +537,9 @@ button:focus-visible, textarea:focus-visible {
     marquee: [['rect', { x: '3', y: '4', width: '14', height: '12', rx: '1.5', 'stroke-dasharray': '3 2.2' }]],
     send: [['path', { d: 'M10 16V4M5 9l5-5 5 5' }]],
     eyeOff: [['path', { d: 'M2.5 10s3-5.5 7.5-5.5S17.5 10 17.5 10s-3 5.5-7.5 5.5S2.5 10 2.5 10Z' }], ['path', { d: 'M4 16 16 4' }]],
+    check: [['path', { d: 'm4.5 10.5 3.5 3.5 7.5-8' }]],
+    close: [['path', { d: 'M5 5l10 10M15 5 5 15' }]],
+    clock: [['circle', { cx: '10', cy: '10', r: '7' }], ['path', { d: 'M10 6v4l2.5 2' }]],
   }
   function icon(name) {
     const NS = 'http://www.w3.org/2000/svg'
@@ -508,7 +560,12 @@ button:focus-visible, textarea:focus-visible {
   ownerLabel.type = 'button'
   ownerLabel.className = 'owner'
   ownerLabel.textContent = 'Claude'
-  toolbar.appendChild(ownerLabel)
+  const separator = () => {
+    const line = document.createElement('span')
+    line.className = 'sep'
+    return line
+  }
+  toolbar.append(ownerLabel, separator())
 
   // The session list: opened by the extension icon, by this label, or when the session has ended.
   const picker = document.createElement('div')
@@ -523,11 +580,12 @@ button:focus-visible, textarea:focus-visible {
   pickerList.className = 'list'
   const pickerFoot = document.createElement('div')
   pickerFoot.className = 'foot'
+  const pickerCount = document.createElement('span')
   const refreshButton = document.createElement('button')
   refreshButton.type = 'button'
   refreshButton.className = 'btn refresh'
   refreshButton.textContent = 'Refresh'
-  pickerFoot.appendChild(refreshButton)
+  pickerFoot.append(pickerCount, refreshButton)
   picker.append(pickerTitle, pickerNote, pickerList, pickerFoot)
   root.appendChild(toolbar)
 
@@ -551,7 +609,10 @@ button:focus-visible, textarea:focus-visible {
   const status = document.createElement('div')
   status.className = 'status'
   status.setAttribute('role', 'status')
-  editor.append(composerRow, status)
+  const keyHint = document.createElement('div')
+  keyHint.className = 'hint'
+  keyHint.textContent = 'Enter sends. Shift+Enter adds a line. Escape cancels.'
+  editor.append(composerRow, status, keyHint)
   root.appendChild(editor)
 
   // The thread panel: one thread's messages and a reply box. Resolve sits in the header, away from Send.
@@ -566,16 +627,24 @@ button:focus-visible, textarea:focus-visible {
   panelWho.className = 'who'
   const panelWhere = document.createElement('span')
   panelWhere.className = 'where'
+  const panelHeading = document.createElement('div')
+  panelHeading.className = 'heading'
+  panelHeading.append(panelWho, panelWhere)
   const resolveButton = document.createElement('button')
   resolveButton.type = 'button'
   resolveButton.className = 'btn small'
+  const reopenButton = document.createElement('button')
+  reopenButton.type = 'button'
+  reopenButton.className = 'btn small'
+  reopenButton.textContent = 'Reopen'
+  reopenButton.title = 'Open the thread again'
   const closeButton = document.createElement('button')
   closeButton.type = 'button'
   closeButton.className = 'btn close'
-  closeButton.textContent = '×'
+  closeButton.appendChild(icon('close'))
   closeButton.title = 'Close (Escape)'
   closeButton.setAttribute('aria-label', 'Close the thread')
-  panelHead.append(panelNum, panelWho, panelWhere, resolveButton, closeButton)
+  panelHead.append(panelNum, panelHeading, resolveButton, reopenButton, closeButton)
   const panelMsgs = document.createElement('div')
   panelMsgs.className = 'msgs'
   const panelNote = document.createElement('div')
@@ -619,14 +688,17 @@ button:focus-visible, textarea:focus-visible {
 
   const toolButtons = new Map()
   const tools = [
-    ['select', 'Comment', 'Pick an element to comment on (V)'],
-    ['marquee', 'Region', 'Drag a box around a region (R)'],
+    ['select', 'Comment', 'Pick an element to comment on (V)', 'V'],
+    ['marquee', 'Region', 'Drag a box around a region (R)', 'R'],
   ]
-  for (const [candidate, label, title] of tools) {
+  for (const [candidate, label, title, key] of tools) {
     const button = document.createElement('button')
     button.type = 'button'
     button.className = 'btn icon'
-    button.appendChild(icon(candidate))
+    const cap = document.createElement('kbd')
+    cap.textContent = key
+    cap.setAttribute('aria-hidden', 'true')
+    button.append(icon(candidate), cap)
     button.title = title
     button.setAttribute('aria-label', label)
     button.addEventListener('click', event => {
@@ -652,7 +724,7 @@ button:focus-visible, textarea:focus-visible {
     return button
   }
   const eyeButton = toolbarButton('eyeOff', 'Hide the review layer', 'Hide the toolbar, pins and threads to look at the page (Alt+Shift+C)')
-  toolbar.append(countButton, eyeButton)
+  toolbar.append(separator(), countButton, eyeButton)
 
   // While peeking, only this handle stays; a dot on it means a new answer.
   const handle = document.createElement('button')
@@ -736,7 +808,7 @@ button:focus-visible, textarea:focus-visible {
 
   const clampEditorPosition = (left, top) => {
     const margin = 8
-    const rect = editor.getBoundingClientRect()
+    const rect = { width: editor.offsetWidth, height: editor.offsetHeight }
     return {
       left: Math.min(Math.max(margin, left), Math.max(margin, window.innerWidth - rect.width - margin)),
       top: Math.min(Math.max(margin, top), Math.max(margin, window.innerHeight - rect.height - margin)),
@@ -747,13 +819,14 @@ button:focus-visible, textarea:focus-visible {
   function positionCompactEditor() {
     const bounds = targetClip()
     if (!bounds) return
-    const editorRect = editor.getBoundingClientRect()
+    const editorRect = { width: editor.offsetWidth, height: editor.offsetHeight }
     const gap = 8
+    // Each place has the corner the box grows from: the one nearest the target.
     const candidates = [
-      { left: bounds.x + bounds.width + gap, top: bounds.y },
-      { left: bounds.x - editorRect.width - gap, top: bounds.y },
-      { left: bounds.x + bounds.width - editorRect.width, top: bounds.y + bounds.height + gap },
-      { left: bounds.x + bounds.width - editorRect.width, top: bounds.y - editorRect.height - gap },
+      { left: bounds.x + bounds.width + gap, top: bounds.y, origin: 'left top' },
+      { left: bounds.x - editorRect.width - gap, top: bounds.y, origin: 'right top' },
+      { left: bounds.x + bounds.width - editorRect.width, top: bounds.y + bounds.height + gap, origin: 'right top' },
+      { left: bounds.x + bounds.width - editorRect.width, top: bounds.y - editorRect.height - gap, origin: 'right bottom' },
     ]
     const overflow = position =>
       Math.max(0, -position.left) +
@@ -764,6 +837,7 @@ button:focus-visible, textarea:focus-visible {
     const clamped = clampEditorPosition(best.left, best.top)
     editor.style.left = `${clamped.left}px`
     editor.style.top = `${clamped.top}px`
+    editor.style.transformOrigin = best.origin
   }
 
   function queueEditorLayout() {
@@ -792,7 +866,9 @@ button:focus-visible, textarea:focus-visible {
     for (const pin of [...pins, ...threadPins]) {
       const left = Math.max(4, Math.min(window.innerWidth - 40, pin.x - window.scrollX))
       const top = Math.max(4, pin.y - window.scrollY - 26)
-      pin.node.style.transform = `translate(${left}px, ${top}px)`
+      // The translate property, not transform: a press scales the pin, and scale applies before
+      // transform, so it would shrink a transform's offset too and move the pin out from under the pointer.
+      pin.node.style.translate = `${left}px ${top}px`
     }
   }
 
@@ -834,25 +910,97 @@ button:focus-visible, textarea:focus-visible {
     renderThreads()
   }
 
+  let threadsShown = false // the first render after a load draws pins still; later changes may move
+  let arrivingId = null // the thread a sent comment just became: its pin fades in where "Sending…" was
+  let unreadBefore = new Set()
+
+  /**
+   * What a thread's pin shows instead of a number: a mark for its state and who spoke last.
+   * Resolved: a check. Your words last: a clock, waiting for Claude. Claude's words last: a speech bubble.
+   */
+  function threadState(t) {
+    const label = t.sessionName || sessionName || 'Claude Code'
+    if (t.status === 'resolved') return { mark: 'check', who: '', words: 'resolved' }
+    if (t.messages[t.messages.length - 1]?.from === 'you') return { mark: 'clock', who: 'Y', words: `waiting for ${label}` }
+    return { mark: 'select', who: 'C', words: (t.unread || 0) > 0 ? `new answer from ${label}` : `answered by ${label}` }
+  }
+
+  function stateMark(t) {
+    const state = threadState(t)
+    const parts = [icon(state.mark)]
+    if (state.who) {
+      const who = document.createElement('span')
+      who.className = 'who'
+      who.textContent = state.who
+      parts.push(who)
+    }
+    return parts
+  }
+
+  // A small card under a pin while the pointer is on it: the first words and the state.
+  const pinPeek = document.createElement('div')
+  pinPeek.className = 'pin-peek'
+  pinPeek.style.cssText = `display:none;left:0;top:0;z-index:${CONTENT_LAYER_Z_INDEX + 2}`
+  const pinPeekText = document.createElement('div')
+  const pinPeekState = document.createElement('div')
+  pinPeekState.className = 'state'
+  pinPeek.append(pinPeekText, pinPeekState)
+  pinLayer.after(pinPeek)
+
+  function showPinPeek(t, node) {
+    const first = collapse(t.messages[0]?.text ?? '')
+    pinPeekText.textContent = first.length > 90 ? `${first.slice(0, 89)}…` : first
+    pinPeekState.textContent = threadState(t).words.replace(/^./, c => c.toUpperCase())
+    pinPeek.style.display = 'grid'
+    const box = node.getBoundingClientRect()
+    const left = Math.min(Math.max(8, box.left), Math.max(8, window.innerWidth - pinPeek.offsetWidth - 8))
+    const below = box.bottom + 6
+    const top = below + pinPeek.offsetHeight > window.innerHeight - 8 ? box.top - pinPeek.offsetHeight - 6 : below
+    pinPeek.style.translate = `${left}px ${Math.max(8, top)}px`
+  }
+  const hidePinPeek = () => {
+    pinPeek.style.display = 'none'
+  }
+
   function renderThreads() {
     for (const pin of threadPins.splice(0)) pin.node.remove()
+    hidePinPeek()
+    const lined = new Map() // pins on the same spot line up side by side: spot -> width taken so far
     threads.forEach((t, index) => {
       const node = document.createElement('div')
       node.className = 'pin thread'
       node.classList.toggle('resolved', t.status === 'resolved')
-      node.classList.toggle('unread', (t.unread || 0) > 0)
-      node.textContent = String(index + 1)
-      node.title = `${t.status === 'resolved' ? 'Resolved: ' : ''}${t.messages[0]?.text ?? ''}`
+      const unread = (t.unread || 0) > 0
+      node.classList.toggle('unread', unread)
+      // One pop when an answer arrives, never on page load or a re-render.
+      if (threadsShown && unread && !unreadBefore.has(t.id)) node.classList.add('pop')
+      if (t.id === arrivingId) node.classList.add('arrive')
+      node.append(...stateMark(t))
+      node.dataset.thread = String(index + 1)
+      node.setAttribute('aria-label', `Thread ${index + 1}, ${threadState(t).words}`)
       node.style.cssText = `left:0;top:0;z-index:${CONTENT_LAYER_Z_INDEX + 1}`
       node.addEventListener('click', event => {
         if (!event.isTrusted) return
+        hidePinPeek()
         openThreadId = openThreadId === t.id ? null : t.id
         renderPanel()
         if (openThreadId) window.setTimeout(() => replyBox.focus({ preventScroll: true }), 0)
       })
+      node.addEventListener('pointerenter', event => {
+        if (event.isTrusted && openThreadId !== t.id) showPinPeek(t, node)
+      })
+      node.addEventListener('pointerleave', hidePinPeek)
       pinLayer.appendChild(node)
-      threadPins.push({ node, x: t.rect.x + t.rect.width - 12, y: t.rect.y + 14, id: t.id })
+      const x = t.rect.x + t.rect.width - 12
+      const y = t.rect.y + 14
+      const spot = `${Math.round(x)},${Math.round(y)}`
+      const taken = lined.get(spot) ?? 0
+      lined.set(spot, taken + node.offsetWidth + 4)
+      threadPins.push({ node, x: x + taken, y, id: t.id })
     })
+    threadsShown = true
+    arrivingId = null
+    unreadBefore = new Set(threads.filter(t => (t.unread || 0) > 0).map(t => t.id))
     paintPins()
     renderPanel()
     renderCount()
@@ -861,7 +1009,11 @@ button:focus-visible, textarea:focus-visible {
   function renderCount() {
     const unread = threads.filter(t => (t.unread || 0) > 0)
     countButton.hidden = unread.length === 0
-    countButton.textContent = String(unread.length)
+    // The number is the button's own text, and the word sits in a span after it.
+    const word = document.createElement('span')
+    word.textContent = ' new'
+    countButton.replaceChildren(String(unread.length), word)
+    handleDot.textContent = String(unread.length)
     countButton.title = unread.length === 1 ? '1 thread has a new answer. Click to open it.' : `${unread.length} threads have new answers. Click to open the first.`
     countButton.setAttribute('aria-label', countButton.title)
     handleDot.hidden = unread.length === 0
@@ -892,6 +1044,9 @@ button:focus-visible, textarea:focus-visible {
       const focused = shadowRoot.activeElement
       if (focused instanceof HTMLElement) focused.blur()
     } else {
+      // Peek often comes from a key, so the sheets come back as they were, without scaling in again.
+      root.classList.add('still')
+      window.requestAnimationFrame(() => window.requestAnimationFrame(() => root.classList.remove('still')))
       if (toolBeforePeek !== 'off') setTool(toolBeforePeek)
       repaint()
       markReadIfSeen()
@@ -904,9 +1059,14 @@ button:focus-visible, textarea:focus-visible {
     setPeek(true)
   })
 
+  // The handle's badge counts new answers, so with any, the click also opens the first of them.
   handle.addEventListener('click', event => {
     if (!event.isTrusted) return
     setPeek(false)
+    const first = threads.find(t => (t.unread || 0) > 0)
+    if (!first) return
+    openThreadId = first.id
+    renderPanel()
   })
 
   function messageNode(m, sessionLabel) {
@@ -936,7 +1096,7 @@ button:focus-visible, textarea:focus-visible {
   function disarmResolve() {
     window.clearTimeout(resolveArmedTimer)
     resolveArmedTimer = null
-    resolveButton.textContent = '✓ Resolve'
+    resolveButton.replaceChildren(icon('check'), 'Resolve')
     resolveButton.title = 'Resolve the thread'
     resolveButton.classList.remove('confirm')
   }
@@ -952,21 +1112,28 @@ button:focus-visible, textarea:focus-visible {
     }
     const t = threads[index]
     const label = t.sessionName || sessionName || 'Claude Code'
-    panelNum.textContent = String(index + 1)
+    panelNum.replaceChildren(...stateMark(t))
+    panelNum.className = `num${t.status === 'resolved' ? ' resolved' : ''}`
     panelWho.textContent = label
     // Older threads have no label; they fall back to the kind of target.
     panelWhere.textContent = t.label || (t.kind === 'region' ? 'Region' : 'Element')
     panelWhere.title = panelWhere.textContent
     disarmResolve()
     resolveButton.style.display = t.status === 'resolved' ? 'none' : ''
+    reopenButton.style.display = t.status === 'resolved' ? '' : 'none'
     panelMsgs.replaceChildren(...t.messages.map(m => messageNode(m, label)))
     const last = t.messages[t.messages.length - 1]
+    const noteText = text => {
+      const span = document.createElement('span')
+      span.textContent = text
+      return span
+    }
     if (t.status === 'resolved') {
       panelNote.className = 'resolved-note'
-      panelNote.textContent = 'Resolved. A reply opens it again.'
+      panelNote.replaceChildren(icon('check'), noteText('Resolved. A reply opens it again.'))
     } else if (last?.from === 'you') {
       panelNote.className = 'waiting'
-      panelNote.textContent = `Waiting for ${label}`
+      panelNote.replaceChildren(icon('clock'), noteText(`Waiting for ${label}`))
     } else {
       panelNote.className = ''
       panelNote.textContent = ''
@@ -982,14 +1149,18 @@ button:focus-visible, textarea:focus-visible {
     if (panel.style.display === 'none') return
     const pin = threadPins.find(p => p.id === openThreadId)
     if (!pin) return
-    const box = panel.getBoundingClientRect()
+    // Layout sizes, not the bounding box: the box is smaller while the panel scales in.
+    const box = { width: panel.offsetWidth, height: panel.offsetHeight }
     const pinLeft = pin.x - window.scrollX
     const pinTop = pin.y - window.scrollY - 26
     let top = pinTop + 30
-    if (top + box.height > window.innerHeight - 8) top = pinTop - box.height - 6
+    const above = top + box.height > window.innerHeight - 8
+    if (above) top = pinTop - box.height - 6
     const left = Math.min(Math.max(8, pinLeft - 12), Math.max(8, window.innerWidth - box.width - 8))
     panel.style.left = `${left}px`
     panel.style.top = `${Math.max(8, top)}px`
+    // It grows out of its pin.
+    panel.style.transformOrigin = `${Math.round(pinLeft + 12 - left)}px ${above ? '100%' : '0'}`
   }
 
   /** An answer counts as read once its thread is open on a page you can see. */
@@ -997,6 +1168,7 @@ button:focus-visible, textarea:focus-visible {
     const t = threads.find(x => x.id === openThreadId)
     if (!t || !t.unread || peek || document.visibilityState !== 'visible') return
     t.unread = 0
+    unreadBefore.delete(t.id)
     threadPins.find(p => p.id === t.id)?.node.classList.remove('unread')
     renderCount()
     void ask({ type: 'read', threadId: t.id })
@@ -1056,8 +1228,31 @@ button:focus-visible, textarea:focus-visible {
       return
     }
     disarmResolve()
-    const result = await ask({ type: 'resolve', threadId: openThreadId })
-    if (!result.ok) setPanelStatus(result.error || NOT_CONNECTED)
+    const threadId = openThreadId
+    const result = await ask({ type: 'resolve', threadId })
+    if (finished) return
+    if (!result.ok) {
+      setPanelStatus(result.error || NOT_CONNECTED)
+      return
+    }
+    // Your own resolve is the last thing you do in a thread, so it closes. The green pin with a check stays.
+    // A thread Claude resolves stays open, so you can read its last answer.
+    if (openThreadId === threadId) {
+      openThreadId = null
+      renderPanel()
+    }
+  })
+
+  // One press: reopening loses nothing. The thread stays open with the reply box ready.
+  reopenButton.addEventListener('click', async event => {
+    if (!event.isTrusted || !openThreadId) return
+    const result = await ask({ type: 'reopen', threadId: openThreadId })
+    if (finished) return
+    if (!result.ok) {
+      setPanelStatus(result.error || NOT_CONNECTED)
+      return
+    }
+    window.setTimeout(() => replyBox.focus({ preventScroll: true }), 0)
   })
 
   // ---- Session picker ----
@@ -1081,6 +1276,12 @@ button:focus-visible, textarea:focus-visible {
     folder.textContent = s.cwd || ''
     folder.title = s.cwd || ''
     button.append(name, folder)
+    if (s.sessionId === current) {
+      const tag = document.createElement('span')
+      tag.className = 'cur'
+      tag.textContent = 'Current'
+      button.appendChild(tag)
+    }
     button.addEventListener('click', async event => {
       if (!event.isTrusted) return
       const answer = await ask({ type: 'pick', sessionId: s.sessionId })
@@ -1103,10 +1304,12 @@ button:focus-visible, textarea:focus-visible {
     if (finished) return
     if (!answer.ok) {
       pickerList.replaceChildren()
+      pickerCount.textContent = ''
       pickerNote.textContent = answer.error || NOT_CONNECTED
       return
     }
     const sessions = Array.isArray(answer.sessions) ? answer.sessions : []
+    pickerCount.textContent = sessions.length === 1 ? '1 session running' : `${sessions.length} sessions running`
     if (sessions.length === 0) {
       const empty = document.createElement('div')
       empty.className = 'empty'
@@ -1262,6 +1465,7 @@ button:focus-visible, textarea:focus-visible {
       removePin(pin)
       clearTarget()
       openThreadId = result.id
+      arrivingId = result.id
       await loadThreads()
       return
     }

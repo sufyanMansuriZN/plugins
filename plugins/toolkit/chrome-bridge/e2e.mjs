@@ -173,6 +173,9 @@ async function main() {
     const click = async (s, { x, y }) => {
       await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y }, s)
       await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1 }, s)
+      // Held as long as a person holds it, so press effects have drawn before the release: a pin that
+      // moved while pressed once made the click miss it.
+      await sleep(80)
       await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 }, s)
     }
     // Every node in the tab, closed shadow roots included (CDP pierces them; page scripts cannot).
@@ -193,7 +196,7 @@ async function main() {
       return i >= 0 && a[i + 1].split(/\s+/).includes(name)
     }
     const pinOf = async (s, label) => {
-      const pin = (await nodes(s)).find(n => hasClass(n, 'pin') && textOf(n) === label)
+      const pin = (await nodes(s)).find(n => hasClass(n, 'pin') && threadOf(n) === label)
       if (!pin) throw new Error(`no pin ${label}`)
       return pin
     }
@@ -223,6 +226,8 @@ async function main() {
       return n.nodeName === 'BUTTON' && a[a.indexOf('aria-label') + 1] === 'Comment'
     }
     const textOf = n => (n.children ?? []).filter(c => c.nodeType === 3).map(c => c.nodeValue).join('').trim()
+    // A pin shows a state mark, not its number; the number is in data-thread.
+    const threadOf = n => { const a = n.attributes ?? []; const i = a.indexOf('data-thread'); return i >= 0 ? a[i + 1] : undefined }
 
     let tab
     await check('an open request opens a tab with the toolbar', async () => {
@@ -263,7 +268,7 @@ async function main() {
     const panelOpen = async s => (await nodes(s)).some(n => hasClass(n, 'panel') && /display:\s*flex/.test((n.attributes ?? [])[(n.attributes ?? []).indexOf('style') + 1] ?? ''))
     const openThread = async s => {
       if (await panelOpen(s)) return
-      await click(s, await centerOf(s, n => hasClass(n, 'pin') && textOf(n) === '1'))
+      await click(s, await centerOf(s, n => hasClass(n, 'pin') && threadOf(n) === '1'))
       await until('the open thread panel', () => panelOpen(s))
     }
 
@@ -333,6 +338,15 @@ async function main() {
       const reply = JSON.parse(await until('reply resolve-1', () => readFile(join(root, 'replies', 'resolve-1.json'), 'utf8'), 15_000))
       assert.equal(reply.ok, true, JSON.stringify(reply))
       await until('a resolved pin', async () => hasClass(await pinOf(tab, '1'), 'resolved'))
+    })
+
+    await check('Reopen in a resolved thread opens it again, and a second resolve closes it', async () => {
+      await openThread(tab)
+      await click(tab, await centerOf(tab, n => n.nodeName === 'BUTTON' && textOf(n) === 'Reopen'))
+      await until('an open pin', async () => !hasClass(await pinOf(tab, '1'), 'resolved'))
+      await writeFile(join(root, 'requests', 'resolve-2.json'), JSON.stringify({ id: 'resolve-2', sessionId: SESSION, type: 'resolve', threadId }))
+      await until('reply resolve-2', () => readFile(join(root, 'replies', 'resolve-2.json'), 'utf8'), 15_000)
+      await until('a resolved pin again', async () => hasClass(await pinOf(tab, '1'), 'resolved'))
     })
 
     await check('a reload keeps the owner, the toolbar and the threads', async () => {
@@ -538,6 +552,21 @@ async function main() {
       }
       await shortcut()
       await until('reviewing again', async () => !(await peeking(tab)))
+    })
+
+    await check('a click on the handle with a new answer brings the layer back and opens that thread', async () => {
+      if (await panelOpen(tab)) {
+        await click(tab, await centerOf(tab, n => n.nodeName === 'BUTTON' && hasClass(n, 'close')))
+        await until('the panel closed', async () => !(await panelOpen(tab)))
+      }
+      await shortcut()
+      await until('peeking', () => peeking(tab))
+      await writeFile(join(root, 'requests', 'reply-10.json'), JSON.stringify({ id: 'reply-10', sessionId: SESSION, type: 'reply', threadId, text: 'One more answer.' }))
+      await until('reply reply-10', () => readFile(join(root, 'replies', 'reply-10.json'), 'utf8'), 15_000)
+      await until('the dot', () => dotShown(tab))
+      await click(tab, await centerOf(tab, n => n.nodeName === 'BUTTON' && hasClass(n, 'handle')))
+      await until('reviewing again', async () => !(await peeking(tab)))
+      await until('the thread opens', () => panelOpen(tab))
     })
     // Not checked here: the self-reload after a version change. An extension loaded with
     // --load-extension does not come back after chrome.runtime.reload() in this test browser,

@@ -772,6 +772,19 @@ async function onToolbarMessage(message, tab) {
       return { ok: true }
     }
 
+    case 'reopen': {
+      // You opened a resolved thread again from the toolbar. Only the status changes, so no turn starts.
+      const changed = await updateThreads(threads => {
+        const t = threads[message.threadId]
+        if (!t || t.url !== urlKey(tab.url) || t.status !== 'resolved') return false
+        t.status = 'open'
+        t.updatedAt = new Date().toISOString()
+      })
+      if (changed === false) return { ok: false, error: 'That thread is not resolved on this page.' }
+      await threadsChanged(tab.url)
+      return { ok: true }
+    }
+
     default:
       return { ok: false, error: 'Unknown toolbar message.' }
   }

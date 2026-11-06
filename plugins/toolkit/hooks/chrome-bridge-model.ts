@@ -64,6 +64,57 @@ export function commentPrompt(c: Pick<PageComment, 'id' | 'threadId' | 'tabId' |
   ].join('\n')
 }
 
+/** The comment a toolkit prompt carries, read back from `commentPrompt`'s text; undefined for any other text. */
+export function parseCommentPrompt(text: string): { commentId: string; isReply: boolean; body: string } | undefined {
+  const m = /^The person sent (?:a new comment \(thread \S+\)|(a reply) in comment thread \S+) from a page in Chrome, tab \d+\. What they wrote:\n\n([\s\S]*)\n\nCall read_tab with commentId "([^"]+)"/.exec(text)
+  return m ? { commentId: m[3] ?? '', isReply: m[1] !== undefined, body: m[2] ?? '' } : undefined
+}
+
+const cap = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…` : s)
+
+/**
+ * The grey line under a comment's words in the transcript: what it is, the page, and the nearest heading.
+ * The page's title is page content, so it is cut short and kept to one line.
+ */
+export function commentCaption(isReply: boolean, c?: Pick<PageComment, 'title' | 'section'>): string {
+  const page = pageName(c)
+  const near = c?.section?.text ? `near "${cap(c.section.text.replace(/\s+/g, ' ').trim(), 40)}"` : ''
+  return [isReply ? 'reply from Chrome' : 'comment from Chrome', page, near].filter(Boolean).join(', ')
+}
+
+/** A page's title without the site's name after it, on one line and cut short; '' with no title. */
+export function pageName(c?: Pick<PageComment, 'title'>): string {
+  return c?.title ? cap(c.title.replace(/\s+/g, ' ').trim().replace(/\s+[-|–—]\s+.*$/, ''), 48) : ''
+}
+
+export type ToolRowInput = { commentId?: unknown; threadId?: unknown; tabId?: unknown; selector?: unknown; text?: unknown; url?: unknown }
+
+/**
+ * What a Chrome tool's row shows in the transcript: a verb, a grey subject and, for an answer, its text.
+ * `comment` is the comment the call names, looked up by the caller; the subject is then its page.
+ */
+export function toolRow(tool: string, input: ToolRowInput, comment?: Pick<PageComment, 'title'>): { verb: string; subject: string; body: string } {
+  const str = (v: unknown) => (typeof v === 'string' ? v : '')
+  if (tool === 'read_tab' && str(input.commentId)) return { verb: 'Read comment', subject: pageName(comment), body: '' }
+  if (tool === 'read_tab') return { verb: 'Check tab', subject: str(input.selector) || 'a part of the page', body: '' }
+  if (tool === 'open_tab') {
+    const url = str(input.url)
+    const parsed = URL.canParse(url) ? new URL(url) : undefined
+    return { verb: 'Open in Chrome', subject: parsed ? cap(`${parsed.hostname}${parsed.pathname === '/' ? '' : parsed.pathname}`, 60) : url, body: '' }
+  }
+  return { verb: tool === 'reply_comment' ? 'Reply in Chrome' : 'Resolve in Chrome', subject: pageName(comment), body: str(input.text) }
+}
+
+/** The one grey line under a Chrome tool's row; undefined when the result row is hidden (an answer). */
+export function toolResultLine(tool: string, output: string): string | undefined {
+  if (tool === 'reply_comment' || tool === 'resolve_comment') return undefined
+  if (tool === 'open_tab') return 'ready for comments'
+  // The first found line is the toolkit's own: checkDetails writes it before any page text.
+  const found = /^found: (yes|no)$/m.exec(output)?.[1]
+  if (found) return found === 'yes' ? 'found' : 'not found on the page'
+  return 'page details and screenshot'
+}
+
 const rectText = (r: PageRect) => `x ${r.x}, y ${r.y}, ${r.width} by ${r.height} px`
 
 /** Page lines in a block whose marker the lines do not contain, so the page cannot end it early. */

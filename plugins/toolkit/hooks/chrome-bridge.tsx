@@ -1,7 +1,21 @@
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { PageCheck } from '../types'
-import { bridgePaths, checkDetails, checkRequest, commentPrompt, hostLauncher, hostManifest, newComments, pageDetails } from './chrome-bridge-model'
+import {
+  bridgePaths,
+  checkDetails,
+  checkRequest,
+  commentCaption,
+  commentPrompt,
+  hostLauncher,
+  hostManifest,
+  newComments,
+  pageDetails,
+  parseCommentPrompt,
+  toolResultLine,
+  toolRow,
+} from './chrome-bridge-model'
+import type { ToolRowInput } from './chrome-bridge-model'
 import type { BridgePaths } from './chrome-bridge-model'
 
 const OPEN = 'open_tab'
@@ -208,6 +222,67 @@ export const register: Register = on => {
   for (const tool of [REPLY, RESOLVE]) {
     on('tool.call', { tool: `mcp__toolkit__${tool}` }, async ($, e) => answerThread($, await paths($), tool, e as unknown as { threadId?: unknown; text?: unknown }))
   }
+
+  // Each Chrome tool's call is one row, like Claude Code's own tools: a bold verb, a grey subject and, for an
+  // answer, its text. The result is one grey line, or none for an answer. ctrl+o and errors keep the full rows.
+  for (const name of [OPEN, READ, REPLY, RESOLVE]) {
+    on('ui.render', { surface: 'terminal', component: 'ToolUse', props: { tool: `mcp__toolkit__${name}` } }, async ($, e, next) => {
+      if (e.props.isExpanded) return next(e)
+      const input = (e.props.input ?? {}) as ToolRowInput
+      const id = typeof input.commentId === 'string' ? input.commentId : typeof input.threadId === 'string' ? input.threadId : ''
+      const comments = id === '' ? [] : newComments(await $.fs.read((await paths($)).commentsFile).catch(() => ''), 0).comments
+      const row = toolRow(name, input, comments.find(c => c.id === id || c.threadId === id))
+      const { Box, Text } = $.ui.resolve(e)
+      const bullet = e.props.isRunning ? <Text dimColor>●</Text> : <Text color={e.props.isErrored ? 'error' : 'success'}>●</Text>
+      return (
+        <Box flexDirection="column" marginTop={1}>
+          <Box flexDirection="row">
+            <Box width={2} minWidth={2}>
+              {bullet}
+            </Box>
+            <Text>
+              <Text weight="bold">{row.verb}</Text>
+              {row.subject ? <Text dimColor>{`  ${row.subject}`}</Text> : null}
+            </Text>
+          </Box>
+          {row.body ? (
+            <Box flexDirection="row">
+              <Box width={5} minWidth={5}>
+                <Text dimColor>{'  ⎿  '}</Text>
+              </Box>
+              <Text>{row.body}</Text>
+            </Box>
+          ) : null}
+        </Box>
+      )
+    })
+    on('ui.render', { surface: 'terminal', component: 'ToolResult', props: { tool: `mcp__toolkit__${name}` } }, ($, e, next) => {
+      if (e.props.isExpanded || e.props.isErrored) return next(e)
+      const line = toolResultLine(name, String(e.props.output ?? ''))
+      const { Box, Text } = $.ui.resolve(e)
+      return line === undefined ? <Box /> : <Text dimColor>{`  ⎿  ${line}`}</Text>
+    })
+  }
+
+  // A comment's prompt shows as the person's words and one grey line about the page. ctrl+o shows the prompt in full.
+  on('ui.render', { surface: 'terminal', component: 'UserMessage' }, async ($, e, next) => {
+    const origin = e.props.origin as { kind?: string; name?: string }
+    if (e.props.isExpanded || origin?.kind !== 'plugin' || origin.name !== 'toolkit') return next(e)
+    const parsed = parseCommentPrompt(e.props.text)
+    if (!parsed) return next(e)
+    const text = await $.fs.read((await paths($)).commentsFile).catch(() => '')
+    const c = newComments(text, 0).comments.find(x => x.id === parsed.commentId)
+    const { Box, Text } = $.ui.resolve(e)
+    return (
+      <Box flexDirection="column" marginTop={1}>
+        <Text>
+          <Text dimColor>{'❯ '}</Text>
+          {parsed.body}
+        </Text>
+        <Text dimColor>{`  ${commentCaption(parsed.isReply, c)}`}</Text>
+      </Box>
+    )
+  })
 
   on('tool.call', { tool: `mcp__toolkit__${READ}` }, async ($, e) => {
     const input = e as unknown as { commentId?: unknown; tabId?: unknown }
